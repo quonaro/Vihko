@@ -1,9 +1,61 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import JournalView from './JournalView.vue'
 import { i18n } from '../i18n'
 import { closeToJournal, openPage, store } from '../store'
 import type { Journal } from '../types'
+
+// jsdom has no WebGL, so a fake stands in for JournalScene. It mirrors the
+// contract JournalView relies on: `busy` stays true while a turn is in
+// flight, `onFlipDone` fires once when the turn completes, and a turn that
+// settles back fires nothing. `held` keeps a turn in flight until the test
+// calls finish()/cancel(), like a drag or animation still in progress.
+const mocks = vi.hoisted(() => ({
+  scenes: [] as {
+    busy: boolean
+    held: boolean
+    flip(dir: 1 | -1): boolean
+    finish(): void
+    cancel(): void
+  }[],
+}))
+
+vi.mock('../three/journalScene', () => ({
+  JournalScene: class {
+    busy = false
+    held = false
+    private dir: 1 | -1 = 1
+    readonly ready = Promise.resolve()
+    constructor(
+      _canvas: HTMLCanvasElement,
+      _ink: unknown,
+      private events: { onFlipDone?: (dir: 1 | -1) => void },
+    ) {
+      mocks.scenes.push(this)
+    }
+    setMode() {}
+    setPages() {}
+    setPage() {}
+    setOverviewFocus() {}
+    start() {}
+    dispose() {}
+    flip(dir: 1 | -1): boolean {
+      if (this.busy) return false
+      this.busy = true
+      this.dir = dir
+      if (!this.held) this.finish()
+      return true
+    }
+    finish() {
+      if (!this.busy) return
+      this.busy = false
+      this.events.onFlipDone?.(this.dir)
+    }
+    cancel() {
+      this.busy = false
+    }
+  },
+}))
 
 const mountJournal = () => mount(JournalView, { global: { plugins: [i18n] } })
 
@@ -17,6 +69,7 @@ const journal = (): Journal => ({
 })
 
 beforeEach(() => {
+  mocks.scenes.length = 0
   store.journals.splice(0, store.journals.length, journal())
   store.journalId = 'j1'
   store.pageId = null
@@ -179,6 +232,61 @@ describe('JournalView', () => {
     expect(store.journals).toHaveLength(0)
     expect(store.view).toBe('shelf')
     w.unmount()
+  })
+
+  // The scene is only constructed for a canvas attached to the document, so
+  // these mount into the body to exercise the real busy/onFlipDone wiring.
+  describe('page counter while a scene turn is in flight', () => {
+    const mountAttached = async () => {
+      const w = mount(JournalView, {
+        attachTo: document.body,
+        global: { plugins: [i18n] },
+      })
+      await flushPromises()
+      return w
+    }
+
+    it('ignores repeated flip clicks while a turn is in flight', async () => {
+      const w = await mountAttached()
+      const scene = mocks.scenes[0]
+      scene.held = true
+
+      await w.find('.flip.next').trigger('click')
+      expect(scene.busy).toBe(true)
+      await w.find('.flip.next').trigger('click')
+      await w.find('.flip.next').trigger('click')
+      expect(w.find('.page-pos').text()).toBe('1 / 3')
+
+      scene.finish()
+      await w.vm.$nextTick()
+      expect(w.find('.page-pos').text()).toBe('2 / 3')
+      w.unmount()
+    })
+
+    it('advances the counter exactly once when the turn completes', async () => {
+      const w = await mountAttached()
+      await w.find('.flip.next').trigger('click')
+      expect(w.find('.page-pos').text()).toBe('2 / 3')
+      await w.find('.flip.next').trigger('click')
+      expect(w.find('.page-pos').text()).toBe('3 / 3')
+      w.unmount()
+    })
+
+    it('does not advance the counter when the turn settles back', async () => {
+      const w = await mountAttached()
+      const scene = mocks.scenes[0]
+      scene.held = true
+
+      await w.find('.flip.next').trigger('click')
+      scene.cancel()
+      await w.vm.$nextTick()
+      expect(w.find('.page-pos').text()).toBe('1 / 3')
+
+      scene.held = false
+      await w.find('.flip.next').trigger('click')
+      expect(w.find('.page-pos').text()).toBe('2 / 3')
+      w.unmount()
+    })
   })
 
 })
