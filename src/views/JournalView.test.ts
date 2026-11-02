@@ -21,10 +21,9 @@ beforeEach(() => {
   store.journalId = 'j1'
   store.pageId = null
   store.view = 'journal'
-  store.journalMode = 'fan'
-  store.journalSpreadIdx = 0
-  store.journalFanPageIdx = 0
-  store.journalBookClosed = false
+  store.journalMode = 'stack'
+  store.journalPageIdx = 0
+  store.journalOverviewIdx = 0
 })
 
 describe('JournalView', () => {
@@ -38,104 +37,62 @@ describe('JournalView', () => {
     expect(w.find('.count').text()).toContain('3')
   })
 
-  it('changes the 3D journal view and advances the spread counter', async () => {
+  it('switches between stack and overview and advances the page counter', async () => {
     const w = mountJournal()
-    await w.findAll('.view-modes .icon-btn')[0].trigger('click')
-    expect(w.find('.spread-pos').text()).toBe('1 / 3')
-    expect(w.findAll('.slot')).toHaveLength(0)
+    expect(w.find('.page-pos').text()).toBe('1 / 3')
     await w.find('.flip.next').trigger('click')
-    expect(w.find('.spread-pos').text()).toBe('2 / 3')
+    expect(w.find('.page-pos').text()).toBe('2 / 3')
     await w.find('.flip.prev').trigger('click')
-    expect(w.find('.spread-pos').text()).toBe('1 / 3')
+    expect(w.find('.page-pos').text()).toBe('1 / 3')
+    await w.findAll('.view-modes .icon-btn')[1].trigger('click')
+    expect(w.find('.page-pos').exists()).toBe(false)
+    expect(w.find('.flip.next').exists()).toBe(false)
+    await w.findAll('.view-modes .icon-btn')[0].trigger('click')
+    expect(w.find('.page-pos').text()).toBe('1 / 3')
   })
 
-  it('keeps the final page reachable in an even-length journal', async () => {
+  it('keeps the last page reachable and stops turning at the stack ends', async () => {
     store.journals[0].pages.push({ id: 'p4', strokes: [], createdAt: 0 })
     const w = mountJournal()
-    await w.findAll('.view-modes .icon-btn')[0].trigger('click')
+    expect(w.find('.flip.prev').attributes('disabled')).toBeDefined()
     await w.find('.flip.next').trigger('click')
-    expect(w.find('.spread-pos').text()).toBe('2 / 3')
+    expect(w.find('.page-pos').text()).toBe('2 / 4')
     await w.find('.flip.next').trigger('click')
-    expect(w.find('.spread-pos').text()).toBe('3 / 3')
+    expect(w.find('.page-pos').text()).toBe('3 / 4')
+    await w.find('.flip.next').trigger('click')
+    expect(w.find('.page-pos').text()).toBe('4 / 4')
+    expect(w.find('.flip.next').attributes('disabled')).toBeDefined()
     await w.find('.flip.prev').trigger('click')
-    expect(w.find('.spread-pos').text()).toBe('2 / 3')
-    await w.find('.flip.next').trigger('click')
-    expect(w.find('.spread-pos').text()).toBe('3 / 3')
-    await w.find('.flip.next').trigger('click')
-    expect(w.find('.spread-pos').exists()).toBe(false)
+    expect(w.find('.page-pos').text()).toBe('3 / 4')
   })
 
-  it('returns from editing to the same spread and page position', async () => {
+  it('returns from editing to the overview focused on the edited page', async () => {
     store.journals[0].pages.push({ id: 'p4', strokes: [], createdAt: 0 })
     const w = mountJournal()
-    await w.findAll('.view-modes .icon-btn')[0].trigger('click')
-    await w.find('.flip.next').trigger('click')
+    await w.findAll('.view-modes .icon-btn')[1].trigger('click')
     openPage('p3')
     expect(store.view).toBe('canvas')
     w.unmount()
 
     closeToJournal()
     const returned = mountJournal()
-    expect(store.journalMode).toBe('spread')
-    expect(store.journalSpreadIdx).toBe(2)
-    expect(returned.find('.view-modes .icon-btn').classes()).toContain('on')
-    expect(returned.find('.spread-pos').text()).toBe('2 / 3')
-  })
-
-  it('returns from editing to fan mode focused on the edited page', async () => {
-    const w = mountJournal()
-    openPage('p3')
-    expect(store.view).toBe('canvas')
-    w.unmount()
-
-    closeToJournal()
-    const returned = mountJournal()
-    expect(store.journalMode).toBe('fan')
-    expect(store.journalFanPageIdx).toBe(2)
+    expect(store.journalMode).toBe('overview')
+    expect(store.journalOverviewIdx).toBe(2)
     expect(returned.findAll('.view-modes .icon-btn')[1].classes()).toContain('on')
   })
 
-  it('closes and reopens the 3D journal using the spread controls', async () => {
+  it('returns from editing to the stack focused on the edited page', async () => {
     const w = mountJournal()
-    await w.findAll('.view-modes .icon-btn')[0].trigger('click')
-    await w.find('.flip.prev').trigger('click')
-    expect(w.find('.spread-pos').exists()).toBe(false)
-    expect(w.find('.flip.next').attributes('aria-label')).toBe('Open journal')
-    await w.find('.flip.next').trigger('click')
-    expect(w.find('.spread-pos').text()).toBe('1 / 3')
-  })
+    openPage('p3')
+    expect(store.view).toBe('canvas')
+    w.unmount()
 
-  it('reopens a closed journal with a horizontal swipe on the cover', async () => {
-    const w = mountJournal()
-    await w.findAll('.view-modes .icon-btn')[0].trigger('click')
-    await w.find('.flip.prev').trigger('click')
-    const stage = w.find('.stage').element
-    const pointer = (type: string, x: number) => {
-      const event = new Event(type, { bubbles: true })
-      Object.defineProperties(event, {
-        pointerId: { value: 1 },
-        clientX: { value: x },
-        clientY: { value: 120 },
-      })
-      stage.dispatchEvent(event)
-    }
-
-    pointer('pointerdown', 120)
-    pointer('pointerup', 210)
-    await w.vm.$nextTick()
-
-    expect(w.find('.spread-pos').text()).toBe('1 / 3')
-  })
-
-  it('closes the journal at the last spread', async () => {
-    const w = mountJournal()
-    await w.findAll('.view-modes .icon-btn')[0].trigger('click')
-    await w.find('.flip.next').trigger('click')
-    expect(w.find('.spread-pos').text()).toBe('2 / 3')
-    await w.find('.flip.next').trigger('click')
-    expect(w.find('.spread-pos').text()).toBe('3 / 3')
-    await w.find('.flip.next').trigger('click')
-    expect(w.find('.spread-pos').exists()).toBe(false)
+    closeToJournal()
+    const returned = mountJournal()
+    expect(store.journalMode).toBe('stack')
+    expect(store.journalPageIdx).toBe(2)
+    expect(returned.findAll('.view-modes .icon-btn')[0].classes()).toContain('on')
+    expect(returned.find('.page-pos').text()).toBe('3 / 3')
   })
 
   it('keeps cross-page stroke coordinates intact for the 3D page renderer', () => {

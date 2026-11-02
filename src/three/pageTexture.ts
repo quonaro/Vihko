@@ -36,37 +36,40 @@ function paintContent(
   ctx.restore()
 }
 
-// Overlay pass baked on top of content: a spine-side inner shadow for the
-// open spread; for fanned sheets a soft inset shade along every edge plus a
-// crisp rim at the cut — the 3D counterpart of the DOM fan's border +
-// box-shadow. Overlapping near-white sheets need that hard edge line;
-// gradients alone still read as one surface where two front pages nearly
-// coincide.
+// Overlay pass baked on top of content: a centre fold so each sheet reads as
+// a two-page spread; for stacked sheets a soft inset shade along every edge
+// plus a crisp rim at the cut. Overlapping near-white sheets need that hard
+// edge line; gradients alone still read as one surface where two front pages
+// nearly coincide.
 export function paintOverlays(
   canvas: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
-  innerShadow?: 'left' | 'right',
+  fold?: boolean,
   edgeShade?: boolean,
 ) {
-  if (!innerShadow && !edgeShade) return
+  if (!fold && !edgeShade) return
   ctx.save()
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.globalCompositeOperation = 'source-over'
-  if (innerShadow) {
-    const sw = canvas.width * 0.1
-    const sh = innerShadow === 'left'
-      ? ctx.createLinearGradient(0, 0, sw, 0)
-      : ctx.createLinearGradient(canvas.width, 0, canvas.width - sw, 0)
-    sh.addColorStop(0, 'rgba(44,40,31,0.22)')
-    sh.addColorStop(1, 'rgba(44,40,31,0)')
-    ctx.fillStyle = sh
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+  if (fold) {
+    const cx = canvas.width / 2
+    const sw = canvas.width * 0.07
+    const left = ctx.createLinearGradient(cx - sw, 0, cx, 0)
+    left.addColorStop(0, 'rgba(44,40,31,0)')
+    left.addColorStop(1, 'rgba(44,40,31,0.055)')
+    ctx.fillStyle = left
+    ctx.fillRect(cx - sw, 0, sw, canvas.height)
+    const right = ctx.createLinearGradient(cx, 0, cx + sw, 0)
+    right.addColorStop(0, 'rgba(44,40,31,0.035)')
+    right.addColorStop(1, 'rgba(44,40,31,0)')
+    ctx.fillStyle = right
+    ctx.fillRect(cx, 0, sw, canvas.height)
   }
   if (edgeShade) {
     const { width: w, height: h } = canvas
     const d = w * 0.045
     const edge = (g: CanvasGradient) => {
-      g.addColorStop(0, 'rgba(44,40,31,0.15)')
+      g.addColorStop(0, 'rgba(44,40,31,0.035)')
       g.addColorStop(1, 'rgba(44,40,31,0)')
       ctx.fillStyle = g
     }
@@ -78,8 +81,8 @@ export function paintOverlays(
     ctx.fillRect(0, 0, w, d)
     edge(ctx.createLinearGradient(0, h, 0, h - d))
     ctx.fillRect(0, h - d, w, d)
-    const rim = Math.max(2, Math.round(w * 0.006))
-    ctx.fillStyle = 'rgba(44,40,31,0.2)'
+    const rim = 1
+    ctx.fillStyle = 'rgba(44,40,31,0.04)'
     ctx.fillRect(0, 0, rim, h)
     ctx.fillRect(w - rim, 0, rim, h)
     ctx.fillRect(0, 0, w, rim)
@@ -96,11 +99,11 @@ export function paintPage(
   ctx: CanvasRenderingContext2D,
   page: Page,
   ink: InkEngine,
-  innerShadow?: 'left' | 'right',
+  fold?: boolean,
   edgeShade?: boolean,
 ) {
   paintContent(canvas, ctx, page, ink)
-  paintOverlays(canvas, ctx, innerShadow, edgeShade)
+  paintOverlays(canvas, ctx, fold, edgeShade)
 }
 
 // --- cached content rasters ------------------------------------------------
@@ -171,7 +174,7 @@ export function pageCanvas(
   page: Page,
   ink: InkEngine,
   width = 512,
-  innerShadow?: 'left' | 'right',
+  fold?: boolean,
   edgeShade?: boolean,
 ): HTMLCanvasElement | null {
   const base = baseCanvas(page, ink, width)
@@ -182,7 +185,7 @@ export function pageCanvas(
   const ctx = c.getContext('2d', { willReadFrequently: true })
   if (!ctx) return null
   ctx.drawImage(base, 0, 0)
-  paintOverlays(c, ctx, innerShadow, edgeShade)
+  paintOverlays(c, ctx, fold, edgeShade)
   return c
 }
 
@@ -195,7 +198,7 @@ export function repaintInto(
   canvas: HTMLCanvasElement,
   page: Page,
   ink: InkEngine,
-  innerShadow?: 'left' | 'right',
+  fold?: boolean,
   edgeShade?: boolean,
   forceBase = false,
 ) {
@@ -206,5 +209,5 @@ export function repaintInto(
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   ctx.drawImage(base, 0, 0)
   ctx.restore()
-  paintOverlays(canvas, ctx, innerShadow, edgeShade)
+  paintOverlays(canvas, ctx, fold, edgeShade)
 }

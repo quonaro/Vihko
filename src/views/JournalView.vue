@@ -4,14 +4,13 @@ import {
   store, currentJournal, addPage, deletePage, openPage, closeToShelf,
   renameJournal, deleteJournal, journalToJson,
 } from '../store'
-import { covers } from '../store'
 import { useI18n } from 'vue-i18n'
 import { initInk } from '../ink/engine'
 import { usePrompt } from '../composables/usePrompt'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { saveFile } from '../saveFile'
 import type { JournalScene } from '../three/journalScene'
-import { canTurn, lastSpreadIndex, spreadCount as countSpreads } from '../three/layout'
+import { canTurnStack } from '../three/layout'
 
 const { t } = useI18n()
 const { prompt } = usePrompt()
@@ -21,13 +20,9 @@ const mode = computed({
   get: () => store.journalMode,
   set: (value) => { store.journalMode = value },
 })
-const bookClosed = computed({
-  get: () => store.journalBookClosed,
-  set: (value) => { store.journalBookClosed = value },
-})
-const spreadIdx = computed({
-  get: () => store.journalSpreadIdx,
-  set: (value) => { store.journalSpreadIdx = value },
+const pageIdx = computed({
+  get: () => store.journalPageIdx,
+  set: (value) => { store.journalPageIdx = value },
 })
 const menuOn = ref(false)
 const glCanvas = ref<HTMLCanvasElement>()
@@ -38,44 +33,6 @@ const glDels = ref<{ id: string; x: number; y: number }[]>([])
 const coarse = typeof matchMedia === 'function' && matchMedia('(hover: none)').matches
 let scene: JournalScene | null = null
 let sceneRequest = 0
-const spreadCount = computed(() => countSpreads(journal.value?.pages.length ?? 0))
-
-let bookGestureDown: { id: number; x: number; y: number } | null = null
-let bookSwipeMoved = false
-
-function onBookPointerDown(ev: PointerEvent) {
-  if (mode.value !== 'spread' || !bookClosed.value) return
-  const stage = ev.currentTarget as HTMLElement
-  bookGestureDown = { id: ev.pointerId, x: ev.clientX, y: ev.clientY }
-  stage.setPointerCapture(ev.pointerId)
-  ev.stopPropagation()
-}
-
-function onBookPointerUp(ev: PointerEvent) {
-  const down = bookGestureDown
-  bookGestureDown = null
-  if (!down || down.id !== ev.pointerId) return
-  const dx = ev.clientX - down.x
-  const dy = ev.clientY - down.y
-  if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-    bookSwipeMoved = true
-    window.setTimeout(() => { bookSwipeMoved = false }, 400)
-  }
-  if (Math.abs(dx) < 64 || Math.abs(dx) < Math.abs(dy) * 1.3) return
-
-  bookClosed.value = false
-  ev.preventDefault()
-  ev.stopPropagation()
-  const stage = ev.currentTarget as HTMLElement
-  if (stage.hasPointerCapture(ev.pointerId)) stage.releasePointerCapture(ev.pointerId)
-}
-
-function onBookClickCapture(ev: MouseEvent) {
-  if (!bookSwipeMoved) return
-  bookSwipeMoved = false
-  ev.preventDefault()
-  ev.stopPropagation()
-}
 
 function requestDeletePage(id: string, ev: Event) {
   ev.stopPropagation()
@@ -101,27 +58,13 @@ function confirmDeletion() {
 }
 
 function flip(dir: 1 | -1) {
-  if (scene && !scene.busy) {
-    scene.flip(dir) // spreadIdx syncs via onFlipDone
+  if (scene) {
+    if (scene.busy) return
+    scene.flip(dir) // pageIdx syncs via onFlipDone
     return
   }
   const total = journal.value?.pages.length ?? 0
-  spreadIdx.value = Math.max(0, Math.min(lastSpreadIndex(total), spreadIdx.value + dir * 2))
-}
-
-function onBookPrev() {
-  if (bookClosed.value) return
-  if (spreadIdx.value <= 0) bookClosed.value = true
-  else flip(-1)
-}
-
-function onBookNext() {
-  if (bookClosed.value) {
-    bookClosed.value = false
-    return
-  }
-  if (!canTurn(1, spreadIdx.value, journal.value?.pages.length ?? 0)) bookClosed.value = true
-  else flip(1)
+  if (canTurnStack(dir, pageIdx.value, total)) pageIdx.value += dir
 }
 
 async function startScene() {
@@ -136,27 +79,19 @@ async function startScene() {
     const { JournalScene } = await import('../three/journalScene')
     if (request !== sceneRequest || !canvas.isConnected) return
     scene = new JournalScene(canvas, ink, {
-      cover: {
-        color: covers[(journal.value?.cover ?? 0) % covers.length],
-        coverImg: journal.value?.coverImg,
-      },
       onPageClick: (id) => openPage(id),
       onHoverPage: (id, anchor) => {
-        glHover.value = id && anchor && mode.value === 'fan'
-          ? { id, x: anchor.x, y: anchor.y }
-          : null
+        glHover.value = id && anchor ? { id, x: anchor.x, y: anchor.y } : null
       },
-      onFanAnchors: (list) => { glDels.value = list },
+      onSheetAnchors: (list) => { glDels.value = list },
       onFlipDone: (dir) => {
-        spreadIdx.value = Math.max(0, spreadIdx.value + dir * 2)
+        pageIdx.value = Math.max(0, pageIdx.value + dir)
       },
-      onCloseBook: () => { bookClosed.value = true },
     })
     scene.setMode(mode.value)
     scene.setPages(journal.value?.pages ?? [])
-    scene.setSpread(spreadIdx.value)
-    if (mode.value === 'fan') scene.setFanFocus(store.journalFanPageIdx)
-    scene.setBookClosed(bookClosed.value)
+    scene.setPage(pageIdx.value)
+    if (mode.value === 'overview') scene.setOverviewFocus(store.journalOverviewIdx)
     scene.start()
     // Keep the loading stage blank until the first complete 3D frame is ready.
     const s = scene
@@ -181,25 +116,17 @@ onBeforeUnmount(stopScene)
 
 watch(mode, (m) => {
   scene?.setMode(m)
-  if (m === 'fan') scene?.setFanFocus(store.journalFanPageIdx)
+  if (m === 'overview') scene?.setOverviewFocus(store.journalOverviewIdx)
 })
-watch(bookClosed, (closed) => scene?.setBookClosed(closed))
-watch(
-  () => [journal.value?.cover, journal.value?.coverImg] as const,
-  ([cover, coverImg]) => {
-    if (cover === undefined) return
-    scene?.setCover({
-      color: covers[cover % covers.length],
-      coverImg,
-    })
-  },
-)
 watch(
   () => journal.value?.pages.map((p) => p.id).join(','),
-  () => scene?.setPages(journal.value?.pages ?? []),
+  () => {
+    pageIdx.value = Math.max(0, Math.min(pageIdx.value, (journal.value?.pages.length ?? 1) - 1))
+    scene?.setPages(journal.value?.pages ?? [])
+  },
 )
-watch(spreadIdx, (v) => {
-  if (scene && !scene.busy) scene.setSpread(v)
+watch(pageIdx, (v) => {
+  if (scene && !scene.busy) scene.setPage(v)
 })
 
 async function rename() {
@@ -227,17 +154,14 @@ async function goToPage() {
   if (!j) return
   const raw = await prompt({
     title: t('journal.goto'),
-    value: String(spreadIdx.value + 1),
+    value: String(pageIdx.value + 1),
     placeholder: t('journal.gotoPrompt'),
     inputMode: 'numeric',
     confirmText: t('journal.goto'),
   })
   const n = Number(raw)
   if (!raw || !Number.isInteger(n) || n < 1 || n > j.pages.length) return
-  if (mode.value === 'spread') {
-    const pageIndex = n - 1
-    spreadIdx.value = pageIndex + pageIndex % 2
-  }
+  if (mode.value === 'stack') pageIdx.value = n - 1
   const id = j.pages[n - 1].id
   openPage(id)
 }
@@ -250,19 +174,19 @@ async function goToPage() {
     <nav class="view-modes">
       <button
         class="icon-btn"
-        :class="{ on: mode === 'spread' }"
-        @click="mode = 'spread'; bookClosed = false; spreadIdx = Math.min(spreadIdx, lastSpreadIndex(journal.pages.length))"
-        :title="t('journal.bookView')"
-        :aria-label="t('journal.bookView')"
+        :class="{ on: mode === 'stack' }"
+        @click="mode = 'stack'"
+        :title="t('journal.stackView')"
+        :aria-label="t('journal.stackView')"
       >
         <svg viewBox="0 0 24 24" width="19" height="19"><path d="M4 5 Q8 3.5 12 5 Q16 3.5 20 5 L20 18 Q16 16.5 12 18 Q8 16.5 4 18 Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 5 L12 18" stroke="currentColor" stroke-width="1.8"/></svg>
       </button>
       <button
         class="icon-btn"
-        :class="{ on: mode === 'fan' }"
-        @click="mode = 'fan'; bookClosed = false"
-        :title="t('journal.fanView')"
-        :aria-label="t('journal.fanView')"
+        :class="{ on: mode === 'overview' }"
+        @click="mode = 'overview'"
+        :title="t('journal.overview')"
+        :aria-label="t('journal.overview')"
       >
         <svg viewBox="0 0 24 24" width="19" height="19"><rect x="4" y="4" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="4" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="4" y="13" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="13" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
       </button>
@@ -305,19 +229,13 @@ async function goToPage() {
       </p>
     </header>
 
-    <div
-      class="stage"
-      @pointerdown.capture="onBookPointerDown"
-      @pointerup.capture="onBookPointerUp"
-      @pointercancel.capture="bookGestureDown = null"
-      @click.capture="onBookClickCapture"
-    >
+    <div class="stage">
       <canvas ref="glCanvas" class="stage3d" v-show="glOk"></canvas>
-      <p v-if="mode === 'spread' && !bookClosed" class="spread-pos">
-        {{ Math.floor(spreadIdx / 2) + 1 }} / {{ spreadCount }}
+      <p v-if="mode === 'stack'" class="page-pos">
+        {{ pageIdx + 1 }} / {{ journal.pages.length }}
       </p>
       <button
-        v-if="glOk && mode === 'fan' && glHover && !coarse"
+        v-if="glOk && glHover && !coarse"
         class="del gl-del"
         :style="{ left: `${glHover.x}px`, top: `${glHover.y}px` }"
         :aria-label="t('dlg.deletePageTitle')"
@@ -326,7 +244,7 @@ async function goToPage() {
       >
         ×
       </button>
-      <template v-if="glOk && mode === 'fan' && coarse">
+      <template v-if="glOk && coarse">
         <button
           v-for="d in glDels"
           :key="d.id"
@@ -340,19 +258,20 @@ async function goToPage() {
         </button>
       </template>
       <p v-if="glFailed" class="webgl-error" role="status">{{ t('journal.webglError') }}</p>
-      <template v-if="mode === 'spread'">
+      <template v-if="mode === 'stack'">
         <button
           class="flip prev"
-          :disabled="bookClosed"
-          :aria-label="spreadIdx <= 0 ? t('journal.closeBook') : t('journal.previousPage')"
-          :title="spreadIdx <= 0 ? t('journal.closeBook') : t('journal.previousPage')"
-          @click="onBookPrev"
+          :disabled="!canTurnStack(-1, pageIdx, journal.pages.length)"
+          :aria-label="t('journal.previousPage')"
+          :title="t('journal.previousPage')"
+          @click="flip(-1)"
         >‹</button>
         <button
           class="flip next"
-          :aria-label="bookClosed ? t('journal.openBook') : !canTurn(1, spreadIdx, journal.pages.length) ? t('journal.closeBook') : t('journal.nextPage')"
-          :title="bookClosed ? t('journal.openBook') : !canTurn(1, spreadIdx, journal.pages.length) ? t('journal.closeBook') : t('journal.nextPage')"
-          @click="onBookNext"
+          :disabled="!canTurnStack(1, pageIdx, journal.pages.length)"
+          :aria-label="t('journal.nextPage')"
+          :title="t('journal.nextPage')"
+          @click="flip(1)"
         >›</button>
       </template>
     </div>
@@ -383,7 +302,7 @@ async function goToPage() {
   flex-direction: column;
   overflow: hidden;
   color: var(--paper-text);
-  background: var(--paper-shell);
+  background: radial-gradient(ellipse at 48% 42%, #efefec 0%, #d5d6d2 58%, #b9bbb6 100%);
 }
 .back {
   position: absolute;
@@ -550,11 +469,10 @@ h1 {
 .flip:disabled { opacity: 0.22; box-shadow: none; }
 .flip.prev { left: 40px; }
 .flip.next { right: 40px; }
-.spread-pos {
+.page-pos {
   position: absolute;
-  top: 16%;
+  bottom: 12px;
   left: 50%;
-  bottom: auto;
   transform: translateX(-50%);
   color: var(--paper-muted);
   font-size: 12px;

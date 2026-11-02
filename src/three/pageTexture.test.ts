@@ -82,11 +82,11 @@ describe('paintPage', () => {
     expect(ctx.globalCompositeOperation).toBe('source-over')
   })
 
-  it('adds a spine-side inner shadow when asked', () => {
+  it('adds a centre fold shade when asked', () => {
     const ctx = makeCtx()
-    paintPage(fakeCanvas(), ctx, page([]), jsEngine(), 'left')
-    // paper underlay + inner shadow = two fillRects
-    expect(ops(ctx, 'fillRect')).toHaveLength(2)
+    paintPage(fakeCanvas(), ctx, page([]), jsEngine(), true)
+    // paper underlay + two fold gradients = three fillRects
+    expect(ops(ctx, 'fillRect')).toHaveLength(3)
     const plain = makeCtx()
     paintPage(fakeCanvas(), plain, page([]), jsEngine())
     expect(ops(plain, 'fillRect')).toHaveLength(1)
@@ -159,7 +159,7 @@ describe('cached content rasters', () => {
       openPage(p.id)
       pushStroke(line(0, 200))
       pageCanvas(p, spy.engine, 300)
-      pageCanvas(p, spy.engine, 300, 'left')
+      pageCanvas(p, spy.engine, 300, true)
       expect(spy.count()).toBe(1) // second variant reused the cached base
       pushStroke(line(0, 100))
       pageCanvas(p, spy.engine, 300)

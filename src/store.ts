@@ -8,7 +8,7 @@ const t = (key: string, named?: Record<string, unknown>) =>
   i18n.global.t(key, named ?? {})
 
 export type ViewName = 'shelf' | 'journal' | 'canvas'
-export type JournalMode = 'fan' | 'spread'
+export type JournalMode = 'stack' | 'overview'
 
 interface StoreState {
   view: ViewName
@@ -16,9 +16,8 @@ interface StoreState {
   journalId: string | null
   pageId: string | null
   journalMode: JournalMode
-  journalSpreadIdx: number
-  journalFanPageIdx: number
-  journalBookClosed: boolean
+  journalPageIdx: number
+  journalOverviewIdx: number
   tool: ToolId
   toolSizes: Record<ToolId, number>
   shape: ShapeKind
@@ -129,10 +128,9 @@ export const store = reactive<StoreState>({
   journals: load(),
   journalId: null,
   pageId: null,
-  journalMode: 'fan',
-  journalSpreadIdx: 0,
-  journalFanPageIdx: 0,
-  journalBookClosed: false,
+  journalMode: 'stack',
+  journalPageIdx: 0,
+  journalOverviewIdx: 0,
   tool: 'draw',
   shape: 'rectangle',
   toolSizes: {
@@ -166,21 +164,17 @@ export function currentPage(): Page | null {
 export function openJournal(id: string) {
   store.journalId = id
   store.pageId = null
-  store.journalMode = 'fan'
-  store.journalSpreadIdx = 0
-  store.journalFanPageIdx = 0
-  store.journalBookClosed = false
+  store.journalMode = 'stack'
+  store.journalPageIdx = 0
+  store.journalOverviewIdx = 0
   store.view = 'journal'
 }
 
 export function openPage(id: string) {
   const pageIndex = currentJournal()?.pages.findIndex((p) => p.id === id) ?? -1
   if (pageIndex >= 0) {
-    if (store.journalMode === 'spread') {
-      store.journalSpreadIdx = pageIndex + pageIndex % 2
-    } else {
-      store.journalFanPageIdx = pageIndex
-    }
+    store.journalPageIdx = pageIndex
+    store.journalOverviewIdx = pageIndex
   }
   store.pageId = id
   store.view = 'canvas'

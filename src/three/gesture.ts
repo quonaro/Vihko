@@ -1,5 +1,3 @@
-import { lastSpreadIndex } from './layout'
-
 // Pure drag/fling math shared by the WebGL scenes (shelf row, page fan,
 // spread turns). There is no native scroller inside a canvas, so the
 // gesture itself has to feel like one: rubber-band resistance past the
@@ -29,23 +27,6 @@ export function flickVelocity(
   const dt = recent[recent.length - 1].t - recent[0].t
   if (dt <= 0) return 0
   return ((recent[recent.length - 1].x - recent[0].x) / dt) * 1000
-}
-
-// At the first/last spread, the outward page-turn gesture closes the book.
-export function closesBookOnTurn(dir: 1 | -1, spread: number, total: number): boolean {
-  return dir > 0 ? spread >= lastSpreadIndex(total) : spread <= 0
-}
-
-export function commitsBookCloseSwipe(
-  dir: 1 | -1,
-  dx: number,
-  velocity: number,
-  width: number,
-): boolean {
-  const distance = Math.max(64, width * 0.2)
-  const draggedFarEnough = dir > 0 ? dx < -distance : dx > distance
-  const flickedFarEnough = dir > 0 ? velocity < -400 : velocity > 400
-  return draggedFarEnough || flickedFarEnough
 }
 
 // Momentum decay after release (scroll units/s). The flick travels

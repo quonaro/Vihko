@@ -39,10 +39,9 @@ beforeEach(() => {
   store.journalId = 'j1'
   store.pageId = 'p1'
   store.view = 'canvas'
-  store.journalMode = 'fan'
-  store.journalSpreadIdx = 0
-  store.journalFanPageIdx = 0
-  store.journalBookClosed = false
+  store.journalMode = 'stack'
+  store.journalPageIdx = 0
+  store.journalOverviewIdx = 0
   // drain the shared redo stack so tests stay order-independent
   while (redoStroke()) { /* pop leftovers onto p1 */ }
   currentPage()!.strokes.length = 0
@@ -62,15 +61,15 @@ describe('navigation', () => {
     expect(store.view).toBe('journal')
     expect(store.journalId).toBe('j2')
     expect(store.pageId).toBeNull()
-    expect(store.journalMode).toBe('fan')
-    expect(store.journalSpreadIdx).toBe(0)
+    expect(store.journalMode).toBe('stack')
+    expect(store.journalPageIdx).toBe(0)
 
-    store.journalMode = 'spread'
-    store.journalSpreadIdx = 2
+    store.journalMode = 'overview'
+    store.journalPageIdx = 2
     openPage('q1')
     expect(store.view).toBe('canvas')
     expect(store.pageId).toBe('q1')
-    expect(store.journalSpreadIdx).toBe(0)
+    expect(store.journalPageIdx).toBe(0)
 
     closeToJournal()
     expect(store.view).toBe('journal')
@@ -81,21 +80,22 @@ describe('navigation', () => {
     expect(store.journalId).toBeNull()
   })
 
-  it('opens a spread with the selected page on the right when possible', () => {
+  it('opens a page with the stack focused on it', () => {
     store.journals[0].pages.push(
       { id: 'p3', strokes: [], createdAt: 0 },
       { id: 'p4', strokes: [], createdAt: 0 },
     )
-    store.journalMode = 'spread'
+    store.journalMode = 'overview'
 
     openPage('p1')
-    expect(store.journalSpreadIdx).toBe(0)
+    expect(store.journalPageIdx).toBe(0)
     openPage('p2')
-    expect(store.journalSpreadIdx).toBe(2)
+    expect(store.journalPageIdx).toBe(1)
     openPage('p3')
-    expect(store.journalSpreadIdx).toBe(2)
+    expect(store.journalPageIdx).toBe(2)
     openPage('p4')
-    expect(store.journalSpreadIdx).toBe(4)
+    expect(store.journalPageIdx).toBe(3)
+    expect(store.journalOverviewIdx).toBe(3)
   })
 
   it('closeToJournal falls back to shelf without a journal', () => {

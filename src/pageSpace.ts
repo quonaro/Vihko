@@ -1,10 +1,10 @@
 // Canonical page coordinate space. Stroke points, raster-op coordinates and
-// photo placements are all stored in page units: a fixed-size sheet that the
-// journal fan/spread previews map to a 300x380 viewBox (factor 0.28) and the
-// WebGL textures sample as PAGE_W x PAGE_H. The editor viewport is a window
-// onto this sheet — see coverViewport/clampOffset.
-export const PAGE_UNIT = 300 / 0.28
-export const PAGE_ASPECT = 380 / 300 // page h/w, matches layout.ts aspect
+// photo placements are all stored in page units: a fixed-size landscape sheet
+// (a two-page spread, fold down the middle) that the journal stack/overview
+// views sample as PAGE_W x PAGE_H world units. The editor viewport is a
+// window onto this sheet — see coverViewport/clampOffset.
+export const PAGE_UNIT = 600 / 0.28
+export const PAGE_ASPECT = 380 / 600 // two portrait halves, one continuous spread
 export const PAGE_W = PAGE_UNIT
 export const PAGE_H = PAGE_UNIT * PAGE_ASPECT
 

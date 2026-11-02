@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { PAGE_W, PAGE_H, PAGE_UNIT, PAGE_ASPECT, coverViewport, clampOffset } from './pageSpace'
 
 describe('page dimensions', () => {
-  it('match the 300x380 preview viewBox at factor 0.28', () => {
-    expect(PAGE_W).toBeCloseTo(300 / 0.28)
+  it('match the 600x380 landscape spread at factor 0.28', () => {
+    expect(PAGE_W).toBeCloseTo(600 / 0.28)
     expect(PAGE_H).toBeCloseTo(PAGE_UNIT * PAGE_ASPECT)
-    expect(PAGE_H / PAGE_W).toBeCloseTo(380 / 300)
+    expect(PAGE_H / PAGE_W).toBeCloseTo(380 / 600)
   })
 })
 
@@ -28,7 +28,7 @@ describe('coverViewport', () => {
   })
 
   it('has no overflow when the aspect matches exactly', () => {
-    const v = coverViewport(300, 380)
+    const v = coverViewport(600, 380)
     expect(v.ox).toBeCloseTo(0)
     expect(v.oy).toBeCloseTo(0)
   })
@@ -50,15 +50,15 @@ describe('clampOffset', () => {
   })
 
   it('centers the sheet where it fits inside the viewport (zoomed out)', () => {
-    // 1000x700 is wider than the page aspect: at s=0.7 the sheet fits in x
-    // (750 < 1000) but still overflows in y (950 > 700).
+    // 2000x700 is wider than the page aspect: at s=0.7 the sheet fits in x
+    // (1500 < 2000) but still overflows in y (950 > 700).
     const s = 0.7
-    const centered = (1000 - PAGE_W * s) / 2
-    expect(clampOffset(-500, 0, s, 1000, 700).ox).toBeCloseTo(centered)
-    expect(clampOffset(500, 0, s, 1000, 700).ox).toBeCloseTo(centered)
+    const centered = (2000 - PAGE_W * s) / 2
+    expect(clampOffset(-500, 0, s, 2000, 700).ox).toBeCloseTo(centered)
+    expect(clampOffset(500, 0, s, 2000, 700).ox).toBeCloseTo(centered)
     // the overflowing axis still clamps as before
     const lo = 700 - PAGE_H * s
-    expect(clampOffset(0, lo - 500, s, 1000, 700).oy).toBeCloseTo(lo)
-    expect(clampOffset(0, 500, s, 1000, 700).oy).toBe(0)
+    expect(clampOffset(0, lo - 500, s, 2000, 700).oy).toBeCloseTo(lo)
+    expect(clampOffset(0, 500, s, 2000, 700).oy).toBe(0)
   })
 })

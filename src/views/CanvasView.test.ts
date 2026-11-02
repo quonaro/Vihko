@@ -530,7 +530,7 @@ describe('CanvasView', () => {
     expect(w.find('.zoom-actions .fit-btn').exists()).toBe(true)
 
     tap(canvas, 200, 400)
-    const s2 = (800 / PAGE_W) * 1.4 // new cover scale (width-driven) x kept zoom
+    const s2 = (800 / PAGE_H) * 1.4 // new cover scale (height-driven) x kept zoom
     const ox2 = (800 - PAGE_W * s2) / 2
     expect(currentPage()!.strokes[0].pts[0].x).toBeCloseTo((200 - ox2) / s2)
 

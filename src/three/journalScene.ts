@@ -1,42 +1,39 @@
 import * as THREE from 'three'
 import type { InkEngine, Page } from '../types'
 import {
-  PAGE_W, PAGE_H, PAGE_ASPECT, PAGE_STEP, COVER_W, COVER_H,
-  rowPoseFocus, rowHoverFocus, canTurn, curlPoint, SPREAD_LEAN, SPREAD_TILT,
-  bookFoldPose, spreadCameraDistance, spreadPageIndices, lastSpreadIndex,
-  FAN_LEAN, fanRestY, spreadRestY,
+  PAGE_W, PAGE_H, PAGE_STEP, sheetCameraDistance,
+  rowPoseFocus, rowHoverFocus, canTurnStack, curlPoint,
+  STACK_LEAN, stackPose, stackHoverPose, stackRestY,
+  ROW_LEAN, rowRestY, sheetPoint,
+  type Pose,
 } from './layout'
 import {
-  rubberScroll, flickVelocity, momentumStep, MOMENTUM_MIN, closesBookOnTurn,
-  commitsBookCloseSwipe,
+  rubberScroll, flickVelocity, momentumStep, MOMENTUM_MIN,
 } from './gesture'
 import { pageCanvas, repaintInto } from './pageTexture'
 import {
   createRenderer, addStudioRig, createComposer, detectQuality, FramePump,
-  addComicOutline, gridEdgeLoop, outlineMaterial, type Quality,
+  gridEdgeLoop, outlineMaterial, type Quality,
 } from './stage'
 import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
-import { getPhoto, onImageLoaded } from '../ink/ops'
-import {
-  coverCanvas, paintCover, dominantCoverColor, type CoverInput,
-} from './coverTexture'
+import { onImageLoaded } from '../ink/ops'
 import { shouldClearHoverOnCanvasLeave } from './hover'
 
 export interface SceneEvents {
-  cover?: CoverInput
   onPageClick?: (id: string) => void
   // Hovered page + its top-right corner in canvas px (delete-button anchor).
   onHoverPage?: (id: string | null, anchor: { x: number; y: number } | null) => void
-  // Anchor under each fan card in canvas px — touch devices have no hover,
-  // so every page gets a delete button below it instead.
-  onFanAnchors?: (list: { id: string; x: number; y: number }[]) => void
+  // Anchor under each visible sheet in canvas px — touch devices have no
+  // hover, so tappable sheets get a delete button below them instead.
+  onSheetAnchors?: (list: { id: string; x: number; y: number }[]) => void
   onFlipDone?: (dir: 1 | -1) => void
-  onCloseBook?: () => void
 }
 
 const FLIP_TIME = 0.62
-const TEX_W = 512
+const TEX_W = 1024
+// The free edge trails the spine mid-turn — a paper bend, not a plank.
+const LEAF_CURL = 0.4
 
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2)
 const damp = (rate: number, dt: number) => 1 - Math.exp(-rate * dt)
@@ -55,7 +52,7 @@ interface TexEntry {
   tex: THREE.CanvasTexture
   ctx: CanvasRenderingContext2D
   page: Page
-  innerShadow?: 'left' | 'right'
+  fold?: boolean
   edgeShade?: boolean
 }
 
@@ -66,25 +63,9 @@ export class JournalScene {
   private scene = new THREE.Scene()
   private camera: THREE.PerspectiveCamera
   private raycaster = new THREE.Raycaster()
-  private fanGroup = new THREE.Group()
-  private bookGroup = new THREE.Group()
-  private frontCover = new THREE.Group()
-  private coverImageCanvas: HTMLCanvasElement | null = null
-  private coverCtx: CanvasRenderingContext2D | null = null
-  private coverTex: THREE.CanvasTexture | null = null
-  private coverFace: PaperMaterial | null = null
-  private coverInnerFace: PaperMaterial | null = null
-  private backBoardMat: PaperMaterial | null = null
-  private coverInput: CoverInput = { color: '#34343a' }
-  private coverPhotoPending = false
-  private foldT = 0
-  private foldFrom = 0
-  private foldTarget = 0
-  private foldElapsed = 1
+  private stackGroup = new THREE.Group()
   private texCache = new Map<string, TexEntry>()
-  private fanPages: PageEntry[] = []
-  private left!: PageMesh
-  private right!: PageMesh
+  private sheets: PageEntry[] = []
   private turnFront!: LeafMesh
   private turnBack!: LeafMesh
   private edgeMat: PaperMaterial | null = null
@@ -103,13 +84,20 @@ export class JournalScene {
   private turnBase!: Float32Array
   private turnOutline!: Line2
   private leafRing: number[] = []
-  private mode: 'fan' | 'spread' = 'fan'
+  private mode: 'stack' | 'overview' = 'stack'
   private pages: Page[] = []
-  private spread = 0
+  // Front sheet index in the stack; stackPos trails it smoothly.
+  private cur = 0
+  private stackPos = 0
+  // Sheet hidden under the turning leaf while a turn is in flight.
+  private hideIdx: number | null = null
+  private revealIdx: number | null = null
+  private keepLeft = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0)
+  private keepRight = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0)
   private hovered: PageEntry | null = null
   private lastHoverId: string | null = null
   // 'idle' → 'manual' (leaf follows the finger) → 'run' (finish the turn) or
-  // 'cancel' (animate back onto its stack). 'run' is also entered directly
+  // 'cancel' (animate back onto its pile). 'run' is also entered directly
   // by button/wheel flips.
   private turnState: 'idle' | 'manual' | 'run' | 'cancel' = 'idle'
   private flipT = 0
@@ -121,15 +109,14 @@ export class JournalScene {
     v0: number
     moved: boolean
     turnDir: number
-    closeDir: 1 | -1 | 0
   } | null = null
   private trail: { x: number; t: number }[] = []
-  private vel = 0 // fan flick momentum, pages/s
+  private vel = 0 // overview flick momentum, pages/s
   private clickWasDrag = false
-  // Focused page as an offset from the fan centre, in page indices
-  // (0 = centred); the rendered focus damps toward fanTarget.
-  private fanTarget = 0
-  private fanPos = 0
+  // Focused page as an offset from the overview row centre, in page indices
+  // (0 = centred); the rendered focus damps toward rowTarget.
+  private rowTarget = 0
+  private rowPos = 0
   private worldPerPx = 0.01
   private wheelAcc = 0
   private wheelT = 0
@@ -154,24 +141,33 @@ export class JournalScene {
     q: Quality = detectQuality(),
   ) {
     this.stage = canvas.parentElement
-    this.coverInput = events.cover ?? this.coverInput
     this.ready = new Promise((res) => { this.readyResolve = res })
     this.renderer = createRenderer(canvas, q)
+    this.renderer.localClippingEnabled = true
+    this.inkMat.opacity = 0.08
     this.camera = new THREE.PerspectiveCamera(36, 1, 0.1, 50)
-    this.camHome.set(0, 0.55, 4.6)
+    this.camHome.set(0, 0.5, 4.6)
     this.camera.position.copy(this.camHome)
-    this.lookTarget.set(0, -0.15, 0)
+    this.lookTarget.set(0, -0.2, 0)
     this.lookPos.copy(this.lookTarget)
     addStudioRig(this.renderer, this.scene, -PAGE_H / 2 - 0.3, q)
+    // The spread faces the viewer, unlike the shelf's standing book boards.
+    // Light its front so the valley is shaded but the paper stays white.
+    for (const light of this.scene.children) {
+      if (light instanceof THREE.DirectionalLight && light.castShadow) {
+        light.position.set(-3, 6, 5)
+        light.intensity = 2
+      }
+    }
     this.post = createComposer(this.renderer, this.scene, this.camera, q)
 
-    this.fanGroup.rotation.x = FAN_LEAN
-    this.fanGroup.position.y = fanRestY(0)
-    this.bookGroup.rotation.x = SPREAD_LEAN
-    this.bookGroup.position.y = spreadRestY()
-    this.scene.add(this.fanGroup, this.bookGroup, this.turnGroup)
+    this.stackGroup.rotation.x = STACK_LEAN
+    this.stackGroup.position.y = stackRestY()
+    this.turnGroup.rotation.x = STACK_LEAN
+    this.turnGroup.position.set(0, stackRestY(), 0.006)
+    this.scene.add(this.stackGroup, this.turnGroup)
 
-    this.buildBook()
+    this.buildLeaf()
     this.unsubImages = onImageLoaded(() => this.refreshTextures())
 
     canvas.addEventListener('pointerdown', this.onPointerDown)
@@ -191,16 +187,22 @@ export class JournalScene {
 
   // Paper has real thickness: a thin box whose edge catches the light —
   // the single biggest "actually rendered" cue at this scale.
-  private pageBox(offsetX = 0) {
-    const g = new THREE.BoxGeometry(PAGE_W, PAGE_H, 0.008)
-    if (offsetX) g.translate(offsetX, 0, 0)
+  private pageBox() {
+    const g = new THREE.BoxGeometry(PAGE_W, PAGE_H, 0.006, 64, 32, 1)
+    const pos = g.attributes.position
+    for (let i = 0; i < pos.count; i++) {
+      const [x, y, z] = sheetPoint(pos.getX(i), pos.getY(i))
+      pos.setXYZ(i, x, y, z + pos.getZ(i))
+    }
+    g.computeVertexNormals()
     return g
   }
 
   // Turning leaf stays a subdivided plane — the curl deforms it per frame.
+  // x runs 0..w with the spine (the sheet's left edge) at local x = 0.
   private leafGeometry() {
-    const g = new THREE.PlaneGeometry(PAGE_W, PAGE_H, 48, 6)
-    g.translate(PAGE_W / 2, 0, 0) // x runs 0..w, spine at local x=0
+    const g = new THREE.PlaneGeometry(PAGE_W / 2, PAGE_H, 32, 32)
+    g.translate(PAGE_W / 4, 0, 0)
     return g
   }
 
@@ -286,13 +288,13 @@ export class JournalScene {
   }
 
   // Box page: textured front (+z face, material index 4), paper back and
-  // edges — so the leaf reads as a sheet, not a plane.
-  private makePage(map: THREE.Texture | null, geometry?: THREE.BoxGeometry) {
+  // edges — so the leaf reads as a sheet, not a plane. The back face doubles
+  // as the turned sheet's visible side on the left pile.
+  private makePage(map: THREE.Texture | null) {
     const face = this.pageMaterial(map, THREE.FrontSide)
     const back = this.pageMaterial(null, THREE.FrontSide)
     const e = this.edges()
-    const mesh = new THREE.Mesh(geometry ?? this.pageBox(), [e, e, e, e, face, back])
-    addComicOutline(mesh, this.inkMat)
+    const mesh = new THREE.Mesh(this.pageBox(), [e, e, e, e, face, back])
     mesh.castShadow = true
     mesh.receiveShadow = true
     return mesh as PageMesh
@@ -305,66 +307,20 @@ export class JournalScene {
     return mesh as LeafMesh
   }
 
-  private buildBook() {
-    this.coverImageCanvas = coverCanvas(this.coverInput)
-    this.coverCtx = this.coverImageCanvas?.getContext('2d') ?? null
-    this.coverPhotoPending = !!this.coverInput.coverImg && !getPhoto(this.coverInput.coverImg)
-    if (this.coverImageCanvas && this.coverCtx) {
-      this.coverTex = new THREE.CanvasTexture(this.coverImageCanvas)
-      this.coverTex.colorSpace = THREE.SRGBColorSpace
-      this.coverTex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
-    }
-
-    const edge = this.edges()
-    const backBoardMat = this.pageMaterial(null, THREE.FrontSide)
-    backBoardMat.color.set(dominantCoverColor(this.coverInput))
-    this.backBoardMat = backBoardMat
-    const backBoard = new THREE.Mesh(
-      new THREE.BoxGeometry(PAGE_W, COVER_H, 0.035),
-      [edge, edge, edge, edge, backBoardMat, backBoardMat],
-    )
-    backBoard.position.set(PAGE_W / 2, 0, -0.045)
-    addComicOutline(backBoard, this.inkMat)
-    backBoard.castShadow = true
-    backBoard.receiveShadow = true
-    this.bookGroup.add(backBoard)
-
-    const coverFace = this.pageMaterial(this.coverTex, THREE.FrontSide)
-    coverFace.color.set(this.coverTex ? 0xffffff : this.coverInput.color)
-    coverFace.roughness = 0.88
-    this.coverFace = coverFace
-    const coverInnerFace = this.pageMaterial(null, THREE.FrontSide)
-    coverInnerFace.color.set(dominantCoverColor(this.coverInput))
-    this.coverInnerFace = coverInnerFace
-    const coverGeo = new THREE.BoxGeometry(COVER_W, COVER_H, 0.035)
-    // Keep the hinge at x=0; folding aligns this board to the page block.
-    coverGeo.translate(-COVER_W / 2, 0, 0)
-    const cover = new THREE.Mesh(coverGeo, [edge, edge, edge, edge, coverInnerFace, coverFace])
-    cover.position.z = -0.045
-    addComicOutline(cover, this.inkMat)
-    cover.castShadow = true
-    cover.receiveShadow = true
-    this.frontCover.add(cover)
-    this.bookGroup.add(this.frontCover)
-
-    this.left = this.makePage(null, this.pageBox(-PAGE_W / 2))
-    this.left.rotation.y = SPREAD_TILT
-
-    this.right = this.makePage(null, this.pageBox(PAGE_W / 2))
-    this.right.rotation.y = -SPREAD_TILT
-
-    this.frontCover.add(this.left)
-    this.bookGroup.add(this.right)
-    this.bookGroup.visible = false
-
+  private buildLeaf() {
     const turnGeo = this.leafGeometry()
     this.turnBase = (turnGeo.attributes.position.array as Float32Array).slice()
     this.turnFront = this.makeLeaf(null, THREE.FrontSide, turnGeo)
-    this.turnBack = this.makeLeaf(null, THREE.BackSide, turnGeo)
+    this.turnBack = this.makeLeaf(null, THREE.BackSide, turnGeo.clone())
+    const frontUv = turnGeo.attributes.uv
+    const backUv = this.turnBack.geometry.attributes.uv
+    for (let i = 0; i < frontUv.count; i++) {
+      const u = frontUv.getX(i)
+      frontUv.setX(i, 0.5 + u * 0.5)
+      backUv.setX(i, (1 - u) * 0.5)
+    }
     this.turnOutline = this.leafOutline(turnGeo)
     this.turnGroup.add(this.turnFront, this.turnBack, this.turnOutline)
-    this.turnGroup.rotation.x = SPREAD_LEAN
-    this.turnGroup.position.y = spreadRestY()
     this.turnGroup.visible = false
   }
 
@@ -372,30 +328,20 @@ export class JournalScene {
 
   private texFor(
     page: Page | null,
-    innerShadow?: 'left' | 'right',
+    fold?: boolean,
     edgeShade?: boolean,
   ): THREE.Texture | null {
     if (!page) return null
-    const key = page.id + (innerShadow ?? '') + (edgeShade ? 'e' : '')
+    const key = page.id + (fold ? 'f' : '') + (edgeShade ? 'e' : '')
     const hit = this.texCache.get(key)
     if (hit) return hit.tex
-    const canvas = pageCanvas(page, this.ink, TEX_W, innerShadow, edgeShade)
+    const canvas = pageCanvas(page, this.ink, TEX_W, fold, edgeShade)
     if (!canvas) return null
     const tex = new THREE.CanvasTexture(canvas)
     tex.colorSpace = THREE.SRGBColorSpace
     tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
-    this.texCache.set(key, { tex, ctx: canvas.getContext('2d')!, page, innerShadow, edgeShade })
+    this.texCache.set(key, { tex, ctx: canvas.getContext('2d')!, page, fold, edgeShade })
     return tex
-  }
-
-  private mirrored(tex: THREE.Texture | null): THREE.Texture | null {
-    if (!tex) return null
-    const m = tex.clone()
-    m.wrapS = THREE.RepeatWrapping
-    m.repeat.x = -1
-    m.offset.x = 1
-    m.needsUpdate = true
-    return m
   }
 
   // Photos inside stroke ops may finish loading after the first paint.
@@ -408,189 +354,155 @@ export class JournalScene {
       refreshed.add(key)
       repaintInto(
         e.ctx, e.tex.image as HTMLCanvasElement, e.page, this.ink,
-        e.innerShadow, e.edgeShade, forceBase,
+        e.fold, e.edgeShade, forceBase,
       )
       e.tex.needsUpdate = true
-    }
-    if (this.coverPhotoPending && this.coverImageCanvas && this.coverCtx && this.coverTex) {
-      if (!this.coverInput.coverImg || !getPhoto(this.coverInput.coverImg)) return
-      paintCover(this.coverImageCanvas, this.coverCtx, this.coverInput)
-      this.coverTex.needsUpdate = true
-      const innerColor = dominantCoverColor(this.coverInput)
-      this.backBoardMat?.color.set(innerColor)
-      this.coverInnerFace?.color.set(innerColor)
-      this.coverPhotoPending = false
     }
   }
 
   // --- public API ---------------------------------------------------------
 
-  setMode(mode: 'fan' | 'spread') {
+  setMode(mode: 'stack' | 'overview') {
     this.pump.wake()
     this.mode = mode
-    this.fanGroup.visible = mode === 'fan'
-    this.bookGroup.visible = mode === 'spread'
-    this.turnGroup.visible = false
-    this.turnState = 'idle'
+    this.endTurn()
     this.hovered = null
     this.vel = 0
-    this.foldT = this.foldFrom = this.foldTarget = 0
-    this.foldElapsed = 1
-    this.frontCover.rotation.y = 0
-    this.frontCover.position.z = 0
-    this.left.rotation.y = SPREAD_TILT
-    this.right.rotation.y = -SPREAD_TILT
-    this.bookGroup.position.x = 0
+    this.stackPos = this.cur
     this.camHome.set(
       0,
-      mode === 'fan' ? 0.55 : 3.6,
-      mode === 'fan' ? 4.6 : spreadCameraDistance(this.camera.aspect),
+      mode === 'stack' ? 0.5 : 0.55,
+      mode === 'stack' ? sheetCameraDistance(this.camera.aspect) : 4.6,
     )
-    this.lookTarget.set(0, mode === 'fan' ? -0.15 : -0.68, mode === 'fan' ? 0 : 0.05)
-    // Restore halves a dropped/cancelled leaf may have revealed early.
-    this.setSpread(this.spread)
-    if (mode === 'fan') {
-      // Center the horizontal page row on the page the spread was showing.
-      this.fanTarget = this.spread - (this.fanPages.length - 1) / 2
+    this.lookTarget.set(0, mode === 'stack' ? -0.2 : -0.15, 0)
+    if (mode === 'overview') {
+      // Center the row on the sheet the stack was showing.
+      this.rowTarget = this.cur - (this.sheets.length - 1) / 2
     }
   }
 
-  setBookClosed(closed: boolean) {
-    if (this.mode !== 'spread') return
-    const target = closed ? 1 : 0
-    if (this.foldTarget === target && this.foldElapsed < 1) return
-    if (this.foldT === target && this.foldElapsed >= 1) return
-    this.foldFrom = this.foldT
-    this.foldTarget = target
-    this.foldElapsed = 0
+  setPage(idx: number) {
     this.pump.wake()
+    this.endTurn()
+    this.cur = Math.max(0, Math.min(this.pages.length - 1, idx))
+    this.stackPos = this.cur
   }
 
-  setCover(input: CoverInput) {
-    this.coverPhotoPending = !!input.coverImg && !getPhoto(input.coverImg)
-    this.coverInput = input
-    if (this.coverImageCanvas && this.coverCtx && this.coverTex && !this.coverPhotoPending) {
-      paintCover(this.coverImageCanvas, this.coverCtx, input)
-      this.coverTex.needsUpdate = true
-    }
-    if (this.coverFace) {
-      this.coverFace.color.set(this.coverTex ? 0xffffff : input.color)
-    }
-    const innerColor = dominantCoverColor(input)
-    this.backBoardMat?.color.set(innerColor)
-    this.coverInnerFace?.color.set(innerColor)
+  setOverviewFocus(index: number) {
+    const lim = (this.sheets.length - 1) / 2
+    this.rowTarget = Math.max(-lim, Math.min(lim, index - lim))
+    this.rowPos = this.rowTarget
     this.pump.wake()
   }
 
   setPages(pages: Page[]) {
     this.pump.wake()
+    this.endTurn()
     this.pages = pages
-    this.spread = Math.min(this.spread, lastSpreadIndex(pages.length))
-    // (Re)build the horizontal page row to match the page list.
-    for (const p of this.fanPages) {
-      this.fanGroup.remove(p.mesh)
+    this.cur = Math.max(0, Math.min(pages.length - 1, this.cur))
+    this.stackPos = Math.max(0, Math.min(pages.length - 1, this.stackPos))
+    // (Re)build the sheet stack to match the page list.
+    for (const p of this.sheets) {
+      this.stackGroup.remove(p.mesh)
       p.mesh.traverse((o) => {
         if (o !== p.mesh && o instanceof THREE.Mesh) o.geometry.dispose()
       })
       p.mesh.geometry.dispose()
       p.mesh.material.forEach((m) => m.dispose())
     }
-    this.fanPages = pages.map((page, i) => {
+    this.sheets = []
+    this.sheets = pages.map((page, i) => {
       const mesh = this.makePage(null)
-      const pose = rowPoseFocus(i, this.fanTarget + (pages.length - 1) / 2)
+      const pose = this.mode === 'stack' ? stackPose(i - this.cur) : rowPoseFocus(i, this.cur)
       mesh.position.set(pose.x, pose.y, pose.z)
       mesh.rotation.set(0, pose.rotY, pose.rotZ)
       mesh.userData.i = i
-      this.fanGroup.add(mesh)
+      this.stackGroup.add(mesh)
       return { mesh, id: page.id, page }
     })
-    this.fanGroup.position.y = fanRestY(this.fanPages.length)
+    this.stackGroup.position.y = this.mode === 'stack' ? stackRestY() : rowRestY()
+    this.stackGroup.rotation.x = this.mode === 'stack' ? STACK_LEAN : ROW_LEAN
     // Rasterizing N pages up front froze the journal-open animation, so
     // meshes go up as blank paper and the texture queue inks them a slice
-    // per frame, starting from the page under the fan's focus.
-    const focus = this.fanTarget + (pages.length - 1) / 2
-    this.texJobs = this.fanPages
+    // per frame, starting from the sheet under the focus.
+    const focus = this.mode === 'stack'
+      ? this.stackPos
+      : this.rowTarget + (pages.length - 1) / 2
+    this.texJobs = this.sheets
       .slice()
       .sort((a, b) => Math.abs(a.mesh.userData.i - focus) - Math.abs(b.mesh.userData.i - focus))
       .map((e) => ({ mesh: e.mesh, page: e.page }))
     this.hovered = null
     const lim = (pages.length - 1) / 2
-    this.fanTarget = Math.max(-lim, Math.min(lim, this.fanTarget))
-    this.fanPos = Math.max(-lim, Math.min(lim, this.fanPos))
-    this.setSpread(this.spread)
+    this.rowTarget = Math.max(-lim, Math.min(lim, this.rowTarget))
+    this.rowPos = Math.max(-lim, Math.min(lim, this.rowPos))
   }
 
-  setSpread(idx: number) {
-    this.pump.wake()
-    this.spread = Math.max(0, Math.min(lastSpreadIndex(this.pages.length), idx - idx % 2))
-    const pages = spreadPageIndices(this.spread, this.pages.length)
-    this.setHalf(this.left, pages.left === null ? null : this.pages[pages.left], 'right')
-    this.setHalf(this.right, pages.right === null ? null : this.pages[pages.right], 'left')
-  }
-
-  setFanFocus(index: number) {
-    const lim = (this.fanPages.length - 1) / 2
-    this.fanTarget = Math.max(-lim, Math.min(lim, index - lim))
-    this.fanPos = this.fanTarget
-    this.pump.wake()
-  }
-
-  private setHalf(
-    mesh: PageMesh,
-    page: Page | null,
-    spine: 'left' | 'right',
-  ) {
-    // Front face of the box is material index 4. The placeholder keeps
-    // USE_MAP stable, so no needsUpdate / program recompile here.
-    const face = mesh.material[4] as PaperMaterial
-    face.map = this.texFor(page, page ? spine : undefined) ?? this.placeholder()
-    mesh.visible = !!page
-    mesh.userData.id = page?.id
-  }
-
-  // Animated page turn. Textures swap at start/end so the leaf carries the
-  // source page on its start-facing side and the destination on the other.
+  // Animated sheet turn. The leaf carries the source page on its front face;
+  // its back is blank paper — turned sheets lie face-down on the left pile.
   flip(dir: 1 | -1): boolean {
-    if (this.turnState !== 'idle' || this.mode !== 'spread' || this.foldT > 0 || this.foldTarget > 0) return false
+    if (this.turnState !== 'idle' || this.mode !== 'stack') return false
     if (!this.beginFlip(dir)) return false
     this.flipT = 0
     this.turnState = 'run'
     return true
   }
 
-  // Texture/reveal setup shared by button flips and finger-driven turns.
-  // Returns false when there is no leaf to turn in that direction.
+  // Texture/hide setup shared by button flips and finger-driven turns.
+  // Returns false when there is no sheet to turn in that direction.
   private beginFlip(dir: 1 | -1): boolean {
     this.pump.wake()
-    const s = this.spread
-    if (!canTurn(dir, s, this.pages.length)) return false
-    const at = (i: number) => this.pages[i] ?? null
-    const current = spreadPageIndices(s, this.pages.length)
-    const sourceIndex = dir > 0 ? current.right : current.left
-    const source = sourceIndex === null ? null : at(sourceIndex)
-    const dest = dir > 0 ? at(s + 1) : at(s - 2)
-    const reveal = dir > 0 ? at(s + 2) : at(s - 3)
-    if (!source) return false
+    const s = this.cur
+    if (!canTurnStack(dir, s, this.pages.length)) return false
+    const leafPage = dir > 0 ? this.pages[s] : this.pages[s - 1]
+    if (!leafPage) return false
 
-    this.turnFront.material.map = (dir > 0
-      ? this.texFor(source, 'left')
-      : this.texFor(dest, dest ? 'left' : undefined)) ?? this.placeholder()
-    this.turnBack.material.map = (dir > 0
-      ? this.mirrored(this.texFor(dest, dest ? 'right' : undefined))
-      : this.mirrored(this.texFor(source, 'right'))) ?? this.placeholder()
-    this.turnFront.userData.id = source.id
+    const nextPage = dir > 0 ? this.pages[s + 1] : this.pages[s]
+    this.turnFront.material.map = this.texFor(leafPage, true) ?? this.placeholder()
+    this.turnBack.material.map = this.texFor(nextPage, true) ?? this.placeholder()
+    this.turnFront.userData.id = leafPage.id
 
-    // Reveal what's under the leaf immediately.
-    if (dir > 0) this.setHalf(this.right, reveal, 'left')
-    else this.setHalf(this.left, reveal, 'right')
+    // The leaf replaces its sheet mesh for the duration of the turn.
+    this.hideIdx = dir > 0 ? s : s - 1
+    this.revealIdx = this.hideIdx + 1
+    const left = this.sheets[this.hideIdx].mesh
+    const right = this.sheets[this.revealIdx].mesh
+    for (const [mesh, plane] of [[left, this.keepLeft], [right, this.keepRight]] as const) {
+      mesh.position.set(0, 0, 0)
+      mesh.rotation.set(0, 0, 0)
+      // Faces are unique; edge material is shared across sheets.
+      for (const material of mesh.material.slice(4)) {
+        material.clippingPlanes = [plane]
+        material.clipShadows = true
+      }
+    }
+    this.hovered = null
 
     this.flipDir = dir
     this.turnGroup.visible = true
     return true
   }
 
+  private endTurn() {
+    this.turnState = 'idle'
+    this.turnGroup.visible = false
+    for (const idx of [this.hideIdx, this.revealIdx]) {
+      if (idx === null || !this.sheets[idx]) continue
+      // Snap to the pile/front pose the leaf just covered — easing in from
+      // the pre-turn rotation would flash the sheet face-up for a frame.
+      const m = this.sheets[idx].mesh
+      for (const material of m.material.slice(4)) material.clippingPlanes = null
+      const pose = this.poseFor(idx)
+      m.position.set(pose.x, pose.y, pose.z)
+      m.rotation.set(0, pose.rotY, pose.rotZ)
+      m.visible = true
+    }
+    this.hideIdx = null
+    this.revealIdx = null
+  }
+
   get busy() {
-    return this.turnState !== 'idle' || this.foldElapsed < 1
+    return this.turnState !== 'idle'
   }
 
   dispose() {
@@ -607,7 +519,6 @@ export class JournalScene {
     this.canvas.removeEventListener('click', this.onClick)
     this.canvas.removeEventListener('wheel', this.onWheel)
     for (const e of this.texCache.values()) e.tex.dispose()
-    this.coverTex?.dispose()
     this.blankTex?.dispose()
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh) {
@@ -647,9 +558,9 @@ export class JournalScene {
     this.inkMat.resolution.set(w, h)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
-    if (this.mode === 'spread') this.camHome.z = spreadCameraDistance(this.camera.aspect)
+    if (this.mode === 'stack') this.camHome.z = sheetCameraDistance(this.camera.aspect)
     // px → world at the row's camera distance; also the row drag gain.
-    const halfW = Math.tan((this.camera.fov * Math.PI) / 360) * 4.6 * (w / h)
+    const halfW = Math.tan((this.camera.fov * Math.PI) / 360) * this.camHome.z * (w / h)
     this.worldPerPx = (2 * halfW) / w
     this.pump.wake()
   }
@@ -661,13 +572,10 @@ export class JournalScene {
 
   private onPointerDown = (e: PointerEvent) => {
     this.pump.wake()
-    if (this.mode === 'spread' && (
-      this.foldT > 0 || this.foldTarget > 0 || this.foldElapsed < 1
-    )) return
-    if (this.drag) return // a second finger must not rebase the gesture
+    if (this.drag || this.busy) return
     this.drag = {
-      id: e.pointerId, x0: e.clientX, y0: e.clientY, v0: this.fanTarget,
-      moved: false, turnDir: 0, closeDir: 0,
+      id: e.pointerId, x0: e.clientX, y0: e.clientY, v0: this.rowTarget,
+      moved: false, turnDir: 0,
     }
     this.trail = [{ x: e.clientX, t: e.timeStamp }]
     this.vel = 0
@@ -689,9 +597,9 @@ export class JournalScene {
         this.clickWasDrag = true
         this.hovered = null
         this.canvas.style.cursor = 'grabbing'
-        if (this.mode === 'fan') {
-          const lim = (this.fanPages.length - 1) / 2
-          this.fanTarget = rubberScroll(this.drag.v0 - dx * this.pxPerIndex, lim)
+        if (this.mode === 'overview') {
+          const lim = (this.sheets.length - 1) / 2
+          this.rowTarget = rubberScroll(this.drag.v0 - dx * this.pxPerIndex, lim)
         } else {
           this.dragTurn(e, dx)
         }
@@ -699,12 +607,9 @@ export class JournalScene {
       }
     }
     this.pick(x, y)
-    if (this.mode === 'spread') {
-      this.canvas.style.cursor = this.pickBook(x, y) ? 'pointer' : ''
-    }
   }
 
-  // Spread mode: once a decisively-horizontal drag is underway, grab the
+  // Stack mode: once a decisively-horizontal drag is underway, grab the
   // next/previous leaf and let it track the finger (turnState 'manual').
   private dragTurn(e: PointerEvent, dx: number) {
     const drag = this.drag!
@@ -714,12 +619,11 @@ export class JournalScene {
         const dir = dx < 0 ? 1 : -1
         drag.turnDir = this.beginFlip(dir) ? dir : 2 // 2 = tried, no leaf there
         if (drag.turnDir !== 2) this.turnState = 'manual'
-        else if (closesBookOnTurn(dir, this.spread, this.pages.length)) drag.closeDir = dir
       }
     }
     if (this.turnState === 'manual') {
       const span = Math.max(140, this.canvas.getBoundingClientRect().width * 0.55)
-      this.flipT = Math.min(0.98, Math.max(0, (Math.abs(dx) - 12) / span))
+      this.flipT = Math.min(0.98, Math.max(0, (-dx * this.flipDir - 12) / span))
     }
   }
 
@@ -729,23 +633,16 @@ export class JournalScene {
   private endDrag(e: PointerEvent, flick: boolean) {
     this.pump.wake()
     if (this.drag && e.pointerId !== this.drag.id) return // other finger lifted
-    const drag = this.drag
-    const dx = drag ? e.clientX - drag.x0 : 0
     const pv = flick ? flickVelocity(this.trail, e.timeStamp) : 0
-    if (this.drag && this.drag.moved && flick && this.mode === 'fan') {
-      const lim = (this.fanPages.length - 1) / 2
+    if (this.drag && this.drag.moved && flick && this.mode === 'overview') {
+      const lim = (this.sheets.length - 1) / 2
       this.vel = -flickVelocity(this.trail, e.timeStamp) * this.pxPerIndex
-      this.fanTarget = Math.max(-lim, Math.min(lim, this.fanTarget))
+      this.rowTarget = Math.max(-lim, Math.min(lim, this.rowTarget))
     }
     if (this.turnState === 'manual') {
       // Past half-way — or a fast enough flick — completes the turn.
-      const commit = this.flipT > 0.45 || (this.flipDir === 1 ? pv < -400 : pv > 400)
+      const commit = flick && (this.flipT > 0.45 || (this.flipDir === 1 ? pv < -400 : pv > 400))
       this.turnState = commit ? 'run' : 'cancel'
-    } else if (drag?.closeDir) {
-      const width = this.canvas.getBoundingClientRect().width
-      if (flick && commitsBookCloseSwipe(drag.closeDir, dx, pv, width)) {
-        this.events.onCloseBook?.()
-      }
     }
     this.drag = null
     this.trail = []
@@ -772,7 +669,7 @@ export class JournalScene {
       return
     }
     this.pick(e.offsetX, e.offsetY)
-    const id = this.hovered?.id ?? this.pickBook(e.offsetX, e.offsetY)
+    const id = this.hovered?.id
     if (id) this.events.onPageClick?.(id)
   }
 
@@ -780,13 +677,13 @@ export class JournalScene {
     this.pump.wake()
     e.preventDefault()
     const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
-    if (this.mode === 'fan') {
+    if (this.mode === 'overview') {
       this.vel = 0
-      const lim = (this.fanPages.length - 1) / 2
-      this.fanTarget = Math.max(-lim, Math.min(lim, this.fanTarget + d * this.pxPerIndex * 1.2))
+      const lim = (this.sheets.length - 1) / 2
+      this.rowTarget = Math.max(-lim, Math.min(lim, this.rowTarget + d * this.pxPerIndex * 1.2))
       return
     }
-    // Spread: accumulate a decisive scroll, then turn one page.
+    // Stack: accumulate a decisive scroll, then turn one sheet.
     const now = e.timeStamp
     if (now - this.wheelT > 280) this.wheelAcc = 0
     this.wheelT = now
@@ -802,22 +699,35 @@ export class JournalScene {
   }
 
   private pick(x: number, y: number) {
-    if (this.mode !== 'fan') {
+    if (this.busy) {
       this.hovered = null
       return
     }
     this.raycaster.setFromCamera(this.ndc(x, y), this.camera)
-    const hit = this.raycaster.intersectObjects(this.fanGroup.children, false)[0]
-    const entry = hit ? this.fanPages[hit.object.userData.i] : null
+    const hit = this.raycaster
+      .intersectObjects(this.stackGroup.children, false)
+      .filter((h) => h.object.visible)[0]
+    const entry = hit ? this.sheets[hit.object.userData.i] : null
     this.hovered = entry
     this.canvas.style.cursor = entry ? 'pointer' : ''
   }
 
-  private pickBook(x: number, y: number): string | null {
-    if (this.mode !== 'spread' || this.turnState !== 'idle' || this.foldT > 0 || this.foldTarget > 0) return null
-    this.raycaster.setFromCamera(this.ndc(x, y), this.camera)
-    const hit = this.raycaster.intersectObjects([this.left, this.right], false)[0]
-    return (hit?.object.userData.id as string) ?? null
+  // Effective stack focus: normally the damped front index; while a turn is
+  // in flight it slides with the leaf so the pile eases into place.
+  private effFocus(): number {
+    if (this.turnState === 'idle') return this.stackPos
+    const t = this.turnState === 'manual' ? this.flipT : easeInOut(this.flipT)
+    return this.cur + t * this.flipDir
+  }
+
+  private poseFor(i: number): Pose {
+    const entry = this.sheets[i]
+    if (this.mode === 'overview') {
+      const focus = this.rowPos + (this.sheets.length - 1) / 2
+      return entry === this.hovered ? rowHoverFocus(i, focus) : rowPoseFocus(i, focus)
+    }
+    const d = i - this.effFocus()
+    return entry === this.hovered ? stackHoverPose(d) : stackPose(d)
   }
 
   // Runs the scene one step and reports whether it is still moving — the
@@ -832,7 +742,7 @@ export class JournalScene {
       const t0 = performance.now()
       do {
         const job = this.texJobs.shift()!
-        const tex = this.texFor(job.page, undefined, true)
+        const tex = this.texFor(job.page, true, true)
         if (tex) (job.mesh.material[4] as PaperMaterial).map = tex
       } while (this.texJobs.length && performance.now() - t0 < 8)
     }
@@ -842,39 +752,74 @@ export class JournalScene {
     }
     if (!this.readyDone) moving = true
 
-    if (this.foldElapsed < 1) {
-      this.foldElapsed = Math.min(1, this.foldElapsed + dt / 0.7)
-      const t = easeInOut(this.foldElapsed)
-      this.foldT = this.foldFrom + (this.foldTarget - this.foldFrom) * t
-      const pose = bookFoldPose(this.foldT)
-      this.frontCover.rotation.y = pose.coverY
-      this.frontCover.position.z = pose.coverZ
-      this.bookGroup.position.x = pose.centerX
-      if (this.foldElapsed >= 1) this.foldT = this.foldTarget
+    // Sheet-turn deformation. 'manual' tracks the finger raw; 'run' eases to
+    // completion; 'cancel' plays it back onto the pile it came from.
+    if (this.turnState !== 'idle') {
       moving = true
+      if (this.turnState === 'run') this.flipT = Math.min(1, this.flipT + dt / FLIP_TIME)
+      else if (this.turnState === 'cancel') this.flipT = Math.max(0, this.flipT - dt / (FLIP_TIME * 0.65))
+      const t = this.turnState === 'manual' ? this.flipT : easeInOut(this.flipT)
+      const pos = this.turnFront.geometry.attributes.position
+      for (let i = 0; i < pos.count; i++) {
+        const bx = this.turnBase[i * 3]
+        const by = this.turnBase[i * 3 + 1]
+        const [px, py, pz] = curlPoint(bx, by, PAGE_W / 2, t, this.flipDir, LEAF_CURL)
+        pos.setXYZ(i, px, py, pz)
+        this.turnBack.geometry.attributes.position.setXYZ(i, px, py, pz)
+      }
+      pos.needsUpdate = true
+      this.turnFront.geometry.computeVertexNormals()
+      this.turnBack.geometry.attributes.position.needsUpdate = true
+      this.turnBack.geometry.computeVertexNormals()
+      // Fat lines bake endpoints into an instanced buffer — mirror the
+      // deformed ring so the leaf's ink border rides the curl.
+      const buf = (this.turnOutline.geometry.attributes.instanceStart as THREE.InterleavedBufferAttribute).data
+      const dst = buf.array as Float32Array
+      const src = pos.array as Float32Array
+      const ring = this.leafRing
+      for (let k = 0; k < ring.length; k++) {
+        const a = ring[k] * 3
+        const b = ring[(k + 1) % ring.length] * 3
+        dst[k * 6] = src[a]
+        dst[k * 6 + 1] = src[a + 1]
+        dst[k * 6 + 2] = src[a + 2]
+        dst[k * 6 + 3] = src[b]
+        dst[k * 6 + 4] = src[b + 1]
+        dst[k * 6 + 5] = src[b + 2]
+      }
+      buf.needsUpdate = true
+      if (this.turnState === 'run' && this.flipT >= 1) {
+        this.cur += this.flipDir
+        this.stackPos = this.cur
+        this.endTurn()
+        this.events.onFlipDone?.(this.flipDir)
+      } else if (this.turnState === 'cancel' && this.flipT <= 0) {
+        this.endTurn()
+      }
     }
 
-    // Page-row focus: flick momentum carries the scroll target, and the
+    // Overview scroll: flick momentum carries the scroll target, and the
     // rendered row follows it smoothly.
-    const n = this.fanPages.length
+    const n = this.sheets.length
     if (Math.abs(this.vel) > MOMENTUM_MIN && !this.drag) {
       moving = true
-      const s = momentumStep(this.fanTarget, this.vel, (n - 1) / 2, dt)
-      this.fanTarget = s.pos
+      const s = momentumStep(this.rowTarget, this.vel, (n - 1) / 2, dt)
+      this.rowTarget = s.pos
       this.vel = s.vel
     }
-    this.fanPos += (this.fanTarget - this.fanPos) * damp(10, dt)
-    if (Math.abs(this.fanTarget - this.fanPos) > 1e-4) moving = true
-    const focus = this.fanPos + (n - 1) / 2
+    this.rowPos += (this.rowTarget - this.rowPos) * damp(10, dt)
+    if (Math.abs(this.rowTarget - this.rowPos) > 1e-4) moving = true
+    this.stackPos += (this.cur - this.stackPos) * damp(10, dt)
+    if (Math.abs(this.cur - this.stackPos) > 1e-4) moving = true
 
-    // Fan poses ease toward rest/hover targets.
+    // Sheet poses ease toward rest/hover targets.
     const k = damp(11, dt)
     for (let i = 0; i < n; i++) {
-      const entry = this.fanPages[i]
+      const entry = this.sheets[i]
       const m = entry.mesh
-      const pose = entry === this.hovered
-        ? rowHoverFocus(i, focus)
-        : rowPoseFocus(i, focus)
+      if (!m.visible) continue
+      if (this.busy && (i === this.hideIdx || i === this.revealIdx)) continue
+      const pose = this.poseFor(i)
       const d =
         Math.abs(pose.x - m.position.x) + Math.abs(pose.y - m.position.y) +
         Math.abs(pose.z - m.position.z) +
@@ -901,54 +846,14 @@ export class JournalScene {
     this.lookPos.lerp(this.lookTarget, damp(6, dt))
     if (this.lookPos.distanceToSquared(this.lookTarget) > 1e-6) moving = true
     this.camera.lookAt(this.lookPos)
-    const bookTiltX = SPREAD_LEAN
-    if (Math.abs(bookTiltX - this.bookGroup.rotation.x) > 1e-3) moving = true
-    this.bookGroup.rotation.x += (bookTiltX - this.bookGroup.rotation.x) * damp(8, dt)
-
-    // Page-turn deformation. 'manual' tracks the finger raw; 'run' eases to
-    // completion; 'cancel' plays it back onto the stack it came from.
-    if (this.turnState !== 'idle') {
-      moving = true
-      if (this.turnState === 'run') this.flipT = Math.min(1, this.flipT + dt / FLIP_TIME)
-      else if (this.turnState === 'cancel') this.flipT = Math.max(0, this.flipT - dt / (FLIP_TIME * 0.65))
-      const t = this.turnState === 'manual' ? this.flipT : easeInOut(this.flipT)
-      const pos = this.turnFront.geometry.attributes.position
-      for (let i = 0; i < pos.count; i++) {
-        const bx = this.turnBase[i * 3]
-        const by = this.turnBase[i * 3 + 1]
-        const [px, py, pz] = curlPoint(bx, by, PAGE_W, t, this.flipDir)
-        pos.setXYZ(i, px, py, pz)
-      }
-      pos.needsUpdate = true
-      this.turnFront.geometry.computeVertexNormals()
-      // Fat lines bake endpoints into an instanced buffer — mirror the
-      // deformed ring so the leaf's ink border rides the curl.
-      const buf = (this.turnOutline.geometry.attributes.instanceStart as THREE.InterleavedBufferAttribute).data
-      const dst = buf.array as Float32Array
-      const src = pos.array as Float32Array
-      const ring = this.leafRing
-      for (let k = 0; k < ring.length; k++) {
-        const a = ring[k] * 3
-        const b = ring[(k + 1) % ring.length] * 3
-        dst[k * 6] = src[a]
-        dst[k * 6 + 1] = src[a + 1]
-        dst[k * 6 + 2] = src[a + 2]
-        dst[k * 6 + 3] = src[b]
-        dst[k * 6 + 4] = src[b + 1]
-        dst[k * 6 + 5] = src[b + 2]
-      }
-      buf.needsUpdate = true
-      if (this.turnState === 'run' && this.flipT >= 1) {
-        this.turnState = 'idle'
-        this.turnGroup.visible = false
-        this.setSpread(this.spread + this.flipDir * 2)
-        this.events.onFlipDone?.(this.flipDir)
-      } else if (this.turnState === 'cancel' && this.flipT <= 0) {
-        this.turnState = 'idle'
-        this.turnGroup.visible = false
-        this.setSpread(this.spread) // undo the early reveal
-      }
-    }
+    const groupLean = this.mode === 'stack' ? STACK_LEAN : ROW_LEAN
+    const groupRest = this.mode === 'stack' ? stackRestY() : rowRestY()
+    if (Math.abs(groupLean - this.stackGroup.rotation.x) > 1e-3) moving = true
+    this.stackGroup.rotation.x += (groupLean - this.stackGroup.rotation.x) * damp(8, dt)
+    if (Math.abs(groupRest - this.stackGroup.position.y) > 1e-3) moving = true
+    this.stackGroup.position.y += (groupRest - this.stackGroup.position.y) * damp(8, dt)
+    this.turnGroup.position.y = this.stackGroup.position.y
+    this.turnGroup.rotation.x = this.stackGroup.rotation.x
 
     // Emit hover + delete-button anchor.
     const id = this.hovered?.id ?? null
@@ -965,12 +870,12 @@ export class JournalScene {
       this.lastHoverId = id
     }
 
-    if (this.events.onFanAnchors) {
+    if (this.events.onSheetAnchors) {
       const r = this.canvas.getBoundingClientRect()
       const list: { id: string; x: number; y: number }[] = []
-      if (this.mode === 'fan') {
+      if (this.mode === 'overview') {
         const v = new THREE.Vector3()
-        for (const entry of this.fanPages) {
+        for (const entry of this.sheets) {
           v.set(0, -PAGE_H * 0.56, 0)
           entry.mesh.localToWorld(v)
           v.project(this.camera)
@@ -979,8 +884,23 @@ export class JournalScene {
           if (x < -40 || x > r.width + 40) continue
           list.push({ id: entry.id, x, y: ((1 - v.y) / 2) * r.height })
         }
+      } else {
+        // Stack mode: only the front sheet is fully tappable.
+        const entry = this.sheets[Math.round(this.stackPos)]
+        if (entry && entry.mesh.visible) {
+          const v = new THREE.Vector3(0, -PAGE_H * 0.56, 0)
+          entry.mesh.localToWorld(v)
+          v.project(this.camera)
+          if (v.z < 1) {
+            list.push({
+              id: entry.id,
+              x: ((v.x + 1) / 2) * r.width,
+              y: ((1 - v.y) / 2) * r.height,
+            })
+          }
+        }
       }
-      this.events.onFanAnchors(list)
+      this.events.onSheetAnchors(list)
     }
     return moving
   }

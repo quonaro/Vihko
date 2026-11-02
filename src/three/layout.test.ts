@@ -1,9 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
-  fanPose, fanPoseFocus, fanHoverPose, fanHoverFocus, rowPoseFocus, rowHoverFocus,
-  PAGE_STEP, canTurn, curlPoint, stackHeight, PAGE_W, PAGE_H, SPREAD_TILT, bookFoldPose,
-  COVER_W, COVER_H, spreadPageIndices, lastSpreadIndex, spreadCount,
-  spreadCameraDistance, GROUND_Y, FAN_LEAN, SPREAD_LEAN, fanDrop, fanRestY, spreadRestY,
+  rowPoseFocus, rowHoverFocus, PAGE_STEP, canTurnStack, curlPoint, PAGE_W, PAGE_H,
+  sheetCameraDistance, GROUND_Y, STACK_LEAN, ROW_LEAN, rowRestY, stackRestY,
+  stackPose, stackHoverPose, sheetPoint,
 } from './layout'
 import type { Pose } from './layout'
 
@@ -54,153 +53,61 @@ function boxesIntersect(
   return true
 }
 
-describe('fanPose', () => {
-  it('centers the middle page at x = 0 and fans symmetrically', () => {
-    const n = 5
-    expect(fanPose(2, n).x).toBe(0)
-    expect(fanPose(0, n).x).toBeLessThan(0)
-    expect(fanPose(4, n).x).toBeGreaterThan(0)
-    expect(Math.abs(fanPose(0, n).x)).toBeCloseTo(Math.abs(fanPose(4, n).x))
+describe('stackPose', () => {
+  it('centers the active spread and keeps both neighbours face-up behind it', () => {
+    expect(stackPose(0).x).toBe(0)
+    expect(stackPose(-1).x).toBeLessThan(0)
+    expect(stackPose(1).x).toBeGreaterThan(0)
+    expect(stackPose(-1).z).toBeLessThan(stackPose(0).z)
+    expect(stackPose(1).z).toBeLessThan(stackPose(0).z)
+    expect(Math.abs(stackPose(-1).rotY)).toBeLessThan(0.1)
   })
 
-  it('clamps the fan spread like the DOM version (|off| <= 4)', () => {
-    const wide = fanPose(0, 30)
-    expect(wide.x).toBeCloseTo(-4 * PAGE_W * 0.52)
+  it('bounds the fan width even for large journals', () => {
+    expect(stackPose(100).x).toBe(stackPose(7).x)
+    expect(Math.abs(stackPose(-100).x)).toBeLessThan(PAGE_W)
   })
 
-  it('later pages stack closer to the camera', () => {
-    const n = 5
-    // mirrored pair: the later index of the two sits in front
-    expect(fanPose(3, n).z).toBeGreaterThan(fanPose(1, n).z)
+  it('recedes monotonically so distant sheets cannot cover the front', () => {
+    for (let d = 1; d < 30; d++) {
+      expect(stackPose(d).z).toBeLessThan(stackPose(d - 1).z)
+      expect(stackPose(-d).z).toBeLessThan(stackPose(1 - d).z)
+    }
   })
 
-  it('never interpenetrates any pair of sheets at any journal size', () => {
-    // Regression: the centre pair of an even-count fan used to clip — the
-    // per-index z step was smaller than the inner edges' yaw dip.
-    for (let n = 2; n <= 30; n++) {
-      const boxes = Array.from({ length: n }, (_, i) => pageBox(fanPose(i, n)))
-      for (let i = 0; i < n; i++)
-        for (let j = i + 1; j < n; j++)
-          expect(boxesIntersect(boxes[i], boxes[j])).toBe(false)
+  it('keeps neighbouring sheet envelopes separated', () => {
+    for (let d = 0; d < 7; d++) {
+      expect(boxesIntersect(pageBox(stackPose(d)), pageBox(stackPose(d + 1)))).toBe(false)
     }
   })
 })
 
 describe('tabletop rest heights', () => {
-  it('puts the fan wing corners exactly on the table', () => {
-    for (const n of [1, 3, 8, 20]) {
-      expect(fanRestY(n) + fanDrop(n)).toBeCloseTo(GROUND_Y)
-    }
+  it('puts the overview bottom edge on the table', () => {
+    expect(rowRestY() - PAGE_H / 2 * Math.cos(ROW_LEAN)).toBeCloseTo(GROUND_Y)
   })
 
-  it('an empty fan rests at table height', () => {
-    expect(fanDrop(0)).toBe(0)
-    expect(fanRestY(0)).toBe(GROUND_Y)
+  it('keeps the spread bottom above the shadow catcher', () => {
+    expect(stackRestY() - PAGE_H / 2).toBeGreaterThan(GROUND_Y)
   })
 
-  it('widens the fan -> deeper drop -> higher group origin', () => {
-    expect(fanRestY(10)).toBeGreaterThan(fanRestY(2))
-  })
-
-  it('leans the fan back and lays the open book near-flat', () => {
-    expect(FAN_LEAN).toBeLessThan(0)
-    expect(FAN_LEAN).toBeGreaterThan(-Math.PI / 4)
-    expect(SPREAD_LEAN).toBeLessThan(-Math.PI / 4)
-    expect(SPREAD_LEAN).toBeGreaterThan(-Math.PI / 2)
-  })
-
-  it('rests the open book on the table, below the fan origin', () => {
-    expect(spreadRestY()).toBeLessThan(0)
-    expect(spreadRestY()).toBeGreaterThan(GROUND_Y)
-    // the lowest leaned corner must end up at table height
-    const low = -PAGE_H / 2 * Math.cos(SPREAD_LEAN) + 0.0625 * Math.sin(SPREAD_LEAN)
-    expect(spreadRestY() + low).toBeCloseTo(GROUND_Y)
+  it('faces the spread toward the viewer rather than laying a book flat', () => {
+    expect(STACK_LEAN).toBeLessThan(0)
+    expect(STACK_LEAN).toBeGreaterThan(-Math.PI / 4)
   })
 })
 
-describe('bookFoldPose', () => {
-  it('keeps both cover boards within the page block dimensions', () => {
-    expect(COVER_W).toBe(PAGE_W)
-    expect(COVER_H).toBe(PAGE_H)
-  })
-
-  it('keeps the cover behind the spread when open and folds it over the pages when closed', () => {
-    expect(bookFoldPose(0)).toEqual({
-      coverY: 0,
-      centerX: 0,
-      coverZ: 0,
-    })
-    const closed = bookFoldPose(1)
-    expect(closed.coverY).toBeCloseTo(Math.PI)
-    expect(closed.centerX).toBeCloseTo(-PAGE_W / 2)
-    expect(closed.coverZ).toBeCloseTo(0.05)
-  })
-
-  it('clamps animation progress to the open and closed endpoints', () => {
-    expect(bookFoldPose(-1)).toEqual(bookFoldPose(0))
-    expect(bookFoldPose(2)).toEqual(bookFoldPose(1))
-  })
-})
-
-describe('spreadCameraDistance', () => {
-  it('zooms out on portrait viewports enough to keep the whole spread in frame', () => {
+describe('sheetCameraDistance', () => {
+  it('keeps the full spread and some of its neighbours in portrait viewports', () => {
     const aspect = 0.5
-    const distance = spreadCameraDistance(aspect)
+    const distance = sheetCameraDistance(aspect)
     const visibleHalfWidth = distance * Math.tan(Math.PI / 10) * aspect
     expect(distance).toBeGreaterThan(4.4)
-    expect(visibleHalfWidth).toBeCloseTo(PAGE_W / 0.86, 10)
+    expect(visibleHalfWidth).toBeCloseTo(PAGE_W * 0.72, 10)
   })
 
   it('keeps the normal camera distance on wide viewports', () => {
-    expect(spreadCameraDistance(1.5)).toBe(4.4)
-  })
-})
-
-describe('fanPoseFocus', () => {
-  it('matches fanPose when focused on the row centre', () => {
-    const n = 7
-    const focus = (n - 1) / 2
-    for (let i = 0; i < n; i++) {
-      expect(fanPoseFocus(i, focus)).toEqual(fanPose(i, n))
-    }
-  })
-
-  it('slides the whole fan so the focused page sits at x = 0', () => {
-    for (const focus of [0, 2, 9]) {
-      expect(fanPoseFocus(focus, focus).x).toBeCloseTo(0)
-    }
-    // off-centre focus shifts every sheet the same way
-    expect(fanPoseFocus(3, 5).x).toBeLessThan(fanPoseFocus(3, 1).x)
-  })
-
-  it('moves all sheets by the focus delta (fractional scroll)', () => {
-    const step = PAGE_W * 0.52
-    // indices where neither focus hits the ±4 fan clamp
-    for (let i = 2; i <= 5; i++) {
-      expect(fanPoseFocus(i, 1.5).x - fanPoseFocus(i, 1).x).toBeCloseTo(-0.5 * step)
-    }
-  })
-})
-
-describe('fanHoverFocus', () => {
-  it('matches fanHoverPose at the row centre', () => {
-    const n = 6
-    for (let i = 0; i < n; i++) {
-      expect(fanHoverFocus(i, (n - 1) / 2, n)).toEqual(fanHoverPose(i, n))
-    }
-  })
-
-  it('still lifts the hovered sheet clear at a scrolled focus', () => {
-    const n = 8
-    for (const focus of [0, 3, 7]) {
-      for (let h = Math.max(0, Math.floor(focus) - 1); h <= Math.min(n - 1, Math.ceil(focus) + 1); h++) {
-        const boxes = Array.from({ length: n }, (_, i) =>
-          pageBox(i === h ? fanHoverFocus(i, focus, n) : fanPoseFocus(i, focus)),
-        )
-        for (let j = 0; j < n; j++)
-          if (j !== h) expect(boxesIntersect(boxes[h], boxes[j])).toBe(false)
-      }
-    }
+    expect(sheetCameraDistance(1.5)).toBe(4.4)
   })
 })
 
@@ -227,114 +134,101 @@ describe('horizontal page row', () => {
   })
 })
 
-describe('canTurn', () => {
-  it('allows the terminal turn that reveals the back cover', () => {
-    expect(canTurn(1, 0, 5)).toBe(true)
-    expect(canTurn(1, 2, 5)).toBe(true)
-    expect(canTurn(1, 2, 4)).toBe(true)
-    expect(canTurn(1, 4, 4)).toBe(false)
-    expect(canTurn(1, 0, 1)).toBe(true)
-    expect(canTurn(1, 2, 1)).toBe(false)
+describe('canTurnStack', () => {
+  it('turns one stored spread at a time without a terminal cover reveal', () => {
+    expect(canTurnStack(1, 0, 5)).toBe(true)
+    expect(canTurnStack(1, 3, 5)).toBe(true)
+    expect(canTurnStack(1, 4, 5)).toBe(false)
+    expect(canTurnStack(1, 0, 1)).toBe(false)
+    expect(canTurnStack(-1, 0, 1)).toBe(false)
+    expect(canTurnStack(1, 0, 0)).toBe(false)
   })
 
-  it('allows a backward turn only past the first spread', () => {
-    expect(canTurn(-1, 0, 5)).toBe(false)
-    expect(canTurn(-1, 2, 5)).toBe(true)
-    expect(canTurn(-1, 4, 5)).toBe(true)
-  })
-})
-
-describe('spreadPageIndices', () => {
-  it('starts with the first page on the right and the front cover on the left', () => {
-    expect(spreadPageIndices(0, 3)).toEqual({ left: null, right: 0 })
-  })
-
-  it('places the reverse of the turned leaf on the left', () => {
-    expect(spreadPageIndices(2, 3)).toEqual({ left: 1, right: 2 })
-    expect(spreadPageIndices(4, 4)).toEqual({ left: 3, right: null })
-    expect(spreadPageIndices(4, 3)).toEqual({ left: 2, right: null })
-  })
-
-  it('counts the final cover reveal for both odd and even page totals', () => {
-    expect(lastSpreadIndex(3)).toBe(4)
-    expect(lastSpreadIndex(4)).toBe(4)
-    expect(spreadCount(3)).toBe(3)
-    expect(spreadCount(4)).toBe(3)
-    expect(canTurn(1, 2, 3)).toBe(true)
-    expect(canTurn(1, 4, 3)).toBe(false)
-    expect(canTurn(-1, 4, 3)).toBe(true)
+  it('allows a backward turn only after the first spread', () => {
+    expect(canTurnStack(-1, 0, 5)).toBe(false)
+    expect(canTurnStack(-1, 1, 5)).toBe(true)
+    expect(canTurnStack(-1, 4, 5)).toBe(true)
   })
 })
 
-describe('fanHoverPose', () => {
-  it('lifts the hovered page toward the camera and straightens yaw', () => {
-    const rest = fanPose(1, 5)
-    const hov = fanHoverPose(1, 5)
+describe('folded sheet geometry', () => {
+  it('is two portrait halves in one landscape surface', () => {
+    expect(PAGE_W / PAGE_H).toBeCloseTo(600 / 380)
+  })
+
+  it('has a genuine central valley, not a painted stripe on a flat card', () => {
+    expect(sheetPoint(0, 0)[2]).toBe(0)
+    expect(sheetPoint(PAGE_W / 2, 0)[2]).toBeGreaterThan(0.2)
+    expect(sheetPoint(-PAGE_W / 2, 0)[2]).toBeCloseTo(sheetPoint(PAGE_W / 2, 0)[2])
+  })
+
+  it('rounds the outer corners without moving the fold', () => {
+    const [x, y] = sheetPoint(PAGE_W / 2, PAGE_H / 2)
+    expect(x).toBeLessThan(PAGE_W / 2)
+    expect(y).toBeLessThan(PAGE_H / 2)
+    expect(sheetPoint(0, PAGE_H / 2)).toEqual([0, PAGE_H / 2, 0])
+  })
+})
+
+describe('stackHoverPose', () => {
+  it('gently lifts a hovered spread without changing its orientation', () => {
+    const rest = stackPose(1)
+    const hov = stackHoverPose(1)
     expect(hov.z).toBeGreaterThan(rest.z)
     expect(hov.y).toBeGreaterThan(rest.y)
-    expect(Math.abs(hov.rotY)).toBeLessThan(Math.abs(rest.rotY))
-  })
-
-  it('lifts clear of every sheet it still overlaps', () => {
-    for (let n = 2; n <= 12; n++) {
-      for (let h = 0; h < n; h++) {
-        const boxes = Array.from({ length: n }, (_, i) =>
-          pageBox(i === h ? fanHoverPose(i, n) : fanPose(i, n)),
-        )
-        for (let j = 0; j < n; j++)
-          if (j !== h) expect(boxesIntersect(boxes[h], boxes[j])).toBe(false)
-      }
-    }
+    expect(hov.rotY).toBe(rest.rotY)
   })
 })
 
 describe('curlPoint', () => {
   it('lies flat on the right at t=0 and flat on the left at t=1', () => {
-    expect(curlPoint(PAGE_W, 0, PAGE_W, 0, 1)).toEqual([PAGE_W, 0, stackHeight(PAGE_W)])
-    const [px, , pz] = curlPoint(PAGE_W, 0, PAGE_W, 1, 1)
-    expect(px).toBeCloseTo(-PAGE_W)
-    expect(pz).toBeCloseTo(stackHeight(PAGE_W))
+    const w = PAGE_W / 2
+    expect(curlPoint(w, 0, w, 0, 1)).toEqual([w, 0, sheetPoint(w, 0)[2] + 0.005])
+    const [px, , pz] = curlPoint(w, 0, w, 1, 1)
+    expect(px).toBeCloseTo(-w)
+    expect(pz).toBeCloseTo(sheetPoint(w, 0)[2] + 0.005)
   })
 
   it('mirrors for dir=-1: flat left at t=0, flat right at t=1', () => {
-    const [px0] = curlPoint(PAGE_W, 0, PAGE_W, 0, -1)
-    expect(px0).toBeCloseTo(-PAGE_W)
-    const [px1, , pz1] = curlPoint(PAGE_W, 0, PAGE_W, 1, -1)
-    expect(px1).toBeCloseTo(PAGE_W)
-    expect(pz1).toBeCloseTo(stackHeight(PAGE_W))
+    const w = PAGE_W / 2
+    const [px0] = curlPoint(w, 0, w, 0, -1)
+    expect(px0).toBeCloseTo(-w)
+    const [px1] = curlPoint(w, 0, w, 1, -1)
+    expect(px1).toBeCloseTo(w)
   })
 
   it('lifts the sheet off the book mid-flip', () => {
-    const [, , pz] = curlPoint(PAGE_W * 0.6, 0, PAGE_W, 0.5, 1)
-    expect(pz).toBeGreaterThan(PAGE_W * 0.5)
+    const [, , pz] = curlPoint(PAGE_W * 0.4, 0, PAGE_W / 2, 0.5, 1)
+    expect(pz).toBeGreaterThan(PAGE_W * 0.35)
   })
 
   it('keeps the spine pinned at the origin', () => {
     for (const t of [0, 0.25, 0.5, 0.75, 1]) {
       const [px, , pz] = curlPoint(0, 3, PAGE_W, t, 1)
       expect(px).toBeCloseTo(0)
-      expect(pz).toBeCloseTo(0.006)
+      expect(pz).toBeCloseTo(0.005)
     }
   })
 
   it('never dips the tip through the opposite stack late in the turn', () => {
     for (const t of [0.8, 0.85, 0.9, 0.95]) {
-      const [px, , pz] = curlPoint(PAGE_W, 0, PAGE_W, t, 1)
-      expect(pz).toBeGreaterThanOrEqual(stackHeight(px) - 1e-9)
+      const [px, , pz] = curlPoint(PAGE_W / 2, 0, PAGE_W / 2, t, 1)
+      expect(pz).toBeGreaterThanOrEqual(sheetPoint(px, 0)[2])
     }
     // mirrored direction, same guarantee
     for (const t of [0.8, 0.9]) {
-      const [px, , pz] = curlPoint(PAGE_W, 0, PAGE_W, t, -1)
-      expect(pz).toBeGreaterThanOrEqual(stackHeight(px) - 1e-9)
+      const [px, , pz] = curlPoint(PAGE_W / 2, 0, PAGE_W / 2, t, -1)
+      expect(pz).toBeGreaterThanOrEqual(sheetPoint(px, 0)[2])
     }
   })
 
-  it('keeps the sheet flat and rotates every point through the same angle', () => {
+  it('bends the leaf during a turn and restores its folded endpoint', () => {
     const t = 0.35
-    const a = curlPoint(PAGE_W * 0.3, 0, PAGE_W, t, 1)
-    const b = curlPoint(PAGE_W, 0, PAGE_W, t, 1)
-    expect(a[0] / (PAGE_W * 0.3)).toBeCloseTo(b[0] / PAGE_W)
-    expect(a[2] / (PAGE_W * 0.3)).toBeCloseTo(b[2] / PAGE_W)
+    const w = PAGE_W / 2
+    const a = curlPoint(w, 0, w, t, 1, 0.4)
+    const b = curlPoint(w, 0, w, t, 1, 0)
+    expect(a[0]).not.toBeCloseTo(b[0])
+    expect(curlPoint(w, 0, w, 1, 1, 0.4)).toEqual(curlPoint(w, 0, w, 1, 1, 0))
   })
 
   it('does not twist the sheet across its width', () => {

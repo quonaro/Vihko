@@ -1,35 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   RUBBER_BAND, FLICK_WINDOW_MS, MOMENTUM_DECAY,
-  rubberScroll, flickVelocity, momentumStep, closesBookOnTurn, commitsBookCloseSwipe,
+  rubberScroll, flickVelocity, momentumStep,
 } from './gesture'
-
-describe('closesBookOnTurn', () => {
-  it('closes on a previous-turn drag at the first spread', () => {
-    expect(closesBookOnTurn(-1, 0, 6)).toBe(true)
-    expect(closesBookOnTurn(-1, 2, 6)).toBe(false)
-  })
-
-  it('closes on a next-turn drag at the last spread', () => {
-    expect(closesBookOnTurn(1, 4, 6)).toBe(false)
-    expect(closesBookOnTurn(1, 6, 6)).toBe(true)
-    expect(closesBookOnTurn(1, 2, 4)).toBe(false)
-    expect(closesBookOnTurn(1, 4, 4)).toBe(true)
-    expect(closesBookOnTurn(1, 0, 6)).toBe(false)
-  })
-})
-
-describe('commitsBookCloseSwipe', () => {
-  it('accepts a deliberate drag or directional flick toward the cover', () => {
-    expect(commitsBookCloseSwipe(1, -100, -100, 400)).toBe(true)
-    expect(commitsBookCloseSwipe(-1, 20, 500, 400)).toBe(true)
-  })
-
-  it('rejects short and opposite-direction movement', () => {
-    expect(commitsBookCloseSwipe(1, -40, -200, 400)).toBe(false)
-    expect(commitsBookCloseSwipe(1, 100, 600, 400)).toBe(false)
-  })
-})
 
 describe('rubberScroll', () => {
   it('passes values inside the limits through unchanged', () => {
