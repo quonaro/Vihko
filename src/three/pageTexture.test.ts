@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { paintPage, pageCanvas, repaintInto, PAGE_ASPECT, PAGE_UNIT } from './pageTexture'
+import { paintPage, pageCanvas, repaintInto, PAGE_ASPECT, PAGE_UNIT, SHEET_SHADE } from './pageTexture'
 import { jsEngine } from '../ink/engine'
 import { addJournal, openJournal, openPage, pushStroke } from '../store'
 import type { InkEngine, Page } from '../types'
@@ -100,6 +100,16 @@ describe('paintPage', () => {
     const plain = makeCtx()
     paintPage(fakeCanvas(), plain, page([]), jsEngine())
     expect(ops(plain, 'fillRect')).toHaveLength(1)
+  })
+})
+
+describe('SHEET_SHADE', () => {
+  it('is the shared resting+turning variant: fold plus edge shade', () => {
+    expect(SHEET_SHADE).toEqual({ fold: true, edgeShade: true })
+    const ctx = makeCtx()
+    paintPage(fakeCanvas(), ctx, page([]), jsEngine(), SHEET_SHADE.fold, SHEET_SHADE.edgeShade)
+    // paper underlay + 2 fold gradients + 4 edge gradients + 4 rim strips
+    expect(ops(ctx, 'fillRect')).toHaveLength(11)
   })
 })
 
