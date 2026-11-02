@@ -11,6 +11,15 @@ export { PAGE_ASPECT, PAGE_UNIT }
 const PAPER_TOP = '#fffefa'
 const PAPER_BOT = '#f8f6f0'
 
+// Canonical shading for a stack sheet: centre fold + edge shade. A sheet's
+// resting surface and its turning representation should both request this
+// variant (via `pageCanvas`/`repaintInto`'s fold+edgeShade params or the
+// scene's texture cache key) so the handoff between resting geometry and
+// moving leaf is pixel-identical — differing variants read as a texture
+// swap at turn start/end. Additive helper; the boolean params are
+// unchanged for any caller that still wants a distinct variant.
+export const SHEET_SHADE = { fold: true, edgeShade: true } as const
+
 // Content pass: strokes + raster ops interleaved by `after`, then the paper
 // gradient underlaid via destination-over (eraser holes show paper, not
 // alpha). Shading overlays live in paintOverlays so they can be recomposed
