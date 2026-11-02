@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  BOOK_W, BOOK_H, SHELF_STEP, TILT_YAW, TILT_PITCH, HIT_MARGIN,
-  shelfPose, hoverTilt, inHitBox, viewHalfWidth, scrollLimit,
+  BOOK_W, BOOK_H, BOOK_D, SHELF_STEP, TILT_LIFT, HIT_MARGIN, LIE_PITCH,
+  shelfPose, inHitBox, viewHalfWidth, scrollLimit,
 } from './shelfLayout'
 
 describe('shelfPose', () => {
@@ -13,44 +13,32 @@ describe('shelfPose', () => {
   })
 
   it('keeps a small gap between neighboring books', () => {
-    expect(SHELF_STEP - BOOK_W).toBeCloseTo(0.24)
+    expect(SHELF_STEP).toBeGreaterThan(BOOK_W)
+    expect(SHELF_STEP - BOOK_W).toBeCloseTo(0.2)
   })
 
-  it('keeps every book at the same height and size', () => {
+  it('lies every book flat on the table, cover up', () => {
     const n = 5
-    const mid = shelfPose(2, n)
-    const outer = shelfPose(0, n)
-    expect(outer.y).toBe(mid.y)
-    expect(outer.scale).toBe(mid.scale)
-    expect(outer.z).toBe(mid.z)
-    expect(mid.y).toBe(0)
-    expect(mid.scale).toBe(1)
+    for (let i = 0; i < n; i++) {
+      const p = shelfPose(i, n)
+      expect(p.rotX).toBeCloseTo(LIE_PITCH)
+      expect(p.y).toBeCloseTo(BOOK_D / 2)
+      expect(p.z).toBe(0)
+      expect(p.rotY).toBe(0)
+      expect(p.rotZ).toBe(0)
+      expect(p.scale).toBe(1)
+    }
   })
 
-  it('yaws the outer books inward symmetrically', () => {
-    const n = 3
-    expect(shelfPose(0, n).rotY).toBeCloseTo(-shelfPose(2, n).rotY)
-    expect(shelfPose(1, n).rotY).toBe(0)
+  it('pitches -90° so the cover normal points straight up', () => {
+    expect(LIE_PITCH).toBeCloseTo(-Math.PI / 2)
   })
 })
 
-describe('hoverTilt', () => {
-  it('is flat at the cover center', () => {
-    expect(hoverTilt(0, 0)).toEqual({ rotY: 0, rotX: 0 })
-  })
-
-  it('presses the cover edge under the pointer away from the viewer', () => {
-    // Right edge under the pointer -> positive yaw pushes +x away (-z);
-    // top edge -> negative pitch pushes +y away.
-    expect(hoverTilt(1, 0).rotY).toBeCloseTo(TILT_YAW)
-    expect(hoverTilt(-1, 0).rotY).toBeCloseTo(-TILT_YAW)
-    expect(hoverTilt(0, 1).rotX).toBeCloseTo(-TILT_PITCH)
-    expect(hoverTilt(0, -1).rotX).toBeCloseTo(TILT_PITCH)
-  })
-
-  it('clamps input outside the cover', () => {
-    expect(hoverTilt(4, -4).rotY).toBeCloseTo(TILT_YAW)
-    expect(hoverTilt(4, -4).rotX).toBeCloseTo(TILT_PITCH)
+describe('hover lift', () => {
+  it('is a small positive offset — flat books never tilt', () => {
+    expect(TILT_LIFT).toBeGreaterThan(0)
+    expect(TILT_LIFT).toBeLessThan(0.15)
   })
 })
 

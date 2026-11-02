@@ -186,19 +186,19 @@ export function addStudioRig(
   groundY: number,
   q: Quality = detectQuality(),
 ) {
-  // Image-based lighting: a small studio rig baked into an env map gives
-  // the paper soft directional sheen instead of flat ambient.
+  // Image-based lighting: a small studio rig baked into an env map lifts
+  // the matte surfaces evenly — Paper's flat look is mostly ambient.
   const pmrem = new THREE.PMREMGenerator(renderer)
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
-  scene.environmentIntensity = 0.32
+  scene.environmentIntensity = 0.38
   pmrem.dispose()
 
-  // Three-point rig: warm key with shadows, cool fill, faint top rim.
-  // The key sits low and to the front-right: faces are lit obliquely, so
-  // edges and spines shade across the row and each book drops a shadow.
-  scene.add(new THREE.AmbientLight(0xffffff, 0.1))
-  const key = new THREE.DirectionalLight(0xffe8c4, 2.3)
-  key.position.set(3.6, 3.8, 4.4)
+  // Soft flat rig: strong ambient carries the matte covers while a low
+  // key from the back-left draws the long gentle shadow to the lower
+  // right that the Paper store look has.
+  scene.add(new THREE.AmbientLight(0xffffff, 0.5))
+  const key = new THREE.DirectionalLight(0xfff0dc, 1.7)
+  key.position.set(-3.2, 1.7, -1.4)
   key.castShadow = true
   // The VSM blur below only exists on the high tier; low gets a small
   // PCF map instead, so the blur params are kept minimal there.
@@ -212,17 +212,17 @@ export function addStudioRig(
   key.shadow.bias = -0.0002
   key.shadow.normalBias = 0.02
   scene.add(key)
-  const fill = new THREE.DirectionalLight(0xcfdcff, 0.24)
-  fill.position.set(-3.5, 1.2, 2.5)
+  const fill = new THREE.DirectionalLight(0xcfdcff, 0.28)
+  fill.position.set(3.5, 1.6, 2.5)
   scene.add(fill)
-  const rim = new THREE.DirectionalLight(0xfff2df, 0.5)
+  const rim = new THREE.DirectionalLight(0xfff2df, 0.35)
   rim.position.set(0, 3.5, -4)
   scene.add(rim)
 
   // Table: real soft shadows underneath, transparent otherwise.
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(30, 30),
-    new THREE.ShadowMaterial({ opacity: 0.26 }),
+    new THREE.ShadowMaterial({ opacity: 0.2 }),
   )
   ground.rotation.x = -Math.PI / 2
   ground.position.y = groundY

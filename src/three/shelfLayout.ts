@@ -8,8 +8,12 @@
 export const BOOK_W = 1.08
 export const BOOK_H = BOOK_W / 0.735
 export const BOOK_D = 0.12 // total thickness incl. both boards
-export const SHELF_STEP = BOOK_W + 0.24 // center-to-center spacing
+export const SHELF_STEP = BOOK_W + 0.2 // center-to-center spacing
 export const EDGE_PAD = 0.3 // world-unit margin kept at row ends while panning
+
+// Books lie flat on the table, cover up: the group pitches -90° about X
+// (Euler order ZYX — rotY then spins in the table plane, rotZ dips an edge).
+export const LIE_PITCH = -Math.PI / 2
 
 export interface ShelfPose {
   x: number
@@ -17,35 +21,27 @@ export interface ShelfPose {
   z: number
   rotX: number
   rotY: number
+  rotZ: number
   scale: number
 }
 
-// Rest pose in the row — mirrors the DOM bookStyle: a flat row at one
-// height; books off centre only yaw inward like volumes on a shelf.
+// Rest pose on the table — a straight flat row with a gap, all covers up.
 export function shelfPose(i: number, total: number): ShelfPose {
   const off = i - (total - 1) / 2
   return {
     x: off * SHELF_STEP,
-    y: 0,
+    y: BOOK_D / 2,
     z: 0,
-    rotX: 0,
-    rotY: -Math.sign(off) * 0.14 + 0, // +0 normalizes -0 for sign(0)
+    rotX: LIE_PITCH,
+    rotY: 0,
+    rotZ: 0,
     scale: 1,
   }
 }
 
-// Pointer-driven tilt (vanilla-tilt convention): the cover edge under the
-// pointer presses away from the viewer. nx/ny is the pointer position on
-// the front face in half-size units (-1..1, +x right, +y up); out-of-range
-// input is clamped.
-export const TILT_YAW = 0.26
-export const TILT_PITCH = 0.15
-
-export function hoverTilt(nx: number, ny: number): { rotX: number; rotY: number } {
-  const cx = Math.max(-1, Math.min(1, nx))
-  const cy = Math.max(-1, Math.min(1, ny))
-  return { rotY: cx * TILT_YAW + 0, rotX: -cy * TILT_PITCH + 0 }
-}
+// Hover lift: the flat look keeps books untilted — a hovered book just
+// rises a touch off the table.
+export const TILT_LIFT = 0.07
 
 // Hover hitbox: the pick region is a bit larger than the cover itself so
 // the tilt starts before the pointer actually reaches the book's edge.

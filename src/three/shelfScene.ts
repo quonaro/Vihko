@@ -6,8 +6,8 @@ import {
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import {
-  BOOK_W, BOOK_H, BOOK_D, TILT_YAW,
-  shelfPose, hoverTilt, inHitBox, viewHalfWidth, scrollLimit,
+  BOOK_W, BOOK_H, BOOK_D, SHELF_STEP, TILT_LIFT,
+  shelfPose, inHitBox, scrollLimit,
 } from './shelfLayout'
 import { rubberScroll, flickVelocity, momentumStep, MOMENTUM_MIN } from './gesture'
 import { coverCanvas, paintCover, type CoverInput } from './coverTexture'
@@ -38,7 +38,11 @@ export interface ShelfEvents {
 }
 
 const FOV = 36
-const CAM_DIST = 4.9
+// Top-down table view: the camera sits almost straight above the row —
+// a small z offset keeps the boards' thickness readable. Its distance is
+// picked per-viewport in resize() so a fixed number of books fits across.
+const CAM_Y = 4.85
+const CAM_Z = 0.6
 const ENTER_TIME = 0.62
 const ENTER_STAGGER = 0.055
 
@@ -60,8 +64,6 @@ interface BookEntry {
   tex: THREE.CanvasTexture | null
   input: ShelfJournal
   enterT: number
-  tiltX: number
-  tiltY: number
 }
 
 export class ShelfScene {
@@ -70,7 +72,6 @@ export class ShelfScene {
   private scene = new THREE.Scene()
   private camera: THREE.PerspectiveCamera
   private raycaster = new THREE.Raycaster()
-  private pointer = new THREE.Vector2(0, 0)
   private row = new THREE.Group()
   private books: BookEntry[] = []
   private hovered: BookEntry | null = null
@@ -78,6 +79,7 @@ export class ShelfScene {
   private scroll = 0
   private scrollTarget = 0
   private halfW = 1
+  private camDir = new THREE.Vector3(0, CAM_Y, CAM_Z).normalize()
   private worldPerPx = 0.01
   private cw = 2
   private ch = 2
@@ -90,6 +92,7 @@ export class ShelfScene {
   private localRay = new THREE.Ray()
   private pagesGeo = new THREE.BoxGeometry(BOOK_W * 0.955, BOOK_H * 0.96, BOOK_D * 0.62)
   private boardGeo = new THREE.BoxGeometry(BOOK_W, BOOK_H, BOOK_D * 0.19)
+  private spineGeo = new THREE.BoxGeometry(0.08, BOOK_H, BOOK_D)
   private pump = new FramePump((now) => {
     const dt = Math.min((now - this.last) / 1000, 0.05)
     this.last = now
@@ -105,12 +108,13 @@ export class ShelfScene {
   constructor(
     private canvas: HTMLCanvasElement,
     private events: ShelfEvents,
-    private q: Quality = detectQuality(),
+    q: Quality = detectQuality(),
   ) {
     this.renderer = createRenderer(canvas, q)
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 50)
-    this.camera.position.set(0, 0.12, CAM_DIST)
-    addStudioRig(this.renderer, this.scene, -BOOK_H / 2 - 0.32, q)
+    this.camera.position.set(0, CAM_Y, CAM_Z)
+    this.camera.lookAt(0, 0, 0)
+    addStudioRig(this.renderer, this.scene, -0.015, q)
     this.post = createComposer(this.renderer, this.scene, this.camera, q)
     this.scene.add(this.row)
 
@@ -131,29 +135,20 @@ export class ShelfScene {
 
   // --- construction -------------------------------------------------------
 
-  // Low tier drops clearcoat (an extra BRDF lobe per pixel) — standard
-  // materials carry everything else these books need.
-  private mat(params: THREE.MeshPhysicalMaterialParameters) {
-    if (this.q === 'low') {
-      const p = { ...params }
-      delete p.clearcoat
-      delete p.clearcoatRoughness
-      return new THREE.MeshStandardMaterial(p)
-    }
-    return new THREE.MeshPhysicalMaterial(params)
-  }
-
   // A closed journal: paper block between two cover boards — the board
-  // edge is what sells "real book".
+  // edge is what sells "real book". All materials stay matte — Paper's
+  // flat look has no lacquer sheen on covers.
   private makeBook(j: ShelfJournal, sig: string): BookEntry {
     const group = new THREE.Group()
+    // ZYX: rotX lays the book flat (applied first), rotY spins it in the
+    // table plane, rotZ dips a side edge — matches shelfPose/hoverTilt.
+    group.rotation.order = 'ZYX'
     const coverC = new THREE.Color(j.coverImg ? '#33333a' : j.color)
-    const paper = this.mat({
-      color: 0xf2ecdd, roughness: 0.92, envMapIntensity: 0.3,
+    const paper = new THREE.MeshStandardMaterial({
+      color: 0xf2ecdd, roughness: 0.95, envMapIntensity: 0.25,
     })
-    const board = this.mat({
-      color: coverC, roughness: 0.55, clearcoat: 0.4,
-      clearcoatRoughness: 0.5, envMapIntensity: 0.5,
+    const board = new THREE.MeshStandardMaterial({
+      color: coverC, roughness: 0.9, envMapIntensity: 0.3,
     })
     const cnv = coverCanvas(j)
     const ctx = cnv?.getContext('2d') ?? null
@@ -163,10 +158,9 @@ export class ShelfScene {
       tex.colorSpace = THREE.SRGBColorSpace
       tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
     }
-    const face = this.mat({
+    const face = new THREE.MeshStandardMaterial({
       color: tex ? 0xffffff : coverC,
-      roughness: 0.58, clearcoat: 0.35, clearcoatRoughness: 0.55,
-      envMapIntensity: 0.55,
+      roughness: 0.85, envMapIntensity: 0.35,
     })
     if (tex) face.map = tex
 
@@ -177,12 +171,15 @@ export class ShelfScene {
     front.position.z = bz
     const back = new THREE.Mesh(this.boardGeo, board)
     back.position.z = -bz
+    const spine = new THREE.Mesh(this.spineGeo, board)
+    spine.position.x = -BOOK_W / 2 + 0.04
     const outlineMat = outlineMaterial()
     outlineMat.resolution.set(this.cw, this.ch)
     addComicOutline(pages, outlineMat)
     addComicOutline(front, outlineMat)
     addComicOutline(back, outlineMat)
-    for (const m of [pages, front, back]) {
+    addComicOutline(spine, outlineMat)
+    for (const m of [pages, front, back, spine]) {
       m.castShadow = true
       m.receiveShadow = true
       group.add(m)
@@ -194,7 +191,7 @@ export class ShelfScene {
       coverMat: face, boardMat: board,
       fadeMats: [paper, board, face], outlineMat,
       canvas: cnv, ctx, tex, input: j,
-      enterT: 0, tiltX: 0, tiltY: 0,
+      enterT: 0,
     }
     return e
   }
@@ -286,6 +283,7 @@ export class ShelfScene {
     this.books = []
     this.pagesGeo.dispose()
     this.boardGeo.dispose()
+    this.spineGeo.dispose()
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose()
@@ -325,7 +323,6 @@ export class ShelfScene {
     const r = this.canvas.getBoundingClientRect()
     const x = e.clientX - r.left
     const y = e.clientY - r.top
-    this.pointer.set((x / r.width) * 2 - 1, -((y / r.height) * 2 - 1))
     if (this.drag && e.pointerId === this.drag.id && e.buttons) {
       this.trail.push({ x: e.clientX, t: e.timeStamp })
       if (this.trail.length > 16) this.trail.shift()
@@ -408,15 +405,6 @@ export class ShelfScene {
     }
     this.hovered = best?.e ?? null
     this.canvas.style.cursor = best ? 'pointer' : ''
-    for (const b of this.books) {
-      if (best && b === best.e) {
-        b.tiltX = clamp(best.px / (BOOK_W / 2), -1, 1)
-        b.tiltY = clamp(best.py / (BOOK_H / 2), -1, 1)
-      } else {
-        b.tiltX = 0
-        b.tiltY = 0
-      }
-    }
   }
 
   // --- per-frame ----------------------------------------------------------
@@ -431,8 +419,16 @@ export class ShelfScene {
     for (const e of this.books) e.outlineMat.resolution.set(w, h)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
-    this.halfW = viewHalfWidth(FOV, CAM_DIST, w / h)
-    this.worldPerPx = (2 * this.halfW) / w
+    // Fit ~5 books across on wide screens, a single one on portrait
+    // phones: pick the camera distance that makes exactly that many
+    // shelf steps span the viewport.
+    const aspect = w / h
+    const books = aspect < 1 ? 1 : Math.min(5, Math.max(2, Math.round(aspect * 3)))
+    const halfW = (books * SHELF_STEP) / 2 + 0.15
+    const dist = halfW / (Math.tan((FOV * Math.PI) / 360) * aspect)
+    this.camera.position.copy(this.camDir).multiplyScalar(dist)
+    this.halfW = halfW
+    this.worldPerPx = (2 * halfW) / w
     this.scrollTarget = this.clampScroll(this.scrollTarget)
     this.pump.wake()
   }
@@ -466,7 +462,7 @@ export class ShelfScene {
         onScreen: !!label && label.x > -this.cw * 0.25 && label.x < this.cw * 1.25,
         hover: e === this.hovered,
         del: this.project(e, BOOK_W / 2, BOOK_H / 2, BOOK_D / 2),
-        sel: this.project(e, BOOK_W / 2 - 0.16, -BOOK_H / 2 + 0.16, BOOK_D / 2),
+        sel: this.project(e, BOOK_W / 2, -BOOK_H / 2, BOOK_D / 2),
         label,
         title,
         actions,
@@ -489,22 +485,22 @@ export class ShelfScene {
       let tz = base.z
       let trx = base.rotX
       let try_ = base.rotY
+      let trz = base.rotZ
       let ts = base.scale
       if (deviceTilt.active) {
-        const t = deviceTiltRotation(deviceTilt.x, deviceTilt.y, TILT_YAW)
-        try_ += t.rotY
-        trx += t.rotX
+        const t = deviceTiltRotation(deviceTilt.x, deviceTilt.y, 0.2)
+        trx += t.rotX * 0.5
+        trz -= t.rotY * 0.5
       } else if (e === this.hovered) {
-        const t = hoverTilt(e.tiltX, e.tiltY)
-        try_ = t.rotY
-        trx = t.rotX
+        ty += TILT_LIFT
       }
-      // Entrance mirrors the DOM rise-in: staggered, from below, fading in.
+      // Entrance: staggered, the books settle onto the table from slightly
+      // above with a small in-plane spin, fading in.
       const en = easeOut(Math.max(0, e.enterT))
-      ty += (en - 1) * 0.5
+      ty += (1 - en) * 0.55
+      try_ += (1 - en) * 0.22
       ts *= 0.94 + 0.06 * en
       const g = e.group
-      const trz = (1 - en) * -0.05
       const d =
         Math.abs(base.x - g.position.x) + Math.abs(ty - g.position.y) +
         Math.abs(tz - g.position.z) + Math.abs(trx - g.rotation.x) +
@@ -536,20 +532,6 @@ export class ShelfScene {
     this.scroll += (this.scrollTarget - this.scroll) * damp(9, dt)
     if (Math.abs(this.scrollTarget - this.scroll) > 1e-4) moving = true
     this.row.position.x = -this.scroll
-
-    // Subtle camera parallax, same idea as the journal scene.
-    const cx = deviceTilt.active ? 0 : this.pointer.x * 0.22
-    const cy = 0.12 + (deviceTilt.active ? 0 : this.pointer.y) * 0.09
-    const cz = CAM_DIST
-    const cd =
-      Math.abs(cx - this.camera.position.x) +
-      Math.abs(cy - this.camera.position.y) +
-      Math.abs(cz - this.camera.position.z)
-    if (cd > 1e-3) moving = true
-    this.camera.position.x += (cx - this.camera.position.x) * damp(6, dt)
-    this.camera.position.y += (cy - this.camera.position.y) * damp(6, dt)
-    this.camera.position.z += (cz - this.camera.position.z) * damp(6, dt)
-    this.camera.lookAt(0, 0.02, 0)
 
     this.emitAnchors()
     return moving

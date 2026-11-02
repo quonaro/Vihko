@@ -3,7 +3,7 @@ import {
   fanPose, fanPoseFocus, fanHoverPose, fanHoverFocus, rowPoseFocus, rowHoverFocus,
   PAGE_STEP, canTurn, curlPoint, stackHeight, PAGE_W, PAGE_H, SPREAD_TILT, bookFoldPose,
   COVER_W, COVER_H, spreadPageIndices, lastSpreadIndex, spreadCount,
-  spreadCameraDistance,
+  spreadCameraDistance, GROUND_Y, FAN_LEAN, SPREAD_LEAN, fanDrop, fanRestY, spreadRestY,
 } from './layout'
 import type { Pose } from './layout'
 
@@ -83,6 +83,38 @@ describe('fanPose', () => {
         for (let j = i + 1; j < n; j++)
           expect(boxesIntersect(boxes[i], boxes[j])).toBe(false)
     }
+  })
+})
+
+describe('tabletop rest heights', () => {
+  it('puts the fan wing corners exactly on the table', () => {
+    for (const n of [1, 3, 8, 20]) {
+      expect(fanRestY(n) + fanDrop(n)).toBeCloseTo(GROUND_Y)
+    }
+  })
+
+  it('an empty fan rests at table height', () => {
+    expect(fanDrop(0)).toBe(0)
+    expect(fanRestY(0)).toBe(GROUND_Y)
+  })
+
+  it('widens the fan -> deeper drop -> higher group origin', () => {
+    expect(fanRestY(10)).toBeGreaterThan(fanRestY(2))
+  })
+
+  it('leans the fan back and lays the open book near-flat', () => {
+    expect(FAN_LEAN).toBeLessThan(0)
+    expect(FAN_LEAN).toBeGreaterThan(-Math.PI / 4)
+    expect(SPREAD_LEAN).toBeLessThan(-Math.PI / 4)
+    expect(SPREAD_LEAN).toBeGreaterThan(-Math.PI / 2)
+  })
+
+  it('rests the open book on the table, below the fan origin', () => {
+    expect(spreadRestY()).toBeLessThan(0)
+    expect(spreadRestY()).toBeGreaterThan(GROUND_Y)
+    // the lowest leaned corner must end up at table height
+    const low = -PAGE_H / 2 * Math.cos(SPREAD_LEAN) + 0.0625 * Math.sin(SPREAD_LEAN)
+    expect(spreadRestY() + low).toBeCloseTo(GROUND_Y)
   })
 })
 

@@ -4,6 +4,7 @@ import {
   PAGE_W, PAGE_H, PAGE_ASPECT, PAGE_STEP, COVER_W, COVER_H,
   rowPoseFocus, rowHoverFocus, canTurn, curlPoint, SPREAD_LEAN, SPREAD_TILT,
   bookFoldPose, spreadCameraDistance, spreadPageIndices, lastSpreadIndex,
+  FAN_LEAN, fanRestY, spreadRestY,
 } from './layout'
 import {
   rubberScroll, flickVelocity, momentumStep, MOMENTUM_MIN, closesBookOnTurn,
@@ -44,8 +45,6 @@ const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 
 const damp = (rate: number, dt: number) => 1 - Math.exp(-rate * dt)
 
 type PageMesh = THREE.Mesh<THREE.BoxGeometry, THREE.Material[]>
-// MeshPhysicalMaterial on the high tier, MeshStandardMaterial on low —
-// typed as the shared base so pageMaterial can pick per quality tier.
 type PaperMaterial = THREE.MeshStandardMaterial
 type LeafMesh = THREE.Mesh<THREE.PlaneGeometry, PaperMaterial>
 
@@ -70,7 +69,6 @@ export class JournalScene {
   private scene = new THREE.Scene()
   private camera: THREE.PerspectiveCamera
   private raycaster = new THREE.Raycaster()
-  private pointer = new THREE.Vector2(0, 0)
   private fanGroup = new THREE.Group()
   private bookGroup = new THREE.Group()
   private frontCover = new THREE.Group()
@@ -150,25 +148,31 @@ export class JournalScene {
   private unsubDeviceTilt: () => void
   private ro: ResizeObserver
   private camHome = new THREE.Vector3()
+  private lookPos = new THREE.Vector3()
+  private lookTarget = new THREE.Vector3()
 
   constructor(
     private canvas: HTMLCanvasElement,
     private ink: InkEngine,
     private events: SceneEvents,
-    private q: Quality = detectQuality(),
+    q: Quality = detectQuality(),
   ) {
     this.stage = canvas.parentElement
     this.coverInput = events.cover ?? this.coverInput
     this.ready = new Promise((res) => { this.readyResolve = res })
     this.renderer = createRenderer(canvas, q)
     this.camera = new THREE.PerspectiveCamera(36, 1, 0.1, 50)
-    this.camHome.set(0, 0.1, 4.6)
+    this.camHome.set(0, 0.55, 4.6)
     this.camera.position.copy(this.camHome)
+    this.lookTarget.set(0, -0.15, 0)
+    this.lookPos.copy(this.lookTarget)
     addStudioRig(this.renderer, this.scene, -PAGE_H / 2 - 0.3, q)
     this.post = createComposer(this.renderer, this.scene, this.camera, q)
 
+    this.fanGroup.rotation.x = FAN_LEAN
+    this.fanGroup.position.y = fanRestY(0)
     this.bookGroup.rotation.x = SPREAD_LEAN
-    this.bookGroup.position.y = 0.06
+    this.bookGroup.position.y = spreadRestY()
     this.scene.add(this.fanGroup, this.bookGroup, this.turnGroup)
 
     this.buildBook()
@@ -263,20 +267,16 @@ export class JournalScene {
     return this.blankTex
   }
 
+  // Paper stays matte — the flat look has no lacquer layer to shade.
   private pageMaterial(map: THREE.Texture | null, side: THREE.Side): PaperMaterial {
-    const params: THREE.MeshPhysicalMaterialParameters = {
+    const m = new THREE.MeshStandardMaterial({
       color: map ? 0xffffff : 0xfdf9ef,
-      roughness: 0.82,
+      roughness: 0.92,
       metalness: 0,
       bumpScale: 0.004,
       envMapIntensity: 0.35,
       side,
-    }
-    // Low tier drops clearcoat — an extra BRDF lobe evaluated per pixel on
-    // every paper surface is one of the priciest parts of this scene.
-    const m = this.q === 'low'
-      ? new THREE.MeshStandardMaterial(params)
-      : new THREE.MeshPhysicalMaterial({ ...params, clearcoat: 0.07, clearcoatRoughness: 0.9 })
+    })
     m.map = map ?? this.placeholder()
     const bump = this.paperTexture()
     if (bump) m.bumpMap = bump
@@ -284,17 +284,11 @@ export class JournalScene {
   }
 
   private edges(): PaperMaterial {
-    this.edgeMat ??= this.q === 'low'
-      ? new THREE.MeshStandardMaterial({
-          color: 0xe9e4d4,
-          roughness: 0.92,
-          envMapIntensity: 0.35,
-        })
-      : new THREE.MeshPhysicalMaterial({
-          color: 0xe9e4d4,
-          roughness: 0.92,
-          envMapIntensity: 0.35,
-        })
+    this.edgeMat ??= new THREE.MeshStandardMaterial({
+      color: 0xe9e4d4,
+      roughness: 0.92,
+      envMapIntensity: 0.35,
+    })
     return this.edgeMat
   }
 
@@ -344,8 +338,7 @@ export class JournalScene {
 
     const coverFace = this.pageMaterial(this.coverTex, THREE.FrontSide)
     coverFace.color.set(this.coverTex ? 0xffffff : this.coverInput.color)
-    coverFace.roughness = 0.62
-    if (coverFace instanceof THREE.MeshPhysicalMaterial) coverFace.clearcoat = 0.32
+    coverFace.roughness = 0.88
     this.coverFace = coverFace
     const coverInnerFace = this.pageMaterial(null, THREE.FrontSide)
     coverInnerFace.color.set(dominantCoverColor(this.coverInput))
@@ -378,7 +371,7 @@ export class JournalScene {
     this.turnOutline = this.leafOutline(turnGeo)
     this.turnGroup.add(this.turnFront, this.turnBack, this.turnOutline)
     this.turnGroup.rotation.x = SPREAD_LEAN
-    this.turnGroup.position.y = 0.06
+    this.turnGroup.position.y = spreadRestY()
     this.turnGroup.visible = false
   }
 
@@ -457,9 +450,10 @@ export class JournalScene {
     this.bookGroup.position.x = 0
     this.camHome.set(
       0,
-      mode === 'fan' ? 0.1 : 0.35,
+      mode === 'fan' ? 0.55 : 3.6,
       mode === 'fan' ? 4.6 : spreadCameraDistance(this.camera.aspect),
     )
+    this.lookTarget.set(0, mode === 'fan' ? -0.15 : -0.68, mode === 'fan' ? 0 : 0.05)
     // Restore halves a dropped/cancelled leaf may have revealed early.
     this.setSpread(this.spread)
     if (mode === 'fan') {
@@ -517,6 +511,7 @@ export class JournalScene {
       this.fanGroup.add(mesh)
       return { mesh, id: page.id, page }
     })
+    this.fanGroup.position.y = fanRestY(this.fanPages.length)
     // Rasterizing N pages up front froze the journal-open animation, so
     // meshes go up as blank paper and the texture queue inks them a slice
     // per frame, starting from the page under the fan's focus.
@@ -693,7 +688,6 @@ export class JournalScene {
     const r = this.canvas.getBoundingClientRect()
     const x = e.clientX - r.left
     const y = e.clientY - r.top
-    this.pointer.set((x / r.width) * 2 - 1, -((y / r.height) * 2 - 1))
     if (this.drag && e.pointerId === this.drag.id && e.buttons) {
       this.trail.push({ x: e.clientX, t: e.timeStamp })
       if (this.trail.length > 16) this.trail.shift()
@@ -910,19 +904,19 @@ export class JournalScene {
       m.rotation.z += (pose.rotZ - m.rotation.z) * k
     }
 
-    // Camera parallax.
-    const camX = this.camHome.x + (useDeviceTilt ? 0 : this.pointer.x * 0.35)
-    const camY = this.camHome.y + (useDeviceTilt ? 0 : this.pointer.y * 0.12)
-    const camZ = this.camHome.z
+    // Camera: fixed per mode, damped toward its home on mode switches —
+    // no pointer parallax (the flat look keeps the table still).
     const cd =
-      Math.abs(camX - this.camera.position.x) +
-      Math.abs(camY - this.camera.position.y) +
-      Math.abs(camZ - this.camera.position.z)
+      Math.abs(this.camHome.x - this.camera.position.x) +
+      Math.abs(this.camHome.y - this.camera.position.y) +
+      Math.abs(this.camHome.z - this.camera.position.z)
     if (cd > 1e-3) moving = true
-    this.camera.position.x += (camX - this.camera.position.x) * damp(6, dt)
-    this.camera.position.y += (camY - this.camera.position.y) * damp(6, dt)
-    this.camera.position.z += (camZ - this.camera.position.z) * damp(6, dt)
-    this.camera.lookAt(0, 0.02, 0)
+    this.camera.position.x += (this.camHome.x - this.camera.position.x) * damp(6, dt)
+    this.camera.position.y += (this.camHome.y - this.camera.position.y) * damp(6, dt)
+    this.camera.position.z += (this.camHome.z - this.camera.position.z) * damp(6, dt)
+    this.lookPos.lerp(this.lookTarget, damp(6, dt))
+    if (this.lookPos.distanceToSquared(this.lookTarget) > 1e-6) moving = true
+    this.camera.lookAt(this.lookPos)
     const bookTiltX = this.mode === 'spread' ? SPREAD_LEAN + tiltX : SPREAD_LEAN
     const bookTiltY = this.mode === 'spread' ? tiltY : 0
     if (

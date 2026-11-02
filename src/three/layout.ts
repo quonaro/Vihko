@@ -95,10 +95,43 @@ export function fanHoverFocus(i: number, focus: number, total: number): Pose {
   return { ...p, y: p.y + 0.07, z: p.z + lift, rotY: 0, rotZ }
 }
 
+// --- table ----------------------------------------------------------------
+// Both journal modes rest on the same tabletop instead of floating:
+// GROUND_Y is the shadow-catcher plane, and each group's y is derived so
+// its lowest point touches it.
+export const GROUND_Y = -PAGE_H / 2 - 0.3
+export const FAN_LEAN = -0.5 // fan group rotation.x — row leans back, rad
+export const SPREAD_LEAN = -1.15 // book group rotation.x — lies near-flat, rad
+
+// Lowest corner of any fanned page once the group leans: wing corners of
+// the outermost sheets are what touch the table.
+export function fanDrop(total: number): number {
+  let drop = 0
+  for (let i = 0; i < total; i++) {
+    const p = fanPoseFocus(i, (total - 1) / 2)
+    const y = p.y - (PAGE_H / 2) * Math.cos(p.rotZ) - (PAGE_W / 2) * Math.abs(Math.sin(p.rotZ))
+    drop = Math.min(drop, y * Math.cos(FAN_LEAN) - p.z * Math.sin(FAN_LEAN))
+  }
+  return drop
+}
+
+// Group y that puts the fan's lowest wing corner on the table.
+export function fanRestY(total: number): number {
+  return GROUND_Y - fanDrop(total)
+}
+
+// Group y that puts the open book's bottom edge on the table. The rear
+// face of the back board (z = -0.0625 in book space) is the lowest point
+// once the group leans.
+export function spreadRestY(): number {
+  const zBack = -0.0625
+  const low = -PAGE_H / 2 * Math.cos(SPREAD_LEAN) - zBack * Math.sin(SPREAD_LEAN)
+  return GROUND_Y - low
+}
+
 // --- spread ---------------------------------------------------------------
-// The open book leans back; each half yaws a touch so outer edges come
-// toward the viewer — the spine reads as a shallow V.
-export const SPREAD_LEAN = -0.3 // book group rotation.x, rad
+// The open book lies on the table; each half yaws a touch so outer edges
+// come toward the viewer — the spine reads as a shallow V.
 export const SPREAD_TILT = 0.05 // per-half rotation.y, rad
 
 export interface BookFoldPose {
