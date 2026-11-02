@@ -1,0 +1,104 @@
+# lota.yml — Vihko project tasks
+
+install:
+  desc: Install dependencies (pnpm)
+  script: pnpm install
+
+wasm:
+  desc: Build Go→WASM ink engine (public/engine.wasm + wasm_exec.js)
+  script: pnpm build:wasm
+
+dev:
+  web:
+    desc: Vite dev server on :7357 (builds wasm engine first)
+    color: green
+    depends:
+    - wasm
+    script: pnpm dev
+
+  android:
+    desc: Live-reload on Android — app WebView loads from vite :7357, so vue/HMR works on device (boots an AVD if none connected)
+    color: green
+    depends:
+    - wasm
+    script: |
+      # Boot an emulator if no device/emulator is connected
+      if ! adb devices | grep -qw device; then
+        AVD="$("$ANDROID_HOME/emulator/emulator" -list-avds | head -1)"
+        [ -n "$AVD" ] && nohup "$ANDROID_HOME/emulator/emulator" -avd "$AVD" >/dev/null 2>&1 &
+        adb wait-for-device
+        adb shell 'while [ -z "$(getprop sys.boot_completed)" ]; do sleep 1; done'
+      fi
+      # cap run -l needs existing synced assets to rewrite
+      [ -f android/app/src/main/assets/capacitor.config.json ] || { pnpm build && pnpm exec cap sync android; }
+      # reuse an already-running dev server on :7357, otherwise start one
+      if ! curl -sf -o /dev/null http://localhost:7357/; then
+        pnpm dev &
+        VITE_PID=$!
+        trap 'kill $VITE_PID 2>/dev/null' EXIT
+        sleep 2
+      fi
+      # adb reverse makes the app's localhost:7357 reach the host vite server
+      pnpm exec cap run android --live-reload --host localhost --port 7357 --forwardPorts 7357:7357
+
+build:
+  desc: Build targets
+  color: red
+
+  web:
+    desc: Full build — wasm + typecheck + vite build → dist/
+    script: pnpm build
+
+  apk:
+    desc: Android debug APK (needs Android SDK) → android/app/build/outputs/apk/debug/app-debug.apk
+    script: pnpm build && pnpm exec cap sync android && cd android && ./gradlew assembleDebug
+
+preview:
+  desc: Preview the production build from dist/
+  script: pnpm preview
+
+typecheck:
+  desc: Typecheck (vue-tsc --noEmit)
+  script: pnpm typecheck
+
+test:
+  desc: Run all tests (vitest + go test)
+  script: pnpm test && pnpm test:go
+
+test:web:
+  desc: Vitest suite (ink engine, renderer, mix, store, views)
+  script: pnpm test
+
+test:go:
+  desc: Go engine unit tests
+  script: pnpm test:go
+
+cap:
+  desc: Capacitor commands
+  color: cyan
+
+  sync:
+    desc: Build web bundle and sync into android/ + ios/
+    script: pnpm cap:sync
+
+  android:
+    desc: Sync + open Android Studio (needs Android SDK)
+    script: pnpm cap:android
+
+  ios:
+    desc: Sync + open Xcode (macOS only — cannot build iOS on Linux)
+    script: pnpm cap:ios
+
+push:
+  desc: Push to GitHub (with tag — triggers CI/CD release pipeline)
+  color: cyan
+  args:
+  - "tag:str?"
+  script: |
+    if [ -n "$tag" ]; then
+      git tag -f $tag
+      git push origin main
+      git push origin $tag --force
+    else
+      git push origin main
+    fi

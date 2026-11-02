@@ -1,0 +1,32 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        exclude: ^pnpm-lock\.yaml$
+      - id: check-added-large-files
+        exclude: ^refs/
+
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        entry: gofmt -w
+        language: system
+        types: [go]
+
+      - id: go-vet
+        name: go vet (engine)
+        entry: bash -c 'cd engine && GOOS=js GOARCH=wasm go vet ./...'
+        language: system
+        pass_filenames: false
+        files: ^engine/
+
+      - id: vue-tsc
+        name: vue-tsc --noEmit
+        entry: pnpm typecheck
+        language: system
+        pass_filenames: false
+        files: \.(ts|vue)$

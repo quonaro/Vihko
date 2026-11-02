@@ -1,0 +1,13 @@
+{
+  "files.exclude": {
+    "**/node_modules": true,
+    "dist": true,
+    "android": true,
+    "ios": true,
+    "ghidra-projects": true,
+    "**/engine.wasm": true,
+    "**/wasm_exec.js": true,
+    "**/.DS_Store": true,
+    "**/*.lock~": true
+  }
+}

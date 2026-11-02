@@ -1,0 +1,251 @@
+import type { PageOp, PhotoItem } from '../types'
+
+const PAPER = '#f6f1e6'
+
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace('#', '')
+  const v = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  return [
+    parseInt(v.slice(0, 2), 16),
+    parseInt(v.slice(2, 4), 16),
+    parseInt(v.slice(4, 6), 16),
+  ]
+}
+
+// --- flood fill -----------------------------------------------------------
+// Scanline BFS from the seed point. Pixels with alpha < 128 (erased) are
+// treated as paper color so eraser marks don't break the fill region.
+export function floodFill(
+  ctx: CanvasRenderingContext2D,
+  wDev: number,
+  hDev: number,
+  sx: number,
+  sy: number,
+  color: string,
+  tol = 42,
+) {
+  const ix = Math.round(sx)
+  const iy = Math.round(sy)
+  if (ix < 0 || iy < 0 || ix >= wDev || iy >= hDev) return
+
+  const img = ctx.getImageData(0, 0, wDev, hDev)
+  const d = img.data
+  const [pr, pg, pb] = hexToRgb(PAPER)
+  const [tr, tg, tb] = hexToRgb(color)
+
+  const si = (iy * wDev + ix) * 4
+  const sr = d[si + 3] < 128 ? pr : d[si]
+  const sg = d[si + 3] < 128 ? pg : d[si + 1]
+  const sb = d[si + 3] < 128 ? pb : d[si + 2]
+
+  // no-op if the seed pixel is already the target color
+  if (Math.abs(sr - tr) + Math.abs(sg - tg) + Math.abs(sb - tb) < 3) return
+
+  const tol3 = tol * 3
+  // Erased pixels read as paper, so their match result is a constant.
+  const erasedMatches = Math.abs(pr - sr) + Math.abs(pg - sg) + Math.abs(pb - sb) <= tol3
+  const matches = (i: number) =>
+    d[i + 3] < 128
+      ? erasedMatches
+      : Math.abs(d[i] - sr) + Math.abs(d[i + 1] - sg) + Math.abs(d[i + 2] - sb) <= tol3
+
+  const visited = new Uint8Array(wDev * hDev)
+  const stack: number[] = [iy * wDev + ix]
+  // Track the painted bbox so putImageData only writes back what changed.
+  let x0 = wDev
+  let y0 = hDev
+  let x1 = -1
+  let y1 = -1
+  while (stack.length) {
+    const p = stack.pop()!
+    if (visited[p] || !matches(p * 4)) continue
+    const y = (p / wDev) | 0
+    const x = p % wDev
+    // walk left/right along the scanline
+    let l = x
+    let r = x
+    while (l > 0 && !visited[p - (x - l) - 1] && matches((p - (x - l) - 1) * 4)) l--
+    while (r < wDev - 1 && !visited[p + (r - x) + 1] && matches((p + (r - x) + 1) * 4)) r++
+    for (let i = l; i <= r; i++) {
+      const idx = y * wDev + i
+      visited[idx] = 1
+      const o = idx * 4
+      d[o] = tr; d[o + 1] = tg; d[o + 2] = tb; d[o + 3] = 255
+    }
+    if (l < x0) x0 = l
+    if (r > x1) x1 = r
+    if (y < y0) y0 = y
+    if (y > y1) y1 = y
+    // Queue one seed per contiguous matching span on adjacent scanlines.
+    for (const ny of [y - 1, y + 1]) {
+      if (ny < 0 || ny >= hDev) continue
+      let xs = l
+      while (xs <= r) {
+        const idx = ny * wDev + xs
+        if (!visited[idx] && matches(idx * 4)) {
+          stack.push(idx)
+          xs++
+          while (xs <= r && !visited[ny * wDev + xs] && matches((ny * wDev + xs) * 4)) xs++
+        } else {
+          xs++
+        }
+      }
+    }
+  }
+  if (x1 >= 0) ctx.putImageData(img, 0, 0, x0, y0, x1 - x0 + 1, y1 - y0 + 1)
+}
+
+// --- cut ------------------------------------------------------------------
+// scale/ox/oy map page units to device px: dev = page * scale + offset.
+export function pathTo(
+  ctx: CanvasRenderingContext2D,
+  pts: { x: number; y: number }[],
+  scale: number,
+  ox: number,
+  oy: number,
+) {
+  ctx.beginPath()
+  ctx.moveTo(pts[0].x * scale + ox, pts[0].y * scale + oy)
+  for (const p of pts.slice(1)) ctx.lineTo(p.x * scale + ox, p.y * scale + oy)
+  ctx.closePath()
+}
+
+// Lift the pixels inside `path` off the canvas; returns the captured piece
+// (device px) and clears the region to `clearColor`.
+export function extractRegion(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  path: { x: number; y: number }[],
+  scale: number,
+  ox: number,
+  oy: number,
+  clearColor: string | null = PAPER,
+): HTMLCanvasElement | null {
+  if (path.length < 3) return null
+  const piece = document.createElement('canvas')
+  piece.width = canvas.width
+  piece.height = canvas.height
+  const pc = piece.getContext('2d')!
+  pc.save()
+  pathTo(pc, path, scale, ox, oy)
+  pc.clip()
+  pc.drawImage(canvas, 0, 0)
+  pc.restore()
+
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  pathTo(ctx, path, scale, ox, oy)
+  ctx.clip()
+  if (clearColor) {
+    ctx.fillStyle = clearColor
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+  } else {
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+  }
+  ctx.restore()
+  return piece
+}
+
+export function applyCut(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  op: Extract<PageOp, { kind: 'cut' }>,
+  scale: number,
+  ox: number,
+  oy: number,
+) {
+  // Layer rasters are transparent; clearing to paper here would hide content
+  // on lower layers after a cut.
+  const piece = extractRegion(canvas, ctx, op.path, scale, ox, oy, null)
+  if (piece) ctx.drawImage(piece, op.dx * scale, op.dy * scale)
+}
+
+// --- photos ---------------------------------------------------------------
+const imageCache = new Map<string, HTMLImageElement>()
+const loadListeners = new Set<() => void>()
+
+export function onImageLoaded(fn: () => void) {
+  loadListeners.add(fn)
+  return () => loadListeners.delete(fn)
+}
+
+export function getPhoto(src: string): HTMLImageElement | null {
+  let img = imageCache.get(src)
+  if (!img) {
+    img = new Image()
+    img.onload = () => loadListeners.forEach((f) => f())
+    img.src = src
+    imageCache.set(src, img)
+  }
+  return img.complete && img.naturalWidth ? img : null
+}
+
+export function applyPhoto(
+  ctx: CanvasRenderingContext2D,
+  photo: PhotoItem,
+  scale: number,
+  ox: number,
+  oy: number,
+) {
+  const img = getPhoto(photo.src)
+  if (!img) return
+  ctx.save()
+  ctx.setTransform(scale, 0, 0, scale, ox, oy)
+  ctx.drawImage(img, photo.x, photo.y, photo.w, photo.h)
+  ctx.restore()
+}
+
+// --- replay a single non-stroke op onto the canvas -------------------------
+// scale/ox/oy map page units to device px (dev = page * scale + offset).
+export function applyOp(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  op: PageOp,
+  scale: number,
+  ox = 0,
+  oy = 0,
+) {
+  switch (op.kind) {
+    case 'fill':
+      ctx.save()
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      floodFill(ctx, canvas.width, canvas.height, op.x * scale + ox, op.y * scale + oy, op.color)
+      ctx.restore()
+      break
+    case 'cut':
+      ctx.save()
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      applyCut(canvas, ctx, op, scale, ox, oy)
+      ctx.restore()
+      break
+    case 'photo':
+      applyPhoto(ctx, op.photo, scale, ox, oy)
+      break
+    case 'clear':
+      ctx.save()
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.restore()
+      break
+  }
+}
+
+// Downscale an imported image so the dataURL fits localStorage comfortably.
+export function imageFileToPhoto(file: File, maxDim = 1024): Promise<{ src: string; w: number; h: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const k = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight))
+      const w = Math.round(img.naturalWidth * k)
+      const h = Math.round(img.naturalHeight * k)
+      const c = document.createElement('canvas')
+      c.width = w
+      c.height = h
+      c.getContext('2d')!.drawImage(img, 0, 0, w, h)
+      URL.revokeObjectURL(img.src)
+      resolve({ src: c.toDataURL('image/jpeg', 0.88), w, h })
+    }
+    img.onerror = reject
+    img.src = URL.createObjectURL(file)
+  })
+}
