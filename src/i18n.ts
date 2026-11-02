@@ -26,9 +26,6 @@ const messages = {
       themeLight: 'Light',
       themeDark: 'Dark',
       webglError: '3D rendering is unavailable on this device.',
-      tiltEnable: 'Enable motion tilt',
-      tiltDisable: 'Disable motion tilt',
-      motionTilt: 'Motion tilt',
     },
     journal: {
       back: '‹ Journals',
@@ -142,9 +139,6 @@ const messages = {
       themeLight: 'Светлая',
       themeDark: 'Тёмная',
       webglError: 'На этом устройстве недоступен 3D-режим.',
-      tiltEnable: 'Включить наклон по движению',
-      tiltDisable: 'Выключить наклон по движению',
-      motionTilt: 'Наклон по движению',
     },
     journal: {
       back: '‹ Блокноты',

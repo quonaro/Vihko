@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   BOOK_W, BOOK_H, BOOK_D, SHELF_STEP, TILT_LIFT, HIT_MARGIN, LIE_PITCH,
+  BOARD_T, PAGES_D, SPINE_H, SPINE_D, SPINE_PROUD,
   shelfPose, inHitBox, viewHalfWidth, scrollLimit,
 } from './shelfLayout'
 
@@ -92,5 +93,27 @@ describe('scrollLimit', () => {
 
   it('book height keeps the DOM cover aspect', () => {
     expect(BOOK_H / BOOK_W).toBeCloseTo(1 / 0.735)
+  })
+})
+
+describe('cover sandwich', () => {
+  // Every face must sit clear of its neighbours' planes — coincident
+  // surfaces z-fight on mediump mobile depth buffers, which is what made
+  // the spine strip flicker over the cover face on phones.
+  it('floats the paper block inside the boards, touching neither', () => {
+    const boardInner = BOOK_D / 2 - BOARD_T
+    expect(PAGES_D / 2).toBeLessThan(boardInner)
+  })
+
+  it('recesses the spine inside the boards but over the paper block', () => {
+    const boardInner = BOOK_D / 2 - BOARD_T
+    expect(SPINE_D / 2).toBeLessThan(BOOK_D / 2)
+    expect(SPINE_D / 2).toBeGreaterThan(boardInner)
+    expect(SPINE_H).toBeLessThan(BOOK_H)
+  })
+
+  it('leaves only the bound edge slightly proud of the boards', () => {
+    expect(SPINE_PROUD).toBeGreaterThan(0)
+    expect(SPINE_PROUD).toBeLessThan(0.01)
   })
 })

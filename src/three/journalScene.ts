@@ -21,9 +21,6 @@ import { getPhoto, onImageLoaded } from '../ink/ops'
 import {
   coverCanvas, paintCover, dominantCoverColor, type CoverInput,
 } from './coverTexture'
-import {
-  deviceTilt, deviceTiltRotation, shouldApplyJournalDeviceTilt, subscribeDeviceTilt,
-} from './deviceTilt'
 import { shouldClearHoverOnCanvasLeave } from './hover'
 
 export interface SceneEvents {
@@ -145,7 +142,6 @@ export class JournalScene {
   })
   private last = 0
   private unsubImages: () => void
-  private unsubDeviceTilt: () => void
   private ro: ResizeObserver
   private camHome = new THREE.Vector3()
   private lookPos = new THREE.Vector3()
@@ -177,9 +173,6 @@ export class JournalScene {
 
     this.buildBook()
     this.unsubImages = onImageLoaded(() => this.refreshTextures())
-    this.unsubDeviceTilt = subscribeDeviceTilt(() => {
-      if (this.mode === 'fan') this.pump.wake()
-    })
 
     canvas.addEventListener('pointerdown', this.onPointerDown)
     canvas.addEventListener('pointermove', this.onPointerMove)
@@ -605,7 +598,6 @@ export class JournalScene {
     this.pump.stop()
     this.ro.disconnect()
     this.unsubImages()
-    this.unsubDeviceTilt()
     this.canvas.removeEventListener('pointerdown', this.onPointerDown)
     this.canvas.removeEventListener('pointermove', this.onPointerMove)
     this.canvas.removeEventListener('pointerup', this.onPointerUp)
@@ -877,30 +869,22 @@ export class JournalScene {
 
     // Fan poses ease toward rest/hover targets.
     const k = damp(11, dt)
-    const useDeviceTilt = shouldApplyJournalDeviceTilt(deviceTilt.active, this.mode)
-    const sensorX = useDeviceTilt ? deviceTilt.x : 0
-    const sensorY = useDeviceTilt ? deviceTilt.y : 0
-    const tilt = deviceTiltRotation(sensorX, sensorY, 0.2)
-    const tiltX = tilt.rotX
-    const tiltY = tilt.rotY
     for (let i = 0; i < n; i++) {
       const entry = this.fanPages[i]
       const m = entry.mesh
       const pose = entry === this.hovered
         ? rowHoverFocus(i, focus)
         : rowPoseFocus(i, focus)
-      const rotX = tiltX
       const d =
         Math.abs(pose.x - m.position.x) + Math.abs(pose.y - m.position.y) +
-        Math.abs(pose.z - m.position.z) + Math.abs(rotX - m.rotation.x) +
-        Math.abs(pose.rotY + tiltY - m.rotation.y) +
+        Math.abs(pose.z - m.position.z) +
+        Math.abs(pose.rotY - m.rotation.y) +
         Math.abs(pose.rotZ - m.rotation.z)
       if (d > 1e-3) moving = true
       m.position.x += (pose.x - m.position.x) * k
       m.position.y += (pose.y - m.position.y) * k
       m.position.z += (pose.z - m.position.z) * k
-      m.rotation.x += (rotX - m.rotation.x) * k
-      m.rotation.y += (pose.rotY + tiltY - m.rotation.y) * k
+      m.rotation.y += (pose.rotY - m.rotation.y) * k
       m.rotation.z += (pose.rotZ - m.rotation.z) * k
     }
 
@@ -917,14 +901,9 @@ export class JournalScene {
     this.lookPos.lerp(this.lookTarget, damp(6, dt))
     if (this.lookPos.distanceToSquared(this.lookTarget) > 1e-6) moving = true
     this.camera.lookAt(this.lookPos)
-    const bookTiltX = this.mode === 'spread' ? SPREAD_LEAN + tiltX : SPREAD_LEAN
-    const bookTiltY = this.mode === 'spread' ? tiltY : 0
-    if (
-      Math.abs(bookTiltX - this.bookGroup.rotation.x) > 1e-3 ||
-      Math.abs(bookTiltY - this.bookGroup.rotation.y) > 1e-3
-    ) moving = true
+    const bookTiltX = SPREAD_LEAN
+    if (Math.abs(bookTiltX - this.bookGroup.rotation.x) > 1e-3) moving = true
     this.bookGroup.rotation.x += (bookTiltX - this.bookGroup.rotation.x) * damp(8, dt)
-    this.bookGroup.rotation.y += (bookTiltY - this.bookGroup.rotation.y) * damp(8, dt)
 
     // Page-turn deformation. 'manual' tracks the finger raw; 'run' eases to
     // completion; 'cancel' plays it back onto the stack it came from.

@@ -15,9 +15,6 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import { usePrompt } from '../composables/usePrompt'
 import { saveFile } from '../saveFile'
 import type { ShelfAnchor, ShelfJournal, ShelfScene } from '../three/shelfScene'
-import {
-  deviceTilt, disableDeviceTilt, enableDeviceTilt, startDeviceTiltByDefault, supportsDeviceTilt,
-} from '../three/deviceTilt'
 
 const { t, locale } = useI18n()
 const { prompt } = usePrompt()
@@ -56,7 +53,6 @@ const hoverId = ref<string | null>(null)
 const uiHold = ref(false) // pointer sits on a DOM overlay button
 // Touch devices have no hover — keep the action buttons visible.
 const coarse = typeof matchMedia === 'function' && matchMedia('(hover: none)').matches
-const motionAvailable = coarse && supportsDeviceTilt()
 let scene: ShelfScene | null = null
 let sceneRequest = 0
 let labelTimer: ReturnType<typeof setTimeout> | undefined
@@ -215,10 +211,7 @@ function stopScene() {
   hoverId.value = null
 }
 
-onMounted(() => {
-  if (motionAvailable) void startDeviceTiltByDefault()
-  startScene()
-})
+onMounted(startScene)
 onBeforeUnmount(stopScene)
 
 watch(journalSig, () => scene?.setJournals(sceneJournals()))
@@ -270,11 +263,6 @@ async function onCoverPicked(e: Event) {
   if (!file) return
   const img = await imageFileToPhoto(file, 800)
   applyCover(img.src)
-}
-
-function toggleMotionTilt() {
-  if (deviceTilt.active) disableDeviceTilt()
-  else void enableDeviceTilt()
 }
 </script>
 
@@ -403,15 +391,6 @@ function toggleMotionTilt() {
             @click="setTheme('dark')"
           >{{ t('shelf.themeDark') }}</button>
         </div>
-      </div>
-      <div v-if="motionAvailable" class="set-row">
-        <span class="set-label">{{ t('shelf.motionTilt') }}</span>
-        <button
-          class="seg-btn motion-setting-btn"
-          :class="{ on: deviceTilt.active }"
-          :aria-pressed="deviceTilt.active"
-          @click="toggleMotionTilt"
-        >{{ t(deviceTilt.active ? 'shelf.tiltDisable' : 'shelf.tiltEnable') }}</button>
       </div>
       <div class="set-row">
         <span class="set-label">{{ t('shelf.language') }}</span>

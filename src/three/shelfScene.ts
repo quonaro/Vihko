@@ -7,12 +7,12 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import {
   BOOK_W, BOOK_H, BOOK_D, SHELF_STEP, TILT_LIFT,
+  BOARD_T, PAGES_D, SPINE_W, SPINE_H, SPINE_D, SPINE_PROUD,
   shelfPose, inHitBox, scrollLimit,
 } from './shelfLayout'
 import { rubberScroll, flickVelocity, momentumStep, MOMENTUM_MIN } from './gesture'
 import { coverCanvas, paintCover, type CoverInput } from './coverTexture'
 import { onImageLoaded } from '../ink/ops'
-import { deviceTilt, deviceTiltRotation, subscribeDeviceTilt } from './deviceTilt'
 
 export interface ShelfJournal extends CoverInput {
   id: string
@@ -90,9 +90,9 @@ export class ShelfScene {
   private v = new THREE.Vector3()
   private m1 = new THREE.Matrix4()
   private localRay = new THREE.Ray()
-  private pagesGeo = new THREE.BoxGeometry(BOOK_W * 0.955, BOOK_H * 0.96, BOOK_D * 0.62)
-  private boardGeo = new THREE.BoxGeometry(BOOK_W, BOOK_H, BOOK_D * 0.19)
-  private spineGeo = new THREE.BoxGeometry(0.08, BOOK_H, BOOK_D)
+  private pagesGeo = new THREE.BoxGeometry(BOOK_W * 0.955, BOOK_H * 0.96, PAGES_D)
+  private boardGeo = new THREE.BoxGeometry(BOOK_W, BOOK_H, BOARD_T)
+  private spineGeo = new THREE.BoxGeometry(SPINE_W, SPINE_H, SPINE_D)
   private pump = new FramePump((now) => {
     const dt = Math.min((now - this.last) / 1000, 0.05)
     this.last = now
@@ -102,7 +102,6 @@ export class ShelfScene {
   })
   private last = 0
   private unsubImages: () => void
-  private unsubDeviceTilt: () => void
   private ro: ResizeObserver
 
   constructor(
@@ -119,7 +118,6 @@ export class ShelfScene {
     this.scene.add(this.row)
 
     this.unsubImages = onImageLoaded(() => this.refreshCovers())
-    this.unsubDeviceTilt = subscribeDeviceTilt(() => this.pump.wake())
 
     canvas.addEventListener('pointerdown', this.onPointerDown)
     canvas.addEventListener('pointermove', this.onPointerMove)
@@ -164,7 +162,7 @@ export class ShelfScene {
     })
     if (tex) face.map = tex
 
-    const bz = BOOK_D / 2 - (BOOK_D * 0.19) / 2
+    const bz = BOOK_D / 2 - BOARD_T / 2
     const pages = new THREE.Mesh(this.pagesGeo, paper)
     pages.position.set(BOOK_W * 0.02, 0, 0)
     const front = new THREE.Mesh(this.boardGeo, [board, board, board, board, face, board])
@@ -172,7 +170,7 @@ export class ShelfScene {
     const back = new THREE.Mesh(this.boardGeo, board)
     back.position.z = -bz
     const spine = new THREE.Mesh(this.spineGeo, board)
-    spine.position.x = -BOOK_W / 2 + 0.04
+    spine.position.x = -BOOK_W / 2 + SPINE_W / 2 - SPINE_PROUD
     const outlineMat = outlineMaterial()
     outlineMat.resolution.set(this.cw, this.ch)
     addComicOutline(pages, outlineMat)
@@ -270,7 +268,6 @@ export class ShelfScene {
     this.pump.stop()
     this.ro.disconnect()
     this.unsubImages()
-    this.unsubDeviceTilt()
     const c = this.canvas
     c.removeEventListener('pointerdown', this.onPointerDown)
     c.removeEventListener('pointermove', this.onPointerMove)
@@ -487,11 +484,7 @@ export class ShelfScene {
       let try_ = base.rotY
       let trz = base.rotZ
       let ts = base.scale
-      if (deviceTilt.active) {
-        const t = deviceTiltRotation(deviceTilt.x, deviceTilt.y, 0.2)
-        trx += t.rotX * 0.5
-        trz -= t.rotY * 0.5
-      } else if (e === this.hovered) {
+      if (e === this.hovered) {
         ty += TILT_LIFT
       }
       // Entrance: staggered, the books settle onto the table from slightly

@@ -11,6 +11,19 @@ export const BOOK_D = 0.12 // total thickness incl. both boards
 export const SHELF_STEP = BOOK_W + 0.2 // center-to-center spacing
 export const EDGE_PAD = 0.3 // world-unit margin kept at row ends while panning
 
+// Cover sandwich: two boards wrap the paper block, a spine strip closes the
+// bound edge. No two faces may share a plane — coincident surfaces z-fight
+// on mediump mobile depth buffers (the spine visibly flickered over the
+// cover face while the entrance fade kept the materials transparent).
+export const BOARD_T = BOOK_D * 0.19 // one cover board's thickness
+export const PAGES_D = BOOK_D * 0.6 // paper block, clear of the board inners
+export const SPINE_W = 0.08
+export const SPINE_H = BOOK_H - 0.006 // recessed behind the board top/bottom
+export const SPINE_D = BOOK_D - 0.006 // recessed behind the board outer faces
+// A real spine stands a hair proud of its boards on the bound edge — the
+// only spine face allowed outside the sandwich.
+export const SPINE_PROUD = 0.003
+
 // Books lie flat on the table, cover up: the group pitches -90° about X
 // (Euler order ZYX — rotY then spins in the table plane, rotZ dips an edge).
 export const LIE_PITCH = -Math.PI / 2

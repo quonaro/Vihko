@@ -7,7 +7,6 @@ import { i18n, setLocale } from '../i18n'
 import { store } from '../store'
 import { setTheme } from '../theme'
 import type { Journal } from '../types'
-import { deviceTilt, disableDeviceTilt } from '../three/deviceTilt'
 
 // The real shelf needs WebGL; the fake scene emits fixed anchors so the
 // overlay ⋮/× buttons render and a journal can be selected in tests.
@@ -65,8 +64,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   usePrompt().settle(null)
-  if (deviceTilt.active) disableDeviceTilt()
-  localStorage.removeItem('vihko:device-tilt')
   setTheme('light')
   localStorage.removeItem('vihko:theme')
   document.querySelectorAll('.morph').forEach((el) => el.remove())
@@ -100,54 +97,13 @@ describe('ShelfView', () => {
     expect(store.journals).toHaveLength(3)
   })
 
-  it('shows language settings when motion sensing is unavailable', async () => {
+  it('shows only theme and language in the settings sheet', async () => {
     const w = mountShelf()
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
     // the settings sheet is teleported to <body>
     const rows = document.body.querySelectorAll<HTMLElement>('.set-row')
     expect(rows).toHaveLength(2)
     expect(document.body.textContent).not.toContain('2D')
-  })
-
-  it('places the motion toggle in Settings and applies its saved preference', async () => {
-    const matchMedia = Object.getOwnPropertyDescriptor(window, 'matchMedia')
-    const orientation = Object.getOwnPropertyDescriptor(window, 'DeviceOrientationEvent')
-    Object.defineProperty(window, 'matchMedia', {
-      configurable: true,
-      value: (query: string) => ({
-        matches: query === '(hover: none)',
-        media: query,
-        onchange: null,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        addListener: () => {},
-        removeListener: () => {},
-        dispatchEvent: () => false,
-      }),
-    })
-    Object.defineProperty(window, 'DeviceOrientationEvent', {
-      configurable: true,
-      value: function DeviceOrientationEvent() {},
-    })
-
-    const w = mountShelf()
-    try {
-      await w.findAll('.top-actions .icon-btn')[1].trigger('click')
-      const toggle = document.body.querySelector<HTMLButtonElement>('.motion-setting-btn')!
-      expect(toggle).toBeTruthy()
-      expect(toggle.getAttribute('aria-pressed')).toBe('true')
-      toggle.click()
-      await nextTick()
-      expect(deviceTilt.active).toBe(false)
-      expect(localStorage.getItem('vihko:device-tilt')).toBe('0')
-    } finally {
-      w.unmount()
-      if (deviceTilt.active) disableDeviceTilt()
-      if (matchMedia) Object.defineProperty(window, 'matchMedia', matchMedia)
-      else Reflect.deleteProperty(window, 'matchMedia')
-      if (orientation) Object.defineProperty(window, 'DeviceOrientationEvent', orientation)
-      else Reflect.deleteProperty(window, 'DeviceOrientationEvent')
-    }
   })
 
   it('switches the language from the settings sheet', async () => {
