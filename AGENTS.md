@@ -24,8 +24,12 @@ Same commands are wrapped in `lota.yml` (`lota dev`, `lota build web|apk`,
 `lota wasm`, `lota cap sync|android|ios`, ...). `lota dev` builds the wasm
 engine first via `depends`, so `window.Ink` is always the real engine.
 `lota build apk` runs web build + `cap sync android` + `gradlew assembleDebug`.
+Debug builds get `applicationIdSuffix ".dev"` → they install as `vihko.app.dev`
+(launcher name "Vihko Dev") next to the release `vihko.app`, never overwriting
+it; only `assembleRelease` (CI) produces the prod package.
 `lota dev:android` — live-reload on Android: boots an AVD if none is
-connected, (re)uses vite on :7357 and runs `cap run android --live-reload`
+connected, rebuilds the web bundle (`vite build`) so the installed APK is
+never stale, (re)uses vite on :7357 and runs `cap run android --live-reload`
 with `adb reverse`, so the installed WebView loads http://localhost:7357
 and vue HMR works on device. The installed APK keeps `server.url` baked in
 until a normal build is reinstalled (`cap sync android && gradlew

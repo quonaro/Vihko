@@ -29,8 +29,10 @@ dev:
         adb wait-for-device
         adb shell 'while [ -z "$(getprop sys.boot_completed)" ]; do sleep 1; done'
       fi
-      # cap run -l needs existing synced assets to rewrite
-      [ -f android/app/src/main/assets/capacitor.config.json ] || { pnpm build && pnpm exec cap sync android; }
+      # always rebuild the web bundle so the installed APK is never stale
+      pnpm exec vite build
+      # cap run -l needs existing synced assets to rewrite (cap run syncs dist→assets itself)
+      [ -f android/app/src/main/assets/capacitor.config.json ] || pnpm exec cap sync android
       # reuse an already-running dev server on :7357, otherwise start one
       if ! curl -sf -o /dev/null http://localhost:7357/; then
         pnpm dev &
@@ -50,7 +52,7 @@ build:
     script: pnpm build
 
   apk:
-    desc: Android debug APK (needs Android SDK) → android/app/build/outputs/apk/debug/app-debug.apk
+    desc: Android debug APK → app-debug.apk (installs as vihko.app.dev alongside prod vihko.app)
     script: pnpm build && pnpm exec cap sync android && cd android && ./gradlew assembleDebug
 
 preview:

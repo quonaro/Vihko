@@ -8,4 +8,4 @@ command -v adb >/dev/null || { echo "adb not found on PATH" >&2; exit 1; }
 
 pnpm cap:sync
 (cd android && ./gradlew installDebug)
-adb shell monkey -p vihko.app -c android.intent.category.LAUNCHER 1 >/dev/null
+adb shell monkey -p vihko.app.dev -c android.intent.category.LAUNCHER 1 >/dev/null
