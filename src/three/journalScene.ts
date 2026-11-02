@@ -12,8 +12,10 @@ import {
 import { pageCanvas, repaintInto } from './pageTexture'
 import {
   createRenderer, addStudioRig, createComposer, detectQuality, FramePump,
-  addComicOutline, type Quality,
+  addComicOutline, gridEdgeLoop, outlineMaterial, type Quality,
 } from './stage'
+import { Line2 } from 'three/examples/jsm/lines/Line2.js'
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import { getPhoto, onImageLoaded } from '../ink/ops'
 import {
   coverCanvas, paintCover, dominantCoverColor, type CoverInput,
@@ -91,13 +93,7 @@ export class JournalScene {
   private turnFront!: LeafMesh
   private turnBack!: LeafMesh
   private edgeMat: PaperMaterial | null = null
-  private inkMat = new THREE.LineBasicMaterial({
-    color: 0x29231f,
-    transparent: true,
-    opacity: 0.82,
-    depthWrite: false,
-    toneMapped: false,
-  })
+  private inkMat = outlineMaterial()
   private bump: THREE.Texture | null = null
   private blankTex: THREE.Texture | null = null
   // Pages rasterize into textures a slice at a time after setPages — see tick.
@@ -110,6 +106,8 @@ export class JournalScene {
   private readyDone = false
   private turnGroup = new THREE.Group()
   private turnBase!: Float32Array
+  private turnOutline!: Line2
+  private leafRing: number[] = []
   private mode: 'fan' | 'spread' = 'fan'
   private pages: Page[] = []
   private spread = 0
@@ -207,6 +205,30 @@ export class JournalScene {
     const g = new THREE.PlaneGeometry(PAGE_W, PAGE_H, 48, 6)
     g.translate(PAGE_W / 2, 0, 0) // x runs 0..w, spine at local x=0
     return g
+  }
+
+  // The leaf can't use EdgesGeometry — that would freeze the border on the
+  // flat rest pose while the curl deforms the mesh. A Line2 strip over the
+  // grid's perimeter vertices stays glued to the edge as long as its
+  // instanced segment buffer is re-mirrored each frame (see tick).
+  private leafOutline(geo: THREE.PlaneGeometry) {
+    const { widthSegments: sx, heightSegments: sy } = geo.parameters
+    this.leafRing = gridEdgeLoop(sx, sy)
+    const src = geo.attributes.position.array as Float32Array
+    const pts = new Float32Array((this.leafRing.length + 1) * 3)
+    for (let i = 0; i <= this.leafRing.length; i++) {
+      const v = this.leafRing[i % this.leafRing.length] * 3
+      pts[i * 3] = src[v]
+      pts[i * 3 + 1] = src[v + 1]
+      pts[i * 3 + 2] = src[v + 2]
+    }
+    const g = new LineGeometry()
+    g.setPositions(pts)
+    const line = new Line2(g, this.inkMat)
+    line.renderOrder = 2
+    line.frustumCulled = false
+    line.raycast = () => {}
+    return line
   }
 
   private paperTexture(): THREE.Texture | null {
@@ -353,7 +375,8 @@ export class JournalScene {
     this.turnBase = (turnGeo.attributes.position.array as Float32Array).slice()
     this.turnFront = this.makeLeaf(null, THREE.FrontSide, turnGeo)
     this.turnBack = this.makeLeaf(null, THREE.BackSide, turnGeo)
-    this.turnGroup.add(this.turnFront, this.turnBack)
+    this.turnOutline = this.leafOutline(turnGeo)
+    this.turnGroup.add(this.turnFront, this.turnBack, this.turnOutline)
     this.turnGroup.rotation.x = SPREAD_LEAN
     this.turnGroup.position.y = 0.06
     this.turnGroup.visible = false
@@ -480,7 +503,7 @@ export class JournalScene {
     for (const p of this.fanPages) {
       this.fanGroup.remove(p.mesh)
       p.mesh.traverse((o) => {
-        if (o instanceof THREE.LineSegments) o.geometry.dispose()
+        if (o !== p.mesh && o instanceof THREE.Mesh) o.geometry.dispose()
       })
       p.mesh.geometry.dispose()
       p.mesh.material.forEach((m) => m.dispose())
@@ -600,7 +623,6 @@ export class JournalScene {
     this.coverTex?.dispose()
     this.blankTex?.dispose()
     this.scene.traverse((o) => {
-      if (o instanceof THREE.LineSegments) o.geometry.dispose()
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose()
         const m = o.material
@@ -635,6 +657,7 @@ export class JournalScene {
     const h = this.canvas.clientHeight || 2
     this.renderer.setSize(w, h, false)
     this.post.setSize(w, h)
+    this.inkMat.resolution.set(w, h)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     if (this.mode === 'spread') this.camHome.z = spreadCameraDistance(this.camera.aspect)
@@ -925,6 +948,23 @@ export class JournalScene {
       }
       pos.needsUpdate = true
       this.turnFront.geometry.computeVertexNormals()
+      // Fat lines bake endpoints into an instanced buffer — mirror the
+      // deformed ring so the leaf's ink border rides the curl.
+      const buf = (this.turnOutline.geometry.attributes.instanceStart as THREE.InterleavedBufferAttribute).data
+      const dst = buf.array as Float32Array
+      const src = pos.array as Float32Array
+      const ring = this.leafRing
+      for (let k = 0; k < ring.length; k++) {
+        const a = ring[k] * 3
+        const b = ring[(k + 1) % ring.length] * 3
+        dst[k * 6] = src[a]
+        dst[k * 6 + 1] = src[a + 1]
+        dst[k * 6 + 2] = src[a + 2]
+        dst[k * 6 + 3] = src[b]
+        dst[k * 6 + 4] = src[b + 1]
+        dst[k * 6 + 5] = src[b + 2]
+      }
+      buf.needsUpdate = true
       if (this.turnState === 'run' && this.flipT >= 1) {
         this.turnState = 'idle'
         this.turnGroup.visible = false

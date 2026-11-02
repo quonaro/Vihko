@@ -1,8 +1,10 @@
 import * as THREE from 'three'
 import {
   createRenderer, addStudioRig, createComposer, detectQuality, FramePump,
-  addComicOutline, type Quality,
+  addComicOutline, outlineMaterial, type Quality,
 } from './stage'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import {
   BOOK_W, BOOK_H, BOOK_D, TILT_YAW,
   shelfPose, hoverTilt, inHitBox, viewHalfWidth, scrollLimit,
@@ -50,7 +52,7 @@ interface BookEntry {
   coverMat: THREE.MeshStandardMaterial
   boardMat: THREE.MeshStandardMaterial
   fadeMats: THREE.MeshStandardMaterial[]
-  outlineMat: THREE.LineBasicMaterial
+  outlineMat: LineMaterial
   canvas: HTMLCanvasElement | null
   ctx: CanvasRenderingContext2D | null
   tex: THREE.CanvasTexture | null
@@ -173,13 +175,8 @@ export class ShelfScene {
     front.position.z = bz
     const back = new THREE.Mesh(this.boardGeo, board)
     back.position.z = -bz
-    const outlineMat = new THREE.LineBasicMaterial({
-      color: 0x29231f,
-      transparent: true,
-      opacity: 0.82,
-      depthWrite: false,
-      toneMapped: false,
-    })
+    const outlineMat = outlineMaterial()
+    outlineMat.resolution.set(this.cw, this.ch)
     addComicOutline(pages, outlineMat)
     addComicOutline(front, outlineMat)
     addComicOutline(back, outlineMat)
@@ -203,7 +200,7 @@ export class ShelfScene {
   private disposeBook(e: BookEntry) {
     this.row.remove(e.group)
     e.group.traverse((o) => {
-      if (o instanceof THREE.LineSegments) o.geometry.dispose()
+      if (o instanceof LineSegments2) o.geometry.dispose()
     })
     e.tex?.dispose()
     for (const m of e.fadeMats) m.dispose()
@@ -429,6 +426,7 @@ export class ShelfScene {
     this.ch = h
     this.renderer.setSize(w, h, false)
     this.post.setSize(w, h)
+    for (const e of this.books) e.outlineMat.resolution.set(w, h)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     this.halfW = viewHalfWidth(FOV, CAM_DIST, w / h)

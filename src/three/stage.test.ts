@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { detectQuality, FramePump } from './stage'
+import { detectQuality, FramePump, gridEdgeLoop } from './stage'
 
 describe('3D quality profile', () => {
   afterEach(() => {
@@ -28,6 +28,28 @@ describe('3D quality profile', () => {
     } as MediaQueryList)
     localStorage.setItem('vihko:gl-quality', 'potato')
     expect(detectQuality()).toBe('high')
+  })
+})
+
+describe('gridEdgeLoop', () => {
+  it('walks the grid perimeter once, every step a unit edge, ring closed', () => {
+    const sx = 48
+    const sy = 6
+    const idx = gridEdgeLoop(sx, sy)
+    const W = sx + 1
+    expect(idx.length).toBe(2 * (sx + sy))
+    expect(new Set(idx).size).toBe(idx.length)
+    for (const i of idx) {
+      const x = i % W
+      const y = Math.floor(i / W)
+      expect(x === 0 || y === 0 || x === sx || y === sy).toBe(true)
+    }
+    for (let k = 0; k < idx.length; k++) {
+      const a = idx[k]
+      const b = idx[(k + 1) % idx.length]
+      const d = Math.abs((a % W) - (b % W)) + Math.abs(Math.floor(a / W) - Math.floor(b / W))
+      expect(d).toBe(1)
+    }
   })
 })
 

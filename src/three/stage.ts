@@ -5,6 +5,9 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 
 // Shared "studio" setup for the 3D views: a filmic renderer plus a
 // three-point lighting rig, IBL env map and a shadow-catching floor, so
@@ -12,21 +15,59 @@ import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js'
 
 export type Quality = 'low' | 'high'
 
-export function addComicOutline(
-  mesh: THREE.Mesh,
-  material = new THREE.LineBasicMaterial({
+// Ink border width in CSS px. WebGL ignores `linewidth` on plain lines —
+// they always rasterize 1 device px — so the outline uses the fat-line
+// shader (instanced screen-space quads) for real, zoom-independent
+// thickness. Every LineMaterial must have its `resolution` uniform kept
+// in sync with the canvas CSS size (see the scenes' resize()).
+export const OUTLINE_PX = 1.8
+
+export function outlineMaterial(): LineMaterial {
+  return new LineMaterial({
     color: 0x29231f,
+    linewidth: OUTLINE_PX,
     transparent: true,
     opacity: 0.82,
     depthWrite: false,
     toneMapped: false,
-  }),
+    // The quad is centred on the edge, half sunk into the paper — at
+    // grazing angles it z-fights the surface into a dashed ladder. A small
+    // depth bias lets the ink win over its own sheet but stay behind
+    // geometry that is genuinely in front.
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  })
+}
+
+export function addComicOutline(
+  mesh: THREE.Mesh,
+  material = outlineMaterial(),
 ) {
-  const outline = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 24), material)
+  const edges = new THREE.EdgesGeometry(mesh.geometry, 24)
+  const geometry = new LineSegmentsGeometry()
+  geometry.setPositions(edges.attributes.position.array as Float32Array)
+  edges.dispose()
+  const outline = new LineSegments2(geometry, material)
   outline.renderOrder = 2
   outline.raycast = () => {}
   mesh.add(outline)
   return outline
+}
+
+// Ordered vertex-index ring around a PlaneGeometry-style grid (row-major,
+// segX×segY cells) — the closed perimeter, each vertex once. A LineLoop
+// indexed by this ring and sharing the mesh's live position buffer draws
+// an outline that follows per-frame vertex deformation; EdgesGeometry
+// would bake a static copy that stays behind on the rest pose.
+export function gridEdgeLoop(segX: number, segY: number): number[] {
+  const at = (x: number, y: number) => y * (segX + 1) + x
+  const idx: number[] = []
+  for (let x = 0; x < segX; x++) idx.push(at(x, 0))
+  for (let y = 0; y < segY; y++) idx.push(at(segX, y))
+  for (let x = segX; x > 0; x--) idx.push(at(x, segY))
+  for (let y = segY; y > 0; y--) idx.push(at(0, y))
+  return idx
 }
 
 // 'low' targets phones/tablets (primary pointer is touch): mid-range
