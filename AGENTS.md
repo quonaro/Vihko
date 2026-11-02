@@ -64,7 +64,7 @@ screens.
 
 ## Capacitor
 
-- `appId`: `dev.vihko.app`, `webDir`: `dist` (see `capacitor.config.ts`)
+- `appId`: `vihko.app`, `webDir`: `dist` (see `capacitor.config.ts`)
 - Native projects: `android/` (Gradle, needs Android SDK), `ios/` (needs Xcode)
 - The wasm engine ships inside `dist/` → copied into native web assets by sync
 

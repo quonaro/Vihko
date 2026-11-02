@@ -1,4 +1,4 @@
-package dev.vihko.app;
+package vihko.app;
 
 import android.graphics.Color;
 import android.view.Window;
