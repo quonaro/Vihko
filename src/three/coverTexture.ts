@@ -1,14 +1,13 @@
 import { getPhoto } from '../ink/ops'
 
-// Rasterize a journal cover into a canvas texture: cover color or photo,
-// the darker spine strip and the centered title — the same marks the DOM
-// covers draw with .spine/.title.
+// Rasterize a journal cover into a canvas texture: cover color or photo
+// plus the darker spine strip. The title is not part of the texture — the
+// shelf shows it as a DOM label under each book.
 
 export const COVER_W = 384
 export const COVER_H = Math.round(COVER_W / 0.735) // matches shelfLayout aspect
 
 export interface CoverInput {
-  title: string
   color: string // resolved cover color (hex)
   coverImg?: string | null // dataURL photo cover — wins over `color`
 }
@@ -50,36 +49,6 @@ export function dominantCoverColor(input: CoverInput): string {
   } catch {
     return input.color
   }
-}
-
-// Greedy word-wrap for the cover title; `measure` reports px width so the
-// function stays testable without a real canvas context.
-export function fitLines(
-  title: string,
-  measure: (s: string) => number,
-  maxW: number,
-  maxLines = 3,
-): string[] {
-  const words = title.split(/\s+/).filter(Boolean)
-  if (!words.length) return []
-  const lines: string[] = []
-  let cur = words[0]
-  for (const w of words.slice(1)) {
-    const next = `${cur} ${w}`
-    if (measure(next) <= maxW) cur = next
-    else {
-      lines.push(cur)
-      cur = w
-    }
-  }
-  lines.push(cur)
-  if (lines.length > maxLines) {
-    lines.length = maxLines
-    let last = lines[maxLines - 1]
-    while (last.length > 1 && measure(`${last}…`) > maxW) last = last.slice(0, -1)
-    lines[maxLines - 1] = `${last.trimEnd()}…`
-  }
-  return lines
 }
 
 export function paintCover(
@@ -124,21 +93,6 @@ export function paintCover(
 
   ctx.fillStyle = 'rgba(0,0,0,0.22)'
   ctx.fillRect(0, 0, w * 0.075, h)
-
-  ctx.fillStyle = 'rgba(255,255,255,0.9)'
-  ctx.font = `700 ${Math.round(w * 0.078)}px system-ui, sans-serif`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.shadowColor = 'rgba(0,0,0,0.65)'
-  ctx.shadowBlur = 6
-  ctx.shadowOffsetY = 2
-  const lines = fitLines(input.title, (s) => ctx.measureText(s).width, w * 0.72)
-  const lh = w * 0.105
-  const y0 = h / 2 - ((lines.length - 1) * lh) / 2
-  lines.forEach((ln, i) => ctx.fillText(ln, w / 2, y0 + i * lh))
-  ctx.shadowColor = 'transparent'
-  ctx.shadowBlur = 0
-  ctx.shadowOffsetY = 0
 
   ctx.strokeStyle = 'rgba(35,28,24,0.58)'
   ctx.lineWidth = Math.max(2, w * 0.008)

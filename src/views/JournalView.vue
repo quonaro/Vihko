@@ -137,7 +137,6 @@ async function startScene() {
     if (request !== sceneRequest || !canvas.isConnected) return
     scene = new JournalScene(canvas, ink, {
       cover: {
-        title: journal.value?.title ?? '',
         color: covers[(journal.value?.cover ?? 0) % covers.length],
         coverImg: journal.value?.coverImg,
       },
@@ -186,11 +185,10 @@ watch(mode, (m) => {
 })
 watch(bookClosed, (closed) => scene?.setBookClosed(closed))
 watch(
-  () => [journal.value?.title, journal.value?.cover, journal.value?.coverImg] as const,
-  ([title, cover, coverImg]) => {
-    if (!title || cover === undefined) return
+  () => [journal.value?.cover, journal.value?.coverImg] as const,
+  ([cover, coverImg]) => {
+    if (cover === undefined) return
     scene?.setCover({
-      title,
       color: covers[cover % covers.length],
       coverImg,
     })

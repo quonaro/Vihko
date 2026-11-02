@@ -1,30 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  fitLines, coverCanvas, paintCover, dominantColorFromPixels,
+  coverCanvas, paintCover, dominantColorFromPixels,
 } from './coverTexture'
-
-const px = (s: string) => s.length * 10 // fake fixed-width measure
-
-describe('fitLines', () => {
-  it('wraps words at the max width', () => {
-    // "travel notes" is 12 chars = 120px > 100px max, so it wraps.
-    expect(fitLines('travel notes', px, 100)).toEqual(['travel', 'notes'])
-  })
-
-  it('keeps short titles on one line', () => {
-    expect(fitLines('Идеи', px, 100)).toEqual(['Идеи'])
-  })
-
-  it('ellipsizes beyond maxLines', () => {
-    const lines = fitLines('one two three four five', px, 60, 2)
-    expect(lines).toHaveLength(2)
-    expect(lines[1].endsWith('…')).toBe(true)
-  })
-
-  it('returns nothing for an empty title', () => {
-    expect(fitLines('   ', px, 100)).toEqual([])
-  })
-})
 
 describe('dominantColorFromPixels', () => {
   it('returns the most common opaque color', () => {
@@ -45,7 +22,7 @@ describe('dominantColorFromPixels', () => {
 
 describe('coverCanvas', () => {
   it('returns null where no 2D context exists (jsdom)', () => {
-    expect(coverCanvas({ title: 'A', color: '#333' })).toBeNull()
+    expect(coverCanvas({ color: '#333' })).toBeNull()
   })
 })
 
@@ -72,7 +49,7 @@ describe('paintCover', () => {
   it('paints no vertical strip other than the spine at x=0', () => {
     const canvas = { width: 384, height: 522 } as HTMLCanvasElement
     const { ctx, rects } = stubCtx()
-    paintCover(canvas, ctx, { title: 'A', color: '#333' })
+    paintCover(canvas, ctx, { color: '#333' })
     expect(rects.length).toBeGreaterThan(0)
     expect(rects.every(([x]) => x === 0)).toBe(true)
   })
@@ -86,8 +63,17 @@ describe('paintCover', () => {
       arc: (...a: number[]) => arcs.push(a),
       strokeRect: () => { bordered = true },
     })
-    paintCover(canvas, ctx, { title: 'A', color: '#333' })
+    paintCover(canvas, ctx, { color: '#333' })
     expect(arcs.length).toBeGreaterThan(100)
     expect(bordered).toBe(true)
+  })
+
+  it('paints no title text — the shelf labels books below instead', () => {
+    const canvas = { width: 384, height: 522 } as HTMLCanvasElement
+    let textDrawn = false
+    const { ctx } = stubCtx()
+    Object.assign(ctx, { fillText: () => { textDrawn = true } })
+    paintCover(canvas, ctx, { color: '#333' })
+    expect(textDrawn).toBe(false)
   })
 })

@@ -61,20 +61,20 @@ let scene: ShelfScene | null = null
 let sceneRequest = 0
 let labelTimer: ReturnType<typeof setTimeout> | undefined
 const labelEls = new Map<string, HTMLElement>()
+const titleEls = new Map<string, HTMLElement>()
 
 const sceneJournals = (): ShelfJournal[] =>
   store.journals.map((j) => ({
     id: j.id,
-    title: j.title,
     color: covers[j.cover % covers.length],
     coverImg: j.coverImg,
   }))
 
-// Rebuild book meshes when the row or a cover's look (title/color/photo)
-// changes — same signature the scene uses for its texture cache.
+// Rebuild book meshes when the row or a cover's look (color/photo) changes —
+// same signature the scene uses for its texture cache.
 const journalSig = computed(() =>
   store.journals
-    .map((j) => `${j.id}${j.title}${j.cover}${j.coverImg?.slice(-24) ?? ''}`)
+    .map((j) => `${j.id}${j.cover}${j.coverImg?.slice(-24) ?? ''}`)
     .join(''),
 )
 
@@ -83,17 +83,31 @@ function setLabelEl(id: string, el: unknown) {
   else labelEls.delete(id)
 }
 
+function setTitleEl(id: string, el: unknown) {
+  if (el instanceof HTMLElement) titleEls.set(id, el)
+  else titleEls.delete(id)
+}
+
 // Per-frame anchors from the scene: pin labels imperatively (no Vue churn)
 // and track which book the pointer is over for the del/⋮ overlay buttons.
 function onOverlay(list: ShelfAnchor[]) {
   anchors.value = list
   for (const a of list) {
     const el = labelEls.get(a.id)
-    if (!el) continue
-    el.style.display = a.onScreen && a.label ? '' : 'none'
-    if (a.label) {
-      el.style.left = `${a.label.x}px`
-      el.style.top = `${a.label.y}px`
+    if (el) {
+      el.style.display = a.onScreen && a.label ? '' : 'none'
+      if (a.label) {
+        el.style.left = `${a.label.x}px`
+        el.style.top = `${a.label.y}px`
+      }
+    }
+    const tl = titleEls.get(a.id)
+    if (tl) {
+      tl.style.display = a.onScreen && a.title ? '' : 'none'
+      if (a.title) {
+        tl.style.left = `${a.title.x}px`
+        tl.style.top = `${a.title.y}px`
+      }
     }
   }
   const hov = list.find((a) => a.hover && a.onScreen)
@@ -101,9 +115,10 @@ function onOverlay(list: ShelfAnchor[]) {
   else if (!uiHold.value) hoverId.value = null
 }
 
-// On touch there is no hover: action buttons sit below each book.
+// On touch there is no hover: action buttons sit below each book, clear of
+// the title label that lives just under the cover.
 const belowBook = (a: ShelfAnchor, dx: number) =>
-  a.actions ? { x: a.actions.x + dx, y: a.actions.y + 18 } : null
+  a.actions ? { x: a.actions.x + dx, y: a.actions.y + 40 } : null
 
 const delBtns = computed(() =>
   anchors.value
@@ -297,6 +312,13 @@ function toggleMotionTilt() {
         class="pages-count gl-label"
         :class="{ delayed: !showGlLabels }"
       >{{ t('journal.count', j.pages.length) }}</span>
+      <span
+        v-for="j in store.journals"
+        :key="j.id"
+        :ref="(el) => setTitleEl(j.id, el)"
+        class="book-title gl-label"
+        :class="{ delayed: !showGlLabels }"
+      >{{ j.title }}</span>
       <button
         v-for="b in delBtns"
         :key="b.id"
@@ -572,6 +594,15 @@ h1 {
   font-size: 12px;
 }
 .pages-count.gl-label { margin: 0; }
+.book-title {
+  color: var(--paper-text);
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.book-title.gl-label { margin: 0; }
 .del {
   position: absolute;
   top: -10px;

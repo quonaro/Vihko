@@ -80,7 +80,7 @@ export class JournalScene {
   private coverFace: PaperMaterial | null = null
   private coverInnerFace: PaperMaterial | null = null
   private backBoardMat: PaperMaterial | null = null
-  private coverInput: CoverInput = { title: '', color: '#34343a' }
+  private coverInput: CoverInput = { color: '#34343a' }
   private coverPhotoPending = false
   private foldT = 0
   private foldFrom = 0

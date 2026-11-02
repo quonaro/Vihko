@@ -19,7 +19,8 @@ export interface ShelfJournal extends CoverInput {
 }
 
 // Screen-space anchors (canvas px) the view uses to pin its DOM overlay —
-// delete / select buttons and the page-count label — onto the 3D books.
+// delete / select buttons, the page-count label and the title — onto the
+// 3D books.
 export interface ShelfAnchor {
   id: string
   onScreen: boolean
@@ -27,6 +28,7 @@ export interface ShelfAnchor {
   del: { x: number; y: number } | null
   sel: { x: number; y: number } | null
   label: { x: number; y: number } | null
+  title: { x: number; y: number } | null
   actions: { x: number; y: number } | null
 }
 
@@ -209,7 +211,7 @@ export class ShelfScene {
   }
 
   private static sig(j: ShelfJournal) {
-    return `${j.title}|${j.color}|${j.coverImg ? j.coverImg.slice(-24) : ''}`
+    return `${j.color}|${j.coverImg ? j.coverImg.slice(-24) : ''}`
   }
 
   // --- public API ---------------------------------------------------------
@@ -457,6 +459,7 @@ export class ShelfScene {
     for (const e of this.books) {
       e.group.updateWorldMatrix(true, false)
       const label = this.project(e, 0, BOOK_H / 2 + 0.18, 0)
+      const title = this.project(e, 0, -BOOK_H / 2 - 0.04, 0)
       const actions = this.project(e, 0, -BOOK_H / 2 - 0.05, 0)
       out.push({
         id: e.id,
@@ -465,6 +468,7 @@ export class ShelfScene {
         del: this.project(e, BOOK_W / 2, BOOK_H / 2, BOOK_D / 2),
         sel: this.project(e, BOOK_W / 2 - 0.16, -BOOK_H / 2 + 0.16, BOOK_D / 2),
         label,
+        title,
         actions,
       })
     }
