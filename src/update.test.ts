@@ -4,9 +4,16 @@ const native = vi.hoisted(() => ({
   isNative: vi.fn(() => false),
   getPlatform: vi.fn(() => 'web'),
   install: vi.fn(async () => {}),
+  notifyProgress: vi.fn(async () => {}),
+  notifyComplete: vi.fn(async () => {}),
+  notifyFailed: vi.fn(async () => {}),
+  progressCb: null as null | ((p: { bytes: number; contentLength: number }) => void),
   downloadFile: vi.fn(async () => ({})),
   getUri: vi.fn(async () => ({ uri: 'file:///cache/updates/vihko-9.9.9.apk' })),
-  addListener: vi.fn(async () => ({ remove: vi.fn(async () => {}) })),
+  addListener: vi.fn(async (_e: string, cb: (p: { bytes: number; contentLength: number }) => void) => {
+    native.progressCb = cb
+    return { remove: vi.fn(async () => {}) }
+  }),
 }))
 
 vi.mock('@capacitor/core', () => ({
@@ -14,7 +21,12 @@ vi.mock('@capacitor/core', () => ({
     isNativePlatform: native.isNative,
     getPlatform: native.getPlatform,
   },
-  registerPlugin: () => ({ install: native.install }),
+  registerPlugin: () => ({
+    install: native.install,
+    notifyProgress: native.notifyProgress,
+    notifyComplete: native.notifyComplete,
+    notifyFailed: native.notifyFailed,
+  }),
 }))
 vi.mock('@capacitor/filesystem', () => ({
   Directory: { Cache: 'CACHE' },
@@ -142,6 +154,19 @@ describe('downloadUpdate', () => {
     })
     expect(native.install).toHaveBeenCalledWith({ path: '/cache/updates/vihko-9.9.9.apk' })
     expect(update.dl).toBe('ready')
+    expect(native.notifyComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ path: '/cache/updates/vihko-9.9.9.apk' }),
+    )
+  })
+
+  it('mirrors download progress into a notification', async () => {
+    goAndroid()
+    await downloadUpdate()
+    native.progressCb?.({ bytes: 50, contentLength: 100 })
+    expect(native.notifyProgress).toHaveBeenCalledWith(
+      expect.objectContaining({ percent: 50 }),
+    )
+    expect(update.progress).toBe(50)
   })
 
   it('ignores a second tap while a download is in flight', async () => {
@@ -165,6 +190,7 @@ describe('downloadUpdate', () => {
     expect(update.dl).toBe('error')
     expect(update.apkPath).toBe('')
     expect(native.install).not.toHaveBeenCalled()
+    expect(native.notifyFailed).toHaveBeenCalled()
   })
 
   it('re-runs the installer without re-downloading once the apk is ready', async () => {

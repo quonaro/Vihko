@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Directory, Filesystem } from '@capacitor/filesystem'
+import { i18n } from './i18n'
 import pkg from '../package.json'
 
 // Release builds get the tag via VITE_APP_VERSION (see release.yml);
@@ -11,11 +12,19 @@ const REPO = 'quonaro/Vihko'
 export const releasesUrl = `https://github.com/${REPO}/releases`
 
 // Native plugin (android/app/.../ApkInstallerPlugin.java) that fires the
-// system package-installer intent on a downloaded APK via FileProvider.
+// system package-installer intent on a downloaded APK via FileProvider and
+// mirrors the download into the notification shade.
 interface ApkInstallerPlugin {
   install(options: { path: string }): Promise<void>
+  notifyProgress(options: { percent: number; title: string; body: string }): Promise<void>
+  notifyComplete(options: { path: string; title: string; body: string }): Promise<void>
+  notifyFailed(options: { title: string; body: string }): Promise<void>
 }
 const ApkInstaller = registerPlugin<ApkInstallerPlugin>('ApkInstaller')
+
+// Notification posts are best-effort — a denied POST_NOTIFICATIONS or a
+// plugin hiccup must not break the download.
+const notify = (p: Promise<void>) => void p.catch(() => {})
 
 export type UpdateStatus = 'idle' | 'checking' | 'uptodate' | 'available' | 'error'
 export type DownloadState = 'idle' | 'downloading' | 'ready' | 'error'
@@ -103,6 +112,11 @@ export async function downloadUpdate(): Promise<void> {
         update.progress = p.contentLength > 0
           ? Math.min(100, Math.round((p.bytes / p.contentLength) * 100))
           : 0
+        notify(ApkInstaller.notifyProgress({
+          percent: update.progress,
+          title: i18n.global.t('shelf.dlNotifProgressTitle'),
+          body: i18n.global.t('shelf.dlNotifBody', { v: update.latest }),
+        }))
       })
       try {
         await Filesystem.downloadFile({
@@ -117,11 +131,20 @@ export async function downloadUpdate(): Promise<void> {
       }
       const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache })
       update.apkPath = uri.replace(/^file:\/\//, '')
+      notify(ApkInstaller.notifyComplete({
+        path: update.apkPath,
+        title: i18n.global.t('shelf.dlNotifDoneTitle'),
+        body: i18n.global.t('shelf.dlNotifDoneBody', { v: update.latest }),
+      }))
     }
     update.dl = 'ready'
     await ApkInstaller.install({ path: update.apkPath })
   } catch {
     update.dl = 'error'
     update.apkPath = ''
+    notify(ApkInstaller.notifyFailed({
+      title: i18n.global.t('shelf.dlNotifFailTitle'),
+      body: i18n.global.t('shelf.dlNotifBody', { v: update.latest }),
+    }))
   }
 }
