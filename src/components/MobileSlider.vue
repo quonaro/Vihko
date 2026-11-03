@@ -160,7 +160,10 @@ function cancelDrag() {
             @pointercancel="cancelDrag"
           >
             <h2>{{ title }}</h2>
-            <button class="close" :aria-label="t('dlg.close')" @click="close">×</button>
+            <div class="mslider-actions">
+              <slot name="actions" />
+              <button class="close" :aria-label="t('dlg.close')" @click="close">×</button>
+            </div>
           </header>
           <div class="mslider-body" :class="{ 'no-scrollbar': noScrollbar }">
             <slot />
@@ -232,6 +235,12 @@ function cancelDrag() {
 .mslider-head.grabbable {
   touch-action: none;
   user-select: none;
+}
+.mslider-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 .mslider-head h2 {
   font-size: 19px;

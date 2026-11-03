@@ -28,6 +28,7 @@ import { rdp } from '../ink/path'
 import { shapePoints } from '../ink/shapes'
 import { PAGE_W, PAGE_H, coverViewport, clampOffset } from '../pageSpace'
 import ToolTray from '../components/ToolTray.vue'
+import MobileSlider from '../components/MobileSlider.vue'
 import type { InkEngine, Layer, Page, Pt, ShapeKind, Stroke } from '../types'
 import { useI18n } from 'vue-i18n'
 
@@ -1517,70 +1518,62 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <Teleport to="body">
-      <div v-if="layerPanelOpen" class="layer-modal-backdrop" @click.self="closeLayerModal">
-        <section
-          class="layer-panel"
-          role="dialog"
-          aria-modal="true"
-          :aria-label="t('layers.title')"
-          @keydown.esc.stop.prevent="closeLayerModal"
+    <MobileSlider
+      :open="layerPanelOpen"
+      :title="t('layers.title')"
+      size="sm"
+      :z-index="1000"
+      @update:open="closeLayerModal"
+    >
+      <template #actions>
+        <button class="layer-add" :title="t('layers.add')" :aria-label="t('layers.add')" @click="addLayer">+</button>
+      </template>
+      <div ref="layerList" class="layer-list">
+        <div
+          v-for="(layer, index) in displayLayers"
+          :key="layer.id"
+          class="layer-row"
+          :data-layer-id="layer.id"
+          :data-display-index="index"
+          :class="{
+            active: selectedLayer?.id === layer.id,
+            dragging: draggingLayerId === layer.id,
+            'drop-target': layerDropIndex === index && draggingLayerId !== layer.id,
+          }"
+          @click="selectLayer(layer.id)"
         >
-          <header class="layer-heading">
-            <strong>{{ t('layers.title') }}</strong>
-            <div class="layer-heading-actions">
-              <button class="layer-add" @click="addLayer" :title="t('layers.add')">+</button>
-              <button class="layer-close" @click="closeLayerModal" :title="t('layers.close')" :aria-label="t('layers.close')">×</button>
-            </div>
-          </header>
-          <div ref="layerList" class="layer-list">
-            <div
-              v-for="(layer, index) in displayLayers"
-              :key="layer.id"
-              class="layer-row"
-              :data-layer-id="layer.id"
-              :data-display-index="index"
-              :class="{
-                active: selectedLayer?.id === layer.id,
-                dragging: draggingLayerId === layer.id,
-                'drop-target': layerDropIndex === index && draggingLayerId !== layer.id,
-              }"
-              @click="selectLayer(layer.id)"
-            >
-              <button class="layer-eye" @click.stop="updateLayer(layer.id, { visible: !layer.visible })" :title="layer.visible ? t('layers.hide') : t('layers.show')">
-                {{ layer.visible ? '◉' : '○' }}
-              </button>
-              <input
-                v-model="layer.name"
-                class="layer-name"
-                :aria-label="t('layers.name')"
-                @click.stop
-                @change="updateLayer(layer.id, { name: layer.name })"
-              />
-              <button
-                class="layer-grab"
-                :title="t('layers.reorder')"
-                :aria-label="t('layers.reorder')"
-                @pointerdown.stop="startLayerReorder($event, layer.id)"
-                @pointermove="moveLayerReorder"
-                @pointerup="finishLayerReorder"
-                @pointercancel="cancelLayerReorder"
-                @lostpointercapture="cancelLayerReorder"
-                @click.stop
-              >⠿</button>
-              <button class="layer-delete" :disabled="layers.length <= 1" @click.stop="deleteLayer(layer.id)" :title="t('layers.delete')">×</button>
-            </div>
-          </div>
-          <div v-if="selectedLayer" class="layer-properties">
-            <label>{{ t('layers.opacity') }} <span>{{ Math.round(selectedLayer.opacity * 100) }}%</span></label>
-            <input
-              type="range" min="0" max="1" step="0.01" :value="selectedLayer.opacity"
-              @input="updateLayer(selectedLayer.id, { opacity: Number(($event.target as HTMLInputElement).value) })"
-            />
-          </div>
-        </section>
+          <button class="layer-eye" @click.stop="updateLayer(layer.id, { visible: !layer.visible })" :title="layer.visible ? t('layers.hide') : t('layers.show')">
+            {{ layer.visible ? '◉' : '○' }}
+          </button>
+          <input
+            v-model="layer.name"
+            class="layer-name"
+            :aria-label="t('layers.name')"
+            @click.stop
+            @change="updateLayer(layer.id, { name: layer.name })"
+          />
+          <button
+            class="layer-grab"
+            :title="t('layers.reorder')"
+            :aria-label="t('layers.reorder')"
+            @pointerdown.stop="startLayerReorder($event, layer.id)"
+            @pointermove="moveLayerReorder"
+            @pointerup="finishLayerReorder"
+            @pointercancel="cancelLayerReorder"
+            @lostpointercapture="cancelLayerReorder"
+            @click.stop
+          >⠿</button>
+          <button class="layer-delete" :disabled="layers.length <= 1" @click.stop="deleteLayer(layer.id)" :title="t('layers.delete')">×</button>
+        </div>
       </div>
-    </Teleport>
+      <div v-if="selectedLayer" class="layer-properties">
+        <label>{{ t('layers.opacity') }} <span>{{ Math.round(selectedLayer.opacity * 100) }}%</span></label>
+        <input
+          type="range" min="0" max="1" step="0.01" :value="selectedLayer.opacity"
+          @input="updateLayer(selectedLayer.id, { opacity: Number(($event.target as HTMLInputElement).value) })"
+        />
+      </div>
+    </MobileSlider>
 
     <div class="zoom-actions">
       <button v-if="!isFit" class="round-btn fit-btn" @click="resetView" :title="t('canvas.zoomFit')">
@@ -1709,47 +1702,7 @@ canvas.grab { cursor: grab; }
 }
 .round-btn:disabled { opacity: 0.35; cursor: default; }
 .round-btn.selected { color: #6dbbcf; background: rgba(40, 40, 42, .95); }
-.layer-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  background: rgba(20, 20, 22, .42);
-  backdrop-filter: blur(3px);
-  animation: layer-modal-fade .16s ease-out;
-}
-.layer-panel {
-  position: relative;
-  width: min(360px, 100%);
-  max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px);
-  display: flex;
-  flex-direction: column;
-  color: var(--chrome-text);
-  background: var(--chrome-bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: 16px;
-  box-shadow: var(--chrome-shadow);
-  backdrop-filter: blur(16px);
-  overflow: hidden;
-  animation: layer-modal-pop .2s cubic-bezier(.2,.8,.2,1);
-}
-.layer-heading {
-  height: 46px;
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--chrome-border);
-  font: 600 13px/1 ui-monospace, monospace;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-}
-.layer-heading-actions { display: flex; align-items: center; gap: 6px; }
-.layer-add, .layer-close, .layer-delete, .layer-eye, .layer-grab {
+.layer-add, .layer-delete, .layer-eye, .layer-grab {
   display: grid;
   place-items: center;
   line-height: 1;
@@ -1757,9 +1710,17 @@ canvas.grab { cursor: grab; }
   background: transparent;
   border-radius: 8px;
 }
-.layer-add { width: 30px; height: 30px; font-size: 22px; background: var(--chrome-control-bg); }
-.layer-close { width: 30px; height: 30px; font-size: 21px; color: var(--chrome-muted); }
-.layer-list { flex: 1 1 auto; min-height: 48px; overflow-y: auto; padding: 8px; overscroll-behavior: contain; }
+.layer-add {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 24px;
+  background: var(--chrome-control-bg);
+}
+@media (hover: hover) {
+  .layer-add:hover { background: var(--chrome-hover); }
+}
+.layer-list { min-height: 48px; padding: 6px 3px; overscroll-behavior: contain; }
 .layer-row {
   position: relative;
   min-height: 42px;
@@ -1814,8 +1775,6 @@ canvas.grab { cursor: grab; }
 }
 .layer-properties label span { color: var(--layer-accent); font-variant-numeric: tabular-nums; }
 .layer-properties input[type="range"] { width: 100%; margin: 0; accent-color: var(--layer-accent); }
-@keyframes layer-modal-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes layer-modal-pop { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .zoom-actions {
   position: absolute;
   right: 18px;

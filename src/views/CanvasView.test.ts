@@ -527,7 +527,7 @@ describe('CanvasView', () => {
   it('opens the layer panel and adds a selected layer', async () => {
     const w = await mountCanvas()
     await w.findAll('.top-actions button')[2].trigger('click')
-    const modal = document.body.querySelector('.layer-modal-backdrop')
+    const modal = document.body.querySelector('.mslider-backdrop')
     expect(modal).not.toBeNull()
     expect(modal!.querySelector('.transform-button')).toBeNull()
     ;(modal!.querySelector('.layer-add') as HTMLButtonElement).click()
@@ -541,10 +541,10 @@ describe('CanvasView', () => {
   it('closes the layer modal from its backdrop', async () => {
     const w = await mountCanvas()
     await w.findAll('.top-actions button')[2].trigger('click')
-    const backdrop = document.body.querySelector('.layer-modal-backdrop')!
+    const backdrop = document.body.querySelector('.mslider-backdrop')!
     backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await w.vm.$nextTick()
-    expect(document.body.querySelector('.layer-modal-backdrop')).toBeNull()
+    expect(document.body.querySelector('.mslider-backdrop')).toBeNull()
     w.unmount()
   })
 
@@ -552,7 +552,7 @@ describe('CanvasView', () => {
     const w = await mountCanvas()
     const baseLayer = pageLayers()[0]
     await w.findAll('.top-actions button')[2].trigger('click')
-    const modal = document.body.querySelector('.layer-modal-backdrop')!
+    const modal = document.body.querySelector('.mslider-backdrop')!
     ;(modal.querySelector('.layer-add') as HTMLButtonElement).click()
     await w.vm.$nextTick()
     const rows = [...modal.querySelectorAll<HTMLElement>('.layer-row')]

@@ -58,6 +58,12 @@ runs `pnpm test` + `pnpm test:go`, builds the web bundle, `cap sync android`,
 `vihko-<tag>.apk` attached. Requires `contents: write` permission
 (granted in the workflow).
 
+App version resolution: the release workflow sets `VITE_APP_VERSION` (web)
+and `VERSION_NAME`/`VERSION_CODE` (gradle) from the tag/run number. Local
+builds fall back to `git describe --tags --always --dirty` (vite.config.ts,
+android/app/build.gradle) and commit count for versionCode, then
+package.json/`0.0.1`.
+
 Release signing: `android/app/build.gradle` uses `signingConfigs.release`
 when `android/keystore.properties` exists (gitignored; see
 `android/keystore.properties` on the build machine — the `.jks` it points

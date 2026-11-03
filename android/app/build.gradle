@@ -7,6 +7,18 @@ if (hasReleaseKeystore) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
+// CI passes VERSION_NAME/VERSION_CODE explicitly; local builds fall back to
+// git so dev APKs don't all report 0.0.1/1.
+def gitOut = { List<String> args ->
+    try {
+        def proc = (['git'] + args).execute(null, rootProject.file('..'))
+        proc.waitFor()
+        return proc.exitValue() == 0 ? proc.text.trim() : null
+    } catch (Exception ignored) {
+        return null
+    }
+}
+
 android {
     namespace = "vihko.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -14,8 +26,8 @@ android {
         applicationId "vihko.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode = (System.getenv("VERSION_CODE") ?: "1").toInteger()
-        versionName = (System.getenv("VERSION_NAME") ?: "0.0.1").replaceFirst(/^v/, "")
+        versionCode = (System.getenv("VERSION_CODE") ?: gitOut(['rev-list', '--count', 'HEAD']) ?: "1").toInteger()
+        versionName = (System.getenv("VERSION_NAME") ?: gitOut(['describe', '--tags', '--always', '--dirty']) ?: "0.0.1").replaceFirst(/^v/, "")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

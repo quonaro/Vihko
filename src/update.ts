@@ -5,7 +5,7 @@ import { i18n } from './i18n'
 import pkg from '../package.json'
 
 // Release builds get the tag via VITE_APP_VERSION (see release.yml);
-// dev builds fall back to package.json.
+// local builds fall back to `git describe` (see vite.config.ts), then package.json.
 export const appVersion = (import.meta.env.VITE_APP_VERSION || pkg.version).replace(/^v/, '')
 
 const REPO = 'quonaro/Vihko'
