@@ -5,12 +5,13 @@ import {
   rowPoseFocus, canTurnStack, leafTexU,
   STACK_LEAN, stackRestY, leafRestAngle, leafRestZ, leafRestFan, leafRestSink,
   ROW_LEAN, rowRestY, sheetPoint, sheetOutline3D, packOutline,
-  leafPointTheta, leafOutlineTheta,
+  leafPointTheta, leafOutlineTheta, GROUND_Y,
   SHEET_OUTLINE_COLOR, SHEET_OUTLINE_OPACITY, SHEET_OUTLINE_PX,
   type Pose,
 } from './layout'
 import {
-  rubberScroll, flickVelocity, momentumStep, MOMENTUM_MIN,
+  rubberScroll, flickVelocity, momentumStep, MOMENTUM_MIN, pinchZoom,
+  clampPan,
 } from './gesture'
 import { pageCanvas, repaintInto, SHEET_SHADE } from './pageTexture'
 import { createPageTurn } from './pageTurn'
@@ -80,6 +81,8 @@ interface TexJob {
   mat: PaperMaterial
   page: Page
   order: number
+  // Cards lie flat on the table — no painted centre crease on those.
+  fold?: boolean
 }
 
 export class JournalScene {
@@ -124,12 +127,23 @@ export class JournalScene {
     x0: number
     y0: number
     v0: number
+    pan0x: number
+    pan0y: number
     moved: boolean
     turnDir: number
   } | null = null
   private trail: { x: number; t: number }[] = []
   private vel = 0 // overview flick momentum, pages/s
   private clickWasDrag = false
+  // Pinch zoom: 1 = the mode's fit distance; the camera dollies toward the
+  // look target by 1/zoom. `pan` is a screen-plane offset (x right, y up,
+  // world units) applied to camera and look target together. Touches are
+  // tracked separately from `drag` so a second finger can turn a
+  // one-finger drag into a pinch mid-gesture.
+  private zoom = 1
+  private pan = new THREE.Vector2()
+  private touches = new Map<number, { x: number; y: number }>()
+  private pinch: { d0: number; zoom0: number; mx: number; my: number } | null = null
   // Focused page as an offset from the overview row centre, in page indices
   // (0 = centred); the rendered focus damps toward rowTarget.
   private rowTarget = 0
@@ -148,8 +162,13 @@ export class JournalScene {
   private unsubImages: () => void
   private ro: ResizeObserver
   private camHome = new THREE.Vector3()
+  private effHome = new THREE.Vector3()
   private lookPos = new THREE.Vector3()
   private lookTarget = new THREE.Vector3()
+  private tmpDir = new THREE.Vector3()
+  private tmpRight = new THREE.Vector3()
+  private tmpUp = new THREE.Vector3()
+  private tmpLook = new THREE.Vector3()
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -209,12 +228,13 @@ export class JournalScene {
   // --- construction -------------------------------------------------------
 
   // Paper has real thickness: a thin box whose edge catches the light —
-  // the single biggest "actually rendered" cue at this scale.
+  // the single biggest "actually rendered" cue at this scale. Overview
+  // cards stay flat (fold=false) — the valley belongs to the bound stack.
   private pageBox() {
     const g = new THREE.BoxGeometry(PAGE_W, PAGE_H, 0.006, 64, 32, 1)
     const pos = g.attributes.position
     for (let i = 0; i < pos.count; i++) {
-      const [x, y, z] = sheetPoint(pos.getX(i), pos.getY(i))
+      const [x, y, z] = sheetPoint(pos.getX(i), pos.getY(i), false)
       pos.setXYZ(i, x, y, z + pos.getZ(i))
     }
     g.computeVertexNormals()
@@ -424,10 +444,17 @@ export class JournalScene {
     this.stackPos = this.cur
     this.camHome.set(
       0,
-      mode === 'stack' ? 0.5 : 0.55,
-      mode === 'stack' ? sheetCameraDistance(this.camera.aspect) : 4.6,
+      mode === 'stack'
+        ? 0.5
+        : GROUND_Y + sheetCameraDistance(this.camera.aspect),
+      mode === 'stack' ? sheetCameraDistance(this.camera.aspect) : 0,
     )
-    this.lookTarget.set(0, mode === 'stack' ? -0.2 : -0.15, 0)
+    // Overview is a straight 90-degree top-down look at the tabletop.
+    // up = -z so a sheet's far edge reads as the top of the screen.
+    this.lookTarget.set(0, mode === 'stack' ? -0.2 : GROUND_Y, 0)
+    this.camera.up.set(
+      0, mode === 'stack' ? 1 : 0, mode === 'stack' ? 0 : -1,
+    )
     this.stackGroup.visible = mode === 'stack'
     this.rowGroup.visible = mode === 'overview'
     if (mode === 'overview') {
@@ -488,7 +515,7 @@ export class JournalScene {
     }
     this.sheets = pages.map((page, i) => {
       const mesh = this.makePage(null)
-      const outline = this.makeOutline(sheetOutline3D())
+      const outline = this.makeOutline(sheetOutline3D({}, false))
       mesh.add(outline)
       const pose = rowPoseFocus(i, this.cur)
       mesh.position.set(pose.x, pose.y, pose.z)
@@ -515,6 +542,7 @@ export class JournalScene {
         mat: e.mesh.material[4] as PaperMaterial,
         page: e.page,
         order: Math.abs(e.mesh.userData.i - focus) + 0.5,
+        fold: false,
       })
     }
     this.texJobs = jobs.sort((a, b) => a.order - b.order)
@@ -593,11 +621,26 @@ export class JournalScene {
     this.foldMat.resolution.set(w, h)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
-    if (this.mode === 'stack') this.camHome.z = sheetCameraDistance(this.camera.aspect)
-    // px → world at the row's camera distance; also the row drag gain.
-    const halfW = Math.tan((this.camera.fov * Math.PI) / 360) * this.camHome.z * (w / h)
-    this.worldPerPx = (2 * halfW) / w
+    if (this.mode === 'stack') {
+      this.camHome.z = sheetCameraDistance(this.camera.aspect)
+    } else {
+      this.camHome.y = GROUND_Y + sheetCameraDistance(this.camera.aspect)
+    }
+    this.updateWorldPerPx()
     this.pump.wake()
+  }
+
+  // px → world at the camera's zoomed distance to the sheets; also the
+  // row drag gain. Overview looks straight down, so that's height over
+  // the table rather than z.
+  private updateWorldPerPx() {
+    const w = this.canvas.clientWidth || 2
+    const h = this.canvas.clientHeight || 2
+    const dist = (this.mode === 'stack'
+      ? this.camHome.z
+      : this.camHome.y - GROUND_Y) / this.zoom
+    const halfW = Math.tan((this.camera.fov * Math.PI) / 360) * dist * (w / h)
+    this.worldPerPx = (2 * halfW) / w
   }
 
   // Row scroll: page indices travelled per px of finger movement.
@@ -607,19 +650,55 @@ export class JournalScene {
 
   private onPointerDown = (e: PointerEvent) => {
     this.pump.wake()
-    if (this.drag || this.busy) return
+    this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    this.canvas.setPointerCapture(e.pointerId)
+    if (this.touches.size === 2) {
+      // A second finger converts any one-finger drag into a pinch.
+      this.cancelDrag()
+      const [a, b] = [...this.touches.values()]
+      this.pinch = {
+        d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+        zoom0: this.zoom,
+        mx: (a.x + b.x) / 2,
+        my: (a.y + b.y) / 2,
+      }
+      this.clickWasDrag = true
+      return
+    }
+    if (this.touches.size > 2 || this.pinch || this.drag || this.busy) return
     this.drag = {
       id: e.pointerId, x0: e.clientX, y0: e.clientY, v0: this.rowTarget,
+      pan0x: this.pan.x, pan0y: this.pan.y,
       moved: false, turnDir: 0,
     }
     this.trail = [{ x: e.clientX, t: e.timeStamp }]
     this.vel = 0
     this.clickWasDrag = false
-    this.canvas.setPointerCapture(e.pointerId)
   }
 
   private onPointerMove = (e: PointerEvent) => {
     this.pump.wake()
+    const touch = this.touches.get(e.pointerId)
+    if (touch) { touch.x = e.clientX; touch.y = e.clientY }
+    if (this.pinch && this.touches.size >= 2) {
+      const [a, b] = [...this.touches.values()]
+      this.zoom = pinchZoom(
+        this.pinch.zoom0, this.pinch.d0,
+        Math.hypot(a.x - b.x, a.y - b.y),
+      )
+      this.updateWorldPerPx()
+      // The midpoint's travel pans the view — incrementally, so the pan
+      // keeps tracking the fingers while the px→world gain changes.
+      const mx = (a.x + b.x) / 2
+      const my = (a.y + b.y) / 2
+      this.setPan(
+        this.pan.x - (mx - this.pinch.mx) * this.worldPerPx,
+        this.pan.y + (my - this.pinch.my) * this.worldPerPx,
+      )
+      this.pinch.mx = mx
+      this.pinch.my = my
+      return
+    }
     const r = this.canvas.getBoundingClientRect()
     const x = e.clientX - r.left
     const y = e.clientY - r.top
@@ -627,12 +706,21 @@ export class JournalScene {
       this.trail.push({ x: e.clientX, t: e.timeStamp })
       if (this.trail.length > 16) this.trail.shift()
       const dx = e.clientX - this.drag.x0
-      if (Math.abs(dx) > 6) this.drag.moved = true
+      const dy = e.clientY - this.drag.y0
+      // While zoomed, a drag pans the view instead of turning/scrolling —
+      // page turns stay on the ‹ › buttons until the pinch zooms back out.
+      const panning = this.zoom > 1.05
+      if (panning ? Math.hypot(dx, dy) > 6 : Math.abs(dx) > 6) this.drag.moved = true
       if (this.drag.moved) {
         this.clickWasDrag = true
         this.hoveredLeaf = this.hoveredCard = null
         this.canvas.style.cursor = 'grabbing'
-        if (this.mode === 'overview') {
+        if (panning) {
+          this.setPan(
+            this.drag.pan0x - dx * this.worldPerPx,
+            this.drag.pan0y + dy * this.worldPerPx,
+          )
+        } else if (this.mode === 'overview') {
           const lim = (this.sheets.length - 1) / 2
           this.rowTarget = rubberScroll(this.drag.v0 - dx * this.pxPerIndex, lim)
         } else {
@@ -642,6 +730,13 @@ export class JournalScene {
       }
     }
     this.pick(x, y)
+  }
+
+  // Pan is a screen-plane offset, clamped by the zoom-dependent limit —
+  // at fit zoom the limit is zero, so the journal always recenters.
+  private setPan(x: number, y: number) {
+    const [cx, cy] = clampPan(x, y, this.zoom)
+    this.pan.set(cx, cy)
   }
 
   // Stack mode: once a decisively-horizontal drag is underway, grab the
@@ -668,8 +763,43 @@ export class JournalScene {
   private onPointerUp = (e: PointerEvent) => this.endDrag(e, true)
   private onPointerCancel = (e: PointerEvent) => this.endDrag(e, false)
 
+  // Drop an in-progress one-finger gesture without flick — a second
+  // finger arriving turns it into a pinch rather than a turn/flick.
+  private cancelDrag() {
+    if (this.turn.phase === 'dragging') this.turn.cancel()
+    this.drag = null
+    this.trail = []
+    this.canvas.style.cursor = ''
+  }
+
   private endDrag(e: PointerEvent, flick: boolean) {
     this.pump.wake()
+    this.touches.delete(e.pointerId)
+    if (this.canvas.hasPointerCapture(e.pointerId)) {
+      this.canvas.releasePointerCapture(e.pointerId)
+    }
+    if (this.pinch) {
+      // Rebase on the remaining pair or end the pinch under one finger —
+      // which then pans while zoomed, continuing the same gesture.
+      this.pinch = null
+      if (this.touches.size >= 2) {
+        const [a, b] = [...this.touches.values()]
+        this.pinch = {
+          d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+          zoom0: this.zoom,
+          mx: (a.x + b.x) / 2,
+          my: (a.y + b.y) / 2,
+        }
+      } else if (this.touches.size === 1 && this.zoom > 1.05 && !this.busy) {
+        const [id, t] = [...this.touches.entries()][0]
+        this.drag = {
+          id, x0: t.x, y0: t.y, v0: this.rowTarget,
+          pan0x: this.pan.x, pan0y: this.pan.y,
+          moved: true, turnDir: 2,
+        }
+        this.trail = [{ x: t.x, t: e.timeStamp }]
+      }
+    }
     if (this.drag && e.pointerId !== this.drag.id) return // other finger lifted
     const pv = flick ? flickVelocity(this.trail, e.timeStamp) : 0
     if (this.drag && this.drag.moved && flick && this.mode === 'overview') {
@@ -684,7 +814,6 @@ export class JournalScene {
     }
     this.drag = null
     this.trail = []
-    if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId)
     this.canvas.style.cursor = ''
   }
 
@@ -809,7 +938,9 @@ export class JournalScene {
       const t0 = performance.now()
       do {
         const job = this.texJobs.shift()!
-        const tex = this.texFor(job.page, SHEET_SHADE.fold, SHEET_SHADE.edgeShade)
+        const tex = this.texFor(
+          job.page, job.fold ?? SHEET_SHADE.fold, SHEET_SHADE.edgeShade,
+        )
         if (tex) job.mat.map = tex
       } while (this.texJobs.length && performance.now() - t0 < 8)
     }
@@ -925,17 +1056,37 @@ export class JournalScene {
     }
 
     // Camera: fixed per mode, damped toward its home on mode switches —
-    // no pointer parallax (the flat look keeps the table still).
+    // no pointer parallax (the flat look keeps the table still). Pinch
+    // zoom dollies along the look-axis: the effective home is camHome
+    // lerped 1/zoom toward the look target, tracked tighter mid-pinch.
+    const iz = 1 / this.zoom
+    this.effHome.set(
+      this.lookTarget.x + (this.camHome.x - this.lookTarget.x) * iz,
+      this.lookTarget.y + (this.camHome.y - this.lookTarget.y) * iz,
+      this.lookTarget.z + (this.camHome.z - this.lookTarget.z) * iz,
+    )
+    // Pan slides camera and look target together in the view plane —
+    // screen-plane (x right, y up) → world via the camera basis.
+    this.camera.getWorldDirection(this.tmpDir)
+    this.tmpRight.crossVectors(this.tmpDir, this.camera.up).normalize()
+    this.tmpUp.crossVectors(this.tmpRight, this.tmpDir).normalize()
+    this.effHome
+      .addScaledVector(this.tmpRight, this.pan.x)
+      .addScaledVector(this.tmpUp, this.pan.y)
+    const lt = this.tmpLook.copy(this.lookTarget)
+      .addScaledVector(this.tmpRight, this.pan.x)
+      .addScaledVector(this.tmpUp, this.pan.y)
+    const ck = damp(this.pinch ? 16 : 6, dt)
     const cd =
-      Math.abs(this.camHome.x - this.camera.position.x) +
-      Math.abs(this.camHome.y - this.camera.position.y) +
-      Math.abs(this.camHome.z - this.camera.position.z)
+      Math.abs(this.effHome.x - this.camera.position.x) +
+      Math.abs(this.effHome.y - this.camera.position.y) +
+      Math.abs(this.effHome.z - this.camera.position.z)
     if (cd > 1e-3) moving = true
-    this.camera.position.x += (this.camHome.x - this.camera.position.x) * damp(6, dt)
-    this.camera.position.y += (this.camHome.y - this.camera.position.y) * damp(6, dt)
-    this.camera.position.z += (this.camHome.z - this.camera.position.z) * damp(6, dt)
-    this.lookPos.lerp(this.lookTarget, damp(6, dt))
-    if (this.lookPos.distanceToSquared(this.lookTarget) > 1e-6) moving = true
+    this.camera.position.x += (this.effHome.x - this.camera.position.x) * ck
+    this.camera.position.y += (this.effHome.y - this.camera.position.y) * ck
+    this.camera.position.z += (this.effHome.z - this.camera.position.z) * ck
+    this.lookPos.lerp(lt, ck)
+    if (this.lookPos.distanceToSquared(lt) > 1e-6) moving = true
     this.camera.lookAt(this.lookPos)
 
     // Emit hover + delete-button anchor.

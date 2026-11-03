@@ -45,7 +45,8 @@ export const HALF_W = PAGE_W / 2
 
 // Rounded outer corners and a real centre valley. UVs remain continuous
 // across the two halves, so drawings are never split into separate pages.
-export function sheetPoint(x: number, y: number): [number, number, number] {
+// fold=false flattens the valley — the tabletop row lays sheets out loose.
+export function sheetPoint(x: number, y: number, fold = true): [number, number, number] {
   const r = SHEET_CORNER_R
   const cx = PAGE_W / 2 - r
   const cy = PAGE_H / 2 - r
@@ -64,7 +65,7 @@ export function sheetPoint(x: number, y: number): [number, number, number] {
     y = Math.sign(y) * (cy + r)
   }
   const u = Math.abs(x) / (PAGE_W / 2)
-  const z = 0.32 * u + 0.045 * Math.sin(Math.PI * u)
+  const z = fold ? 0.32 * u + 0.045 * Math.sin(Math.PI * u) : 0
   return [x, y, z]
 }
 
@@ -81,10 +82,13 @@ export function rowPoseFocus(i: number, focus: number): Pose {
   }
 }
 
-// Group y that puts the row's bottom edge on the table.
-export const ROW_LEAN = -0.5 // overview group rotation.x — row leans back, rad
+// Sheets lie flat on the tabletop, face up — loose pages spread on a desk,
+// not standing cards. Tipping the group a quarter turn puts local +z (the
+// textured face) straight up and the sheet's far edge receding in -z.
+export const ROW_LEAN = -Math.PI / 2 // overview group rotation.x, rad
 export function rowRestY(): number {
-  return GROUND_Y + (PAGE_H / 2) * Math.cos(ROW_LEAN)
+  // The card is a thin box: its underside rests a hair above the catcher.
+  return GROUND_Y + 0.004
 }
 
 // === leaf piles (fanned half-sheets hinged at the centre spine) =============
@@ -324,8 +328,11 @@ export function sheetOutline(spec: SheetOutlineSpec = {}): [number, number][] {
 // Perimeter lifted onto the folded resting surface via sheetPoint — points
 // lie exactly on the sheet's boundary (arc samples sit on the same rounding
 // circle, edge samples inside it), so the outline rides the sheet.
-export function sheetOutline3D(spec: SheetOutlineSpec = {}): [number, number, number][] {
-  return sheetOutline(spec).map(([x, y]) => sheetPoint(x, y))
+export function sheetOutline3D(
+  spec: SheetOutlineSpec = {},
+  fold = true,
+): [number, number, number][] {
+  return sheetOutline(spec).map(([x, y]) => sheetPoint(x, y, fold))
 }
 
 // Flat xyz strip for LineGeometry.setPositions / BufferGeometry positions.

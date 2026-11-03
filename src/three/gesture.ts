@@ -45,3 +45,36 @@ export function momentumStep(
   const next = Math.max(-limit, Math.min(limit, pos + vel * dt))
   return { pos: next, vel: next === pos + vel * dt ? vel * Math.exp(-MOMENTUM_DECAY * dt) : 0 }
 }
+
+// Two-finger pinch zooms the camera along its look-axis; the clamp keeps
+// the journal from shrinking past readability or flying through the lens.
+export const ZOOM_MIN = 0.55
+export const ZOOM_MAX = 3.4
+
+export function clampZoom(z: number): number {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z))
+}
+
+// New zoom for a pinch: the finger-span ratio d/d0 multiplies the zoom
+// captured at gesture start, so re-pinching never jumps.
+export function pinchZoom(zoom0: number, d0: number, d: number): number {
+  return clampZoom(zoom0 * (d / Math.max(1, d0)))
+}
+
+// Panning (pinch-midpoint travel, or a one-finger drag while zoomed)
+// slides the camera and its look target together in the view plane. The
+// limit grows with zoom — at fit (zoom 1) it is zero, so zooming back out
+// recenters the journal instead of leaving it parked off-screen.
+export const PAN_LIMIT = 1.7 // world units, as zoom → ∞
+
+export function panLimit(zoom: number): number {
+  return PAN_LIMIT * Math.max(0, 1 - 1 / zoom)
+}
+
+// Clamp a screen-plane pan offset (x right, y up, world units) to the
+// limit for the current zoom.
+export function clampPan(x: number, y: number, zoom: number): [number, number] {
+  const lim = panLimit(zoom)
+  const l = Math.hypot(x, y)
+  return l > lim && l > 0 ? [(x * lim) / l, (y * lim) / l] : [x, y]
+}

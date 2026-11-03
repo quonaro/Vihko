@@ -12,8 +12,12 @@ import {
 type V = [number, number, number]
 
 describe('tabletop rest heights', () => {
-  it('puts the overview bottom edge on the table', () => {
-    expect(rowRestY() - PAGE_H / 2 * Math.cos(ROW_LEAN)).toBeCloseTo(GROUND_Y)
+  it('lays overview sheets flat on the tabletop, face up', () => {
+    // Quarter turn: the card's textured face (+z) points straight up.
+    expect(ROW_LEAN).toBeCloseTo(-Math.PI / 2)
+    // A hair above the catcher — the thin box's underside rests on it.
+    expect(rowRestY()).toBeGreaterThan(GROUND_Y)
+    expect(rowRestY()).toBeLessThan(GROUND_Y + 0.05)
   })
 
   it('rests the fanned block on the shadow catcher, spread just above it', () => {
@@ -97,6 +101,14 @@ describe('folded sheet geometry', () => {
     expect(sheetPoint(0, 0)[2]).toBe(0)
     expect(sheetPoint(PAGE_W / 2, 0)[2]).toBeGreaterThan(0.2)
     expect(sheetPoint(-PAGE_W / 2, 0)[2]).toBeCloseTo(sheetPoint(PAGE_W / 2, 0)[2])
+  })
+
+  it('flattens to a planar sheet with fold=false but keeps the corners', () => {
+    expect(sheetPoint(PAGE_W / 2, 0, false)[2]).toBe(0)
+    expect(sheetPoint(0, 0, false)).toEqual([0, 0, 0])
+    const [x, y] = sheetPoint(PAGE_W / 2, PAGE_H / 2, false)
+    expect(x).toBeLessThan(PAGE_W / 2)
+    expect(y).toBeLessThan(PAGE_H / 2)
   })
 
   it('rounds the outer corners without moving the fold', () => {
