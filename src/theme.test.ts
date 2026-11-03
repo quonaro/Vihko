@@ -24,6 +24,19 @@ describe('theme', () => {
     expect(localStorage.getItem('vihko:theme')).toBe('light')
   })
 
+  it('keeps the theme-color meta tag in sync', () => {
+    const meta = document.createElement('meta')
+    meta.name = 'theme-color'
+    document.head.appendChild(meta)
+
+    setTheme('dark')
+    expect(meta.getAttribute('content')).toBe('#262628')
+    setTheme('light')
+    expect(meta.getAttribute('content')).toBe('#f8f7f3')
+
+    meta.remove()
+  })
+
   it('restores the saved theme when the app starts', async () => {
     localStorage.setItem('vihko:theme', 'dark')
     vi.resetModules()

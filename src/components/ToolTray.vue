@@ -156,7 +156,7 @@ function onDotCancel() {
             <rect x="10.5" y="16" width="3" height="16" rx="1.5" fill="#666" />
           </g>
           <!-- geometric shapes -->
-          <g v-else-if="tool.id === 'shapes'" fill="none" stroke="#d9a441" stroke-width="1.8" stroke-linejoin="round">
+          <g v-else-if="tool.id === 'shapes'" fill="none" stroke="#2a8097" stroke-width="1.8" stroke-linejoin="round">
             <rect x="4" y="8" width="16" height="22" rx="1" />
             <path d="M5 29 19 9" />
           </g>
@@ -321,7 +321,7 @@ function onDotCancel() {
 }
 .tool.active {
   opacity: 1;
-  border-top-color: #d9a441;
+  border-top-color: #2a8097;
 }
 .tool.active svg { transform: translateY(-6px); }
 .shape-menu {
@@ -360,8 +360,8 @@ function onDotCancel() {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.shape-option.selected { background: var(--chrome-hover); color: #d9a441; }
-.shape-option:focus-visible { outline: 2px solid #d9a441; outline-offset: 1px; }
+.shape-option.selected { background: var(--chrome-hover); color: #2a8097; }
+.shape-option:focus-visible { outline: 2px solid #2a8097; outline-offset: 1px; }
 .swatch {
   width: 52px;
   height: 52px;

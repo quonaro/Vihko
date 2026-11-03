@@ -73,7 +73,7 @@ function submit() {
   font-size: 15px;
   outline: none;
 }
-.dlg-input:focus { border-color: #d9a441; }
+.dlg-input:focus { border-color: #2a8097; }
 .dlg-actions {
   display: flex;
   gap: 10px;
@@ -91,12 +91,12 @@ function submit() {
   .dlg-btn:hover { background: var(--chrome-hover); }
 }
 .dlg-btn.primary {
-  background: #d9a441;
-  color: #222;
+  background: #2a8097;
+  color: #fff;
   font-weight: 600;
 }
 @media (hover: hover) {
-  .dlg-btn.primary:hover:not(:disabled) { background: #e4b455; }
+  .dlg-btn.primary:hover:not(:disabled) { background: #3894ad; }
 }
 .dlg-btn.primary:disabled { opacity: 0.4; cursor: default; }
 </style>

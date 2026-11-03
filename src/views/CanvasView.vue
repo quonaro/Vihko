@@ -403,7 +403,7 @@ function drawTransformControls() {
   if (!frame) return
   ctx.save()
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  ctx.strokeStyle = '#1684ff'
+  ctx.strokeStyle = '#2a8097'
   ctx.fillStyle = '#fff'
   ctx.lineWidth = 1.5
   ctx.beginPath()
@@ -1454,7 +1454,7 @@ onBeforeUnmount(() => {
 .canvas-view {
   position: relative;
   height: 100%;
-  background: #f6f1e6;
+  background: #2a2a2c;
 }
 .brush-rail {
   position: absolute;
@@ -1560,7 +1560,7 @@ canvas.grab { cursor: grab; }
   .round-btn:hover { background: rgba(40, 40, 42, 0.9); }
 }
 .round-btn:disabled { opacity: 0.35; cursor: default; }
-.round-btn.selected { color: #f0cf77; background: rgba(40, 40, 42, .95); }
+.round-btn.selected { color: #6dbbcf; background: rgba(40, 40, 42, .95); }
 .layer-modal-backdrop {
   position: fixed;
   inset: 0;

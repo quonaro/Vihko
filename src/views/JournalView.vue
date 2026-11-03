@@ -302,7 +302,7 @@ async function goToPage() {
   flex-direction: column;
   overflow: hidden;
   color: var(--paper-text);
-  background: radial-gradient(ellipse at 48% 42%, #efefec 0%, #d5d6d2 58%, #b9bbb6 100%);
+  background: var(--journal-shell);
 }
 .back {
   position: absolute;
@@ -385,8 +385,11 @@ async function goToPage() {
 }
 .menu-item.danger { color: #e07070; }
 header {
+  position: relative;
+  z-index: 10;
   padding: 31px 0 4px;
   text-align: center;
+  pointer-events: none;
 }
 h1 {
   color: var(--paper-text);
@@ -404,10 +407,12 @@ h1 {
   gap: 5px;
 }
 .count .ink { display: inline-block; }
+/* The stage is full-bleed: the canvas runs under the header/footer chrome
+   so the journal is never clipped by a footer edge — it reads as the whole
+   screen, with buttons floating over it. */
 .stage {
-  flex: 1;
-  position: relative;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
   display: flex;
 }
 .stage3d {
@@ -471,7 +476,7 @@ h1 {
 .flip.next { right: 40px; }
 .page-pos {
   position: absolute;
-  bottom: 12px;
+  bottom: calc(max(30px, env(safe-area-inset-bottom)) + 64px);
   left: 50%;
   transform: translateX(-50%);
   color: var(--paper-muted);
@@ -479,6 +484,11 @@ h1 {
   z-index: 4;
 }
 footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
   display: flex;
   justify-content: center;
   gap: 18px;

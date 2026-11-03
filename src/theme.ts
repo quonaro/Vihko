@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { syncSystemBarsTheme } from './systemTheme'
+import { getSystemBarSettings, syncSystemBarsTheme } from './systemTheme'
 
 export type AppTheme = 'light' | 'dark'
 
@@ -13,6 +13,9 @@ export const theme = ref<AppTheme>(readTheme())
 
 function applyTheme(value: AppTheme) {
   document.documentElement.dataset.theme = value
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute('content', getSystemBarSettings(value).backgroundColor)
   void syncSystemBarsTheme(value).catch((error) =>
     console.warn('Could not sync system bar theme', error),
   )

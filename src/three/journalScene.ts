@@ -37,6 +37,9 @@ export interface SceneEvents {
 const TEX_W = 1024
 // The free edge trails the spine mid-turn — a paper bend, not a plank.
 const LEAF_CURL = 0.4
+// Touch delete buttons hang this far under a sheet's projected bottom
+// edge — a px gap, so the 30px button stays clear of the paper at any zoom.
+const DEL_DROP_PX = 40
 
 const damp = (rate: number, dt: number) => 1 - Math.exp(-rate * dt)
 
@@ -1122,26 +1125,26 @@ export class JournalScene {
       if (this.mode === 'overview') {
         const v = new THREE.Vector3()
         for (const entry of this.sheets) {
-          v.set(0, -PAGE_H * 0.56, 0)
+          v.set(0, -PAGE_H / 2, 0)
           entry.mesh.localToWorld(v)
           v.project(this.camera)
           if (v.z >= 1) continue
           const x = ((v.x + 1) / 2) * r.width
           if (x < -40 || x > r.width + 40) continue
-          list.push({ id: entry.id, x, y: ((1 - v.y) / 2) * r.height })
+          list.push({ id: entry.id, x, y: ((1 - v.y) / 2) * r.height + DEL_DROP_PX })
         }
       } else {
         // Stack mode: only the open spread is tappable — anchor under it.
         const entry = this.pages[Math.round(this.stackPos)]
         if (entry) {
-          const v = new THREE.Vector3(0, -PAGE_H * 0.56, 0)
+          const v = new THREE.Vector3(0, -PAGE_H / 2, 0)
           this.stackGroup.localToWorld(v)
           v.project(this.camera)
           if (v.z < 1) {
             list.push({
               id: entry.id,
               x: ((v.x + 1) / 2) * r.width,
-              y: ((1 - v.y) / 2) * r.height,
+              y: ((1 - v.y) / 2) * r.height + DEL_DROP_PX,
             })
           }
         }

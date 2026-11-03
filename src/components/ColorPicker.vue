@@ -242,16 +242,16 @@ function hueUp() {
   border-radius: 10px;
   border: 0;
   outline: none;
-  background: rgba(0, 0, 0, 0.045);
-  color: #111;
+  background: var(--chrome-input-bg);
+  color: var(--chrome-text);
   font: 15px/1 ui-monospace, monospace;
   transition: background-color 140ms ease;
 }
 .hex::placeholder {
-  color: #85857f;
+  color: var(--chrome-muted);
 }
 .hex:focus {
-  background: rgba(0, 0, 0, 0.075);
+  background: var(--chrome-control-bg);
 }
 .hex.bad {
   background: rgba(226, 96, 30, 0.12);

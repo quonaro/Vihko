@@ -13,6 +13,7 @@
   --paper-shell:
     radial-gradient(ellipse at 50% 42%, rgba(255,255,255,.96) 0%, rgba(250,249,245,.9) 36%, transparent 73%),
     linear-gradient(145deg, #eeece6 0%, #f8f7f3 48%, #e5e2db 100%);
+  --journal-shell: radial-gradient(ellipse at 48% 42%, #efefec 0%, #d5d6d2 58%, #b9bbb6 100%);
   --chrome-bg: #f8f7f3;
   --chrome-text: #282925;
   --chrome-muted: #73746e;
@@ -25,16 +26,16 @@
   --brush-panel-border: rgba(35, 35, 31, .16);
   --brush-panel-text: #55544e;
   --brush-panel-shadow: rgba(32, 33, 31, .18);
-  --brush-value: #846a28;
+  --brush-value: #2a8097;
   --brush-mark: rgba(76, 77, 73, .38);
   --brush-thumb: #fffefa;
   --brush-thumb-border: rgba(35, 35, 31, .24);
   --brush-thumb-shadow: rgba(0, 0, 0, .2);
-  --layer-accent: #846a28;
-  --layer-active-bg: rgba(132, 106, 40, .1);
-  --layer-active-border: rgba(132, 106, 40, .65);
-  --layer-accent-bg: #e1c279;
-  --layer-accent-text: #26251f;
+  --layer-accent: #2a8097;
+  --layer-active-bg: rgba(42, 128, 151, .1);
+  --layer-active-border: rgba(42, 128, 151, .65);
+  --layer-accent-bg: #6dbbcf;
+  --layer-accent-text: #16303a;
 }
 
 :root[data-theme='dark'] {
@@ -45,6 +46,7 @@
   --paper-shell:
     radial-gradient(ellipse at 50% 42%, rgba(69,69,66,.96) 0%, rgba(48,48,47,.92) 38%, transparent 74%),
     linear-gradient(145deg, #292a29 0%, #383936 48%, #222321 100%);
+  --journal-shell: radial-gradient(ellipse at 48% 42%, #3d3e3b 0%, #2a2b29 58%, #1d1e1c 100%);
   --chrome-bg: #262628;
   --chrome-text: #f5f4ef;
   --chrome-muted: #aaa9a2;
@@ -57,16 +59,16 @@
   --brush-panel-border: rgba(255, 255, 255, .14);
   --brush-panel-text: #eeede8;
   --brush-panel-shadow: rgba(0, 0, 0, .34);
-  --brush-value: #e1c279;
+  --brush-value: #6dbbcf;
   --brush-mark: rgba(220, 220, 218, .64);
   --brush-thumb: #fff;
   --brush-thumb-border: rgba(255, 255, 255, .65);
   --brush-thumb-shadow: rgba(0, 0, 0, .45);
-  --layer-accent: #e1c279;
-  --layer-active-bg: rgba(225, 194, 121, .1);
-  --layer-active-border: rgba(225, 194, 121, .7);
-  --layer-accent-bg: #e1c279;
-  --layer-accent-text: #191a1b;
+  --layer-accent: #6dbbcf;
+  --layer-active-bg: rgba(109, 187, 207, .1);
+  --layer-active-border: rgba(109, 187, 207, .7);
+  --layer-accent-bg: #6dbbcf;
+  --layer-accent-text: #0d1b20;
 }
 
 html,
