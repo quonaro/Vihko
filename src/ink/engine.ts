@@ -18,7 +18,11 @@ declare global {
 // wasm binary fails to load. Exported for tests (initInk() also falls back
 // to it whenever the wasm binary is unavailable).
 export function jsEngine(): InkEngine {
-  interface Pt { x: number; y: number; t: number }
+  interface Pt {
+    x: number
+    y: number
+    t: number
+  }
   interface S {
     tool: string
     pts: Pt[]
@@ -30,25 +34,36 @@ export function jsEngine(): InkEngine {
 
   const profile = (tool: string): [number, number, number, number, number] => {
     switch (tool) {
-      case 'draw': return [1.6, 8.0, 0.9, 10.0, 0.92]
-      case 'write': return [2.2, 0, 2.2, 2.2, 1.0]
-      case 'shapes': return [2.2, 0, 2.2, 2.2, 1.0]
-      case 'outline': return [6.5, 2.5, 5.0, 10.5, 0.95]
-      case 'sketch': return [2.4, 3.5, 1.0, 6.5, 0.6]
-      case 'color': return [12.0, 24.0, 8.0, 46.0, 0.045]
-      case 'eraser': return [13.0, 5.0, 9.0, 26.0, 1.0]
-      default: return [2.5, 0, 2.5, 2.5, 1]
+      case 'draw':
+        return [1.6, 8.0, 0.9, 10.0, 0.92]
+      case 'write':
+        return [2.2, 0, 2.2, 2.2, 1.0]
+      case 'shapes':
+        return [2.2, 0, 2.2, 2.2, 1.0]
+      case 'outline':
+        return [6.5, 2.5, 5.0, 10.5, 0.95]
+      case 'sketch':
+        return [2.4, 3.5, 1.0, 6.5, 0.6]
+      case 'color':
+        return [12.0, 24.0, 8.0, 46.0, 0.045]
+      case 'eraser':
+        return [13.0, 5.0, 9.0, 26.0, 1.0]
+      default:
+        return [2.5, 0, 2.5, 2.5, 1]
     }
   }
   const targetW = (tool: string, v: number) => {
     const [b, g, mn, mx] = profile(tool)
     const k = 1 - Math.exp(-v / 0.55)
-    let t = tool === 'color' ? b + g * (1 - k) : b + g * k
+    const t = tool === 'color' ? b + g * (1 - k) : b + g * k
     return Math.min(mx, Math.max(mn, t))
   }
   const cr = (a: number, b: number, c: number, d: number, t: number) => {
-    const t2 = t * t, t3 = t2 * t
-    return 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (3 * b - a - 3 * c + d) * t3)
+    const t2 = t * t,
+      t3 = t2 * t
+    return (
+      0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (3 * b - a - 3 * c + d) * t3)
+    )
   }
   const emit = (s: S, i: number, out: Sample[]) => {
     const n = s.pts.length
@@ -72,14 +87,32 @@ export function jsEngine(): InkEngine {
     const n = s.pts.length
     const limit = flush ? n - 1 : n - 2
     for (let i = s.seg + 1; i <= limit && i < n; i++) {
-      if (i >= 0) { emit(s, i, out); s.seg = i }
+      if (i >= 0) {
+        emit(s, i, out)
+        s.seg = i
+      }
     }
     return out
   }
   return {
-    begin: (tool) => { const id = nextId++; strokes.set(id, { tool, pts: [], seg: -1, smW: 0 }); return id },
-    addPoint: (id, x, y, t) => { const s = strokes.get(id); if (!s) return []; s.pts.push({ x, y, t }); return drain(s, false) },
-    end: (id) => { const s = strokes.get(id); if (!s) return []; const out = drain(s, true); strokes.delete(id); return out },
+    begin: (tool) => {
+      const id = nextId++
+      strokes.set(id, { tool, pts: [], seg: -1, smW: 0 })
+      return id
+    },
+    addPoint: (id, x, y, t) => {
+      const s = strokes.get(id)
+      if (!s) return []
+      s.pts.push({ x, y, t })
+      return drain(s, false)
+    },
+    end: (id) => {
+      const s = strokes.get(id)
+      if (!s) return []
+      const out = drain(s, true)
+      strokes.delete(id)
+      return out
+    },
   }
 }
 

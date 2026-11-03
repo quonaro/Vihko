@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mount, VueWrapper } from '@vue/test-utils'
+import { mount, type VueWrapper } from '@vue/test-utils'
 import ColorPicker from './ColorPicker.vue'
 import { i18n } from '../i18n'
 import { store } from '../store'
@@ -14,7 +14,14 @@ function pev(type: string, props: Record<string, unknown> = {}) {
 
 function rect(el: Element, r: { left: number; top: number; width: number; height: number }) {
   ;(el as HTMLElement).getBoundingClientRect = () =>
-    ({ ...r, right: r.left + r.width, bottom: r.top + r.height, x: r.left, y: r.top, toJSON: () => {} }) as DOMRect
+    ({
+      ...r,
+      right: r.left + r.width,
+      bottom: r.top + r.height,
+      x: r.left,
+      y: r.top,
+      toJSON: () => {},
+    }) as DOMRect
 }
 
 const dialog = () => document.body.querySelector('[role="dialog"]')

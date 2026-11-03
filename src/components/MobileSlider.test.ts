@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mount, VueWrapper } from '@vue/test-utils'
+import { mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import MobileSlider from './MobileSlider.vue'
 import PromptDialog from './PromptDialog.vue'
@@ -10,44 +10,55 @@ const plugins = { global: { plugins: [i18n] } }
 const dialog = () => document.body.querySelector('[role="dialog"]')
 
 let wrappers: VueWrapper[] = []
-const track = <T extends VueWrapper>(w: T): T => (wrappers.push(w), w)
+const track = <T extends VueWrapper>(w: T): T => {
+  wrappers.push(w)
+  return w
+}
 
 beforeEach(() => {
   document.documentElement.style.overflow = ''
 })
 
 afterEach(() => {
-  wrappers.forEach((w) => w.unmount())
+  wrappers.forEach((w) => {
+    w.unmount()
+  })
   wrappers = []
   document.documentElement.style.overflow = ''
 })
 
 describe('MobileSlider', () => {
   it('teleports a dialog into body only while open', async () => {
-    const w = track(mount(MobileSlider, {
-      ...plugins,
-      props: { open: false, title: 'Sheet' },
-    }))
+    const w = track(
+      mount(MobileSlider, {
+        ...plugins,
+        props: { open: false, title: 'Sheet' },
+      }),
+    )
     expect(dialog()).toBeNull()
     await w.setProps({ open: true })
     expect(dialog()?.textContent).toContain('Sheet')
   })
 
   it('locks document scroll while open and restores on unmount', async () => {
-    const w = track(mount(MobileSlider, {
-      ...plugins,
-      props: { open: true, title: 'T' },
-    }))
+    const w = track(
+      mount(MobileSlider, {
+        ...plugins,
+        props: { open: true, title: 'T' },
+      }),
+    )
     expect(document.documentElement.style.overflow).toBe('hidden')
     await w.setProps({ open: false })
     expect(document.documentElement.style.overflow).toBe('')
   })
 
   it('emits close on backdrop click, close button and Escape', async () => {
-    const w = track(mount(MobileSlider, {
-      ...plugins,
-      props: { open: true, title: 'T' },
-    }))
+    const w = track(
+      mount(MobileSlider, {
+        ...plugins,
+        props: { open: true, title: 'T' },
+      }),
+    )
     const backdrop = document.body.querySelector('.mslider-backdrop') as HTMLElement
     backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(w.emitted('update:open')?.[0]).toEqual([false])
@@ -64,10 +75,12 @@ describe('MobileSlider', () => {
   })
 
   it('hides the scrollbar on the body when no-scrollbar is set', async () => {
-    track(mount(MobileSlider, {
-      ...plugins,
-      props: { open: true, title: 'T', noScrollbar: true },
-    }))
+    track(
+      mount(MobileSlider, {
+        ...plugins,
+        props: { open: true, title: 'T', noScrollbar: true },
+      }),
+    )
     expect(document.body.querySelector('.mslider-body')?.classList).toContain('no-scrollbar')
   })
 })

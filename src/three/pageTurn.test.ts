@@ -204,9 +204,7 @@ describe('settle / commit', () => {
     expect(t.phase).toBe('settling')
     expect(settleOut(t)).toBe(1)
     expect(cb).toHaveBeenCalledTimes(1)
-    expect(cb).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'commit', index: 1 }),
-    )
+    expect(cb).toHaveBeenCalledWith(expect.objectContaining({ type: 'commit', index: 1 }))
   })
 
   it('flip() refuses at the bounds', () => {

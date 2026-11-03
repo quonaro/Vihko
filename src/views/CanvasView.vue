@@ -1,9 +1,24 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  store, currentPage, currentJournal, pushStroke, pushOp, undoStroke, redoStroke,
-  navPage, closeToJournal, canUndo, canRedo, pageLayers, activeLayer,
-  addLayer, selectLayer, updateLayer, reorderLayer, deleteLayer,
+  store,
+  currentPage,
+  currentJournal,
+  pushStroke,
+  pushOp,
+  undoStroke,
+  redoStroke,
+  navPage,
+  closeToJournal,
+  canUndo,
+  canRedo,
+  pageLayers,
+  activeLayer,
+  addLayer,
+  selectLayer,
+  updateLayer,
+  reorderLayer,
+  deleteLayer,
 } from '../store'
 import { initInk } from '../ink/engine'
 import { renderSamples } from '../ink/renderer'
@@ -27,14 +42,22 @@ type LayerPoint = { x: number; y: number }
 type TransformHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'rotate' | 'move'
 type ResizeHandle = Exclude<TransformHandle, 'rotate' | 'move'>
 const OPPOSITE_HANDLE: Record<ResizeHandle, ResizeHandle> = {
-  nw: 'se', n: 's', ne: 'sw', e: 'w', se: 'nw', s: 'n', sw: 'ne', w: 'e',
+  nw: 'se',
+  n: 's',
+  ne: 'sw',
+  e: 'w',
+  se: 'nw',
+  s: 'n',
+  sw: 'ne',
+  w: 'e',
 }
 
 const canvas = ref<HTMLCanvasElement>()
 const navClass = ref<'' | 'from-right' | 'from-left'>('')
 const journal = computed(() => currentJournal())
 const pageIndex = computed(() => {
-  const j = journal.value, p = currentPage()
+  const j = journal.value,
+    p = currentPage()
   return j && p ? j.pages.findIndex((x) => x.id === p.id) : 0
 })
 
@@ -63,7 +86,13 @@ const layerList = ref<HTMLElement>()
 const draggingLayerId = ref<string | null>(null)
 const layerDropIndex = ref<number | null>(null)
 let layerDragPointerId: number | null = null
-const layerPreview = ref<{ id: string; x: number; y: number; scale: number; rotation: number } | null>(null)
+const layerPreview = ref<{
+  id: string
+  x: number
+  y: number
+  scale: number
+  rotation: number
+} | null>(null)
 const brushSize = computed(() => store.toolSizes[store.tool] ?? 1)
 const brushProgress = computed(() => Math.min(1, Math.max(0, (brushSize.value - 0.25) / 3.75)))
 const brushMarkWidth = computed(() => `${Math.min(20, 7 + brushSize.value * 3)}px`)
@@ -101,7 +130,9 @@ function applyViewport() {
   const c = clampOffset(
     saved ? unfrac(saved.fx, w, PAGE_W * view.s) : cover.ox,
     saved ? unfrac(saved.fy, h, PAGE_H * view.s) : cover.oy,
-    view.s, w, h,
+    view.s,
+    w,
+    h,
   )
   view.ox = c.ox
   view.oy = c.oy
@@ -136,11 +167,7 @@ function zoomBy(f: number) {
   if (s === view.s) return
   const k = s / view.s
   // keep the page point under the viewport center fixed
-  const c = clampOffset(
-    w / 2 - (w / 2 - view.ox) * k,
-    h / 2 - (h / 2 - view.oy) * k,
-    s, w, h,
-  )
+  const c = clampOffset(w / 2 - (w / 2 - view.ox) * k, h / 2 - (h / 2 - view.oy) * k, s, w, h)
   view.s = s
   view.ox = c.ox
   view.oy = c.oy
@@ -181,7 +208,10 @@ function getLayerBounds(layerId: string): LayerBounds | null {
     if (bounds !== undefined) return bounds
   }
   const defaultId = p.layers?.[0]?.id ?? 'legacy'
-  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity
+  let left = Infinity,
+    top = Infinity,
+    right = -Infinity,
+    bottom = -Infinity
   const include = (x: number, y: number, pad = 0) => {
     left = Math.min(left, x - pad)
     top = Math.min(top, y - pad)
@@ -190,7 +220,8 @@ function getLayerBounds(layerId: string): LayerBounds | null {
   }
   for (const stroke of p.strokes) {
     if ((stroke.layerId ?? defaultId) !== layerId) continue
-    const pad = (stroke.tool === 'color' ? 50 : stroke.tool === 'eraser' ? 30 : 15) * (stroke.size ?? 1)
+    const pad =
+      (stroke.tool === 'color' ? 50 : stroke.tool === 'eraser' ? 30 : 15) * (stroke.size ?? 1)
     for (const point of stroke.pts) include(point.x, point.y, pad)
   }
   for (const op of p.ops ?? []) {
@@ -220,7 +251,10 @@ function cachedLayerBounds(layerId: string): LayerBounds | null {
   return bounds
 }
 
-function layerPoint(layer: NonNullable<ReturnType<typeof activeLayer>>, point: LayerPoint): LayerPoint {
+function layerPoint(
+  layer: NonNullable<ReturnType<typeof activeLayer>>,
+  point: LayerPoint,
+): LayerPoint {
   const angle = (layer.rotation * Math.PI) / 180
   const dx = (point.x - PAGE_W / 2) * layer.scale
   const dy = (point.y - PAGE_H / 2) * layer.scale
@@ -230,32 +264,41 @@ function layerPoint(layer: NonNullable<ReturnType<typeof activeLayer>>, point: L
   }
 }
 
-function frameLocalPoints(bounds: LayerBounds): Record<Exclude<TransformHandle, 'rotate' | 'move'>, LayerPoint> {
+function frameLocalPoints(
+  bounds: LayerBounds,
+): Record<Exclude<TransformHandle, 'rotate' | 'move'>, LayerPoint> {
   const cx = (bounds.left + bounds.right) / 2
   const cy = (bounds.top + bounds.bottom) / 2
   return {
-    nw: { x: bounds.left, y: bounds.top }, n: { x: cx, y: bounds.top },
-    ne: { x: bounds.right, y: bounds.top }, e: { x: bounds.right, y: cy },
-    se: { x: bounds.right, y: bounds.bottom }, s: { x: cx, y: bounds.bottom },
-    sw: { x: bounds.left, y: bounds.bottom }, w: { x: bounds.left, y: cy },
+    nw: { x: bounds.left, y: bounds.top },
+    n: { x: cx, y: bounds.top },
+    ne: { x: bounds.right, y: bounds.top },
+    e: { x: bounds.right, y: cy },
+    se: { x: bounds.right, y: bounds.bottom },
+    s: { x: cx, y: bounds.bottom },
+    sw: { x: bounds.left, y: bounds.bottom },
+    w: { x: bounds.left, y: cy },
   }
 }
 
 function transformFrame(layer = selectedLayer.value) {
-  if (!layer || !layer.visible) return null
-  if (layerPreview.value?.id === layer.id)
-    layer = { ...layer, ...layerPreview.value }
+  if (!layer?.visible) return null
+  if (layerPreview.value?.id === layer.id) layer = { ...layer, ...layerPreview.value }
   const bounds = cachedLayerBounds(layer.id)
   if (!bounds) return null
   const local = frameLocalPoints(bounds)
   const screen: Record<Exclude<TransformHandle, 'rotate' | 'move'>, LayerPoint> = {} as Record<
-    Exclude<TransformHandle, 'rotate' | 'move'>, LayerPoint
+    Exclude<TransformHandle, 'rotate' | 'move'>,
+    LayerPoint
   >
   for (const key of Object.keys(local) as (keyof typeof local)[]) {
     const pagePt = layerPoint(layer, local[key])
     screen[key] = { x: pagePt.x * view.s + view.ox, y: pagePt.y * view.s + view.oy }
   }
-  const center = layerPoint(layer, { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 })
+  const center = layerPoint(layer, {
+    x: (bounds.left + bounds.right) / 2,
+    y: (bounds.top + bounds.bottom) / 2,
+  })
   const centerScreen = { x: center.x * view.s + view.ox, y: center.y * view.s + view.oy }
   const top = screen.n
   const len = Math.hypot(top.x - centerScreen.x, top.y - centerScreen.y) || 1
@@ -263,31 +306,49 @@ function transformFrame(layer = selectedLayer.value) {
     x: top.x + ((top.x - centerScreen.x) / len) * 24,
     y: top.y + ((top.y - centerScreen.y) / len) * 24,
   }
-  return { bounds, local, screen, center: { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 }, centerWorld: center, centerScreen, rotate }
+  return {
+    bounds,
+    local,
+    screen,
+    center: { x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 },
+    centerWorld: center,
+    centerScreen,
+    rotate,
+  }
 }
 
-function hitTransformControl(frame: NonNullable<ReturnType<typeof transformFrame>>, x: number, y: number): TransformHandle | null {
+function hitTransformControl(
+  frame: NonNullable<ReturnType<typeof transformFrame>>,
+  x: number,
+  y: number,
+): TransformHandle | null {
   if (Math.hypot(x - frame.rotate.x, y - frame.rotate.y) <= 18) return 'rotate'
   const handles = Object.keys(frameLocalPoints(frame.bounds)) as ResizeHandle[]
-  const handle = handles.find((key) => Math.hypot(x - frame.screen[key].x, y - frame.screen[key].y) <= 18)
+  const handle = handles.find(
+    (key) => Math.hypot(x - frame.screen[key].x, y - frame.screen[key].y) <= 18,
+  )
   if (handle) return handle
 
   const corners = [frame.screen.nw, frame.screen.ne, frame.screen.se, frame.screen.sw]
   let inside = false
   for (let i = 0, j = corners.length - 1; i < corners.length; j = i++) {
-    const a = corners[i], b = corners[j]
-    if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x)
-      inside = !inside
+    const a = corners[i],
+      b = corners[j]
+    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside
   }
   return inside ? 'move' : null
 }
 
-function cursorForHandle(frame: NonNullable<ReturnType<typeof transformFrame>>, handle: TransformHandle | null) {
+function cursorForHandle(
+  frame: NonNullable<ReturnType<typeof transformFrame>>,
+  handle: TransformHandle | null,
+) {
   if (!handle) return 'default'
   if (handle === 'rotate') return 'crosshair'
   if (handle === 'move') return 'move'
   const opposite = OPPOSITE_HANDLE[handle]
-  const a = frame.screen[opposite], b = frame.screen[handle]
+  const a = frame.screen[opposite],
+    b = frame.screen[handle]
   const angle = ((Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI + 360) % 180
   if (angle < 22.5 || angle >= 157.5) return 'ew-resize'
   if (angle < 67.5) return 'nwse-resize'
@@ -310,7 +371,11 @@ function updateCanvasCursor(x: number, y: number) {
   el.style.cursor = frame ? cursorForHandle(frame, hitTransformControl(frame, x, y)) : 'default'
 }
 
-function beginLayerTransform(layer: NonNullable<ReturnType<typeof activeLayer>>, x: number, y: number) {
+function beginLayerTransform(
+  layer: NonNullable<ReturnType<typeof activeLayer>>,
+  x: number,
+  y: number,
+) {
   const bounds = cachedLayerBounds(layer.id)
   const frame = transformFrame(layer)
   const hit = frame ? hitTransformControl(frame, x, y) : null
@@ -332,10 +397,20 @@ function beginLayerTransform(layer: NonNullable<ReturnType<typeof activeLayer>>,
     ? Math.atan2(startPointer.y - pivotWorld.y, startPointer.x - pivotWorld.x)
     : 0
   return {
-    layerId: layer.id, handle, startPointer,
-    startX: layer.x, startY: layer.y, startScale: layer.scale, startRotation: layer.rotation,
-    bounds, anchorLocal, anchorWorld: anchorLocal ? layerPoint(layer, anchorLocal) : null,
-    pivotLocal, pivotWorld, startAngle, startHandleWorld,
+    layerId: layer.id,
+    handle,
+    startPointer,
+    startX: layer.x,
+    startY: layer.y,
+    startScale: layer.scale,
+    startRotation: layer.rotation,
+    bounds,
+    anchorLocal,
+    anchorWorld: anchorLocal ? layerPoint(layer, anchorLocal) : null,
+    pivotLocal,
+    pivotWorld,
+    startAngle,
+    startHandleWorld,
   }
 }
 
@@ -387,7 +462,7 @@ function applyLayerTransform(x: number, y: number) {
       drag.startHandleWorld.y - drag.anchorWorld.y,
     )
     const current = Math.hypot(pointer.x - drag.anchorWorld.x, pointer.y - drag.anchorWorld.y)
-    const scale = Math.max(0.05, Math.min(20, drag.startScale * current / Math.max(initial, 1)))
+    const scale = Math.max(0.05, Math.min(20, (drag.startScale * current) / Math.max(initial, 1)))
     const zero = layerPoint({ ...layer, x: 0, y: 0, scale }, drag.anchorLocal)
     previewLayerTransform(drag.layerId, {
       x: drag.anchorWorld.x - zero.x,
@@ -444,7 +519,11 @@ let shapeDrag: {
   color: string
   size: number
 } | null = null
-let transformBoundsCache: { pageId: string | null; layerId: string; bounds: LayerBounds | null } | null = null
+let transformBoundsCache: {
+  pageId: string | null
+  layerId: string
+  bounds: LayerBounds | null
+} | null = null
 let layerTransformDrag: {
   layerId: string
   handle: TransformHandle
@@ -568,7 +647,11 @@ function drawSamples(
   ctx.restore()
 }
 
-function paintShapeDrag(drag: NonNullable<typeof shapeDrag>, end: { x: number; y: number }, commit: boolean) {
+function paintShapeDrag(
+  drag: NonNullable<typeof shapeDrag>,
+  end: { x: number; y: number },
+  commit: boolean,
+) {
   if (!ink) return
   const startPoint = toLayerPt({ ...drag.start, t: 0, p: 0.5 }, drag.layerId)
   const endPoint = toLayerPt({ ...end, t: 16, p: 0.5 }, drag.layerId)
@@ -582,7 +665,11 @@ function paintShapeDrag(drag: NonNullable<typeof shapeDrag>, end: { x: number; y
   const samples = pts.flatMap((point) => ink!.addPoint(id, point.x, point.y, point.t, point.p))
   samples.push(...ink.end(id))
   const stroke: Stroke = {
-    tool: 'shapes', color: drag.color, pts, size: drag.size, layerId: drag.layerId,
+    tool: 'shapes',
+    color: drag.color,
+    pts,
+    size: drag.size,
+    layerId: drag.layerId,
   }
   reRender()
   drawSamples(stroke, samples, seed, drag.layerId, drag.size)
@@ -652,8 +739,17 @@ function reRender() {
     const p = currentPage()
     if (p) {
       paintLayers(
-        el, ctx, p, ink, snapScale, 0, 0, false,
-        dpr * view.s, dpr * view.ox, dpr * view.oy,
+        el,
+        ctx,
+        p,
+        ink,
+        snapScale,
+        0,
+        0,
+        false,
+        dpr * view.s,
+        dpr * view.ox,
+        dpr * view.oy,
         new Map([[layerPreview.value.id, layerPreview.value]]),
       )
       drawTransformControls()
@@ -729,7 +825,11 @@ function finishStroke(commit: boolean) {
   if (!ink || !drawing) return
   const tail = ink.end(strokeId)
   const stroke: Stroke = {
-    tool: store.tool, color: store.color, pts: curPts, size: curStrokeSize, layerId: curLayerId,
+    tool: store.tool,
+    color: store.color,
+    pts: curPts,
+    size: curStrokeSize,
+    layerId: curLayerId,
   }
   drawSamples(stroke, tail, seed)
   if (commit && curPts.length) {
@@ -771,8 +871,16 @@ function onPointerDown(e: PointerEvent) {
   if (pointers.size === 2) {
     // second finger down -> cancel stroke, start rewind/pinch gesture
     if (drawing) finishStroke(false)
-    if (shapeDrag) { shapeDrag = null; reRender() }
-    if (cutting) { cutting = false; cutPath = []; cutLayerId = null; reRender() }
+    if (shapeDrag) {
+      shapeDrag = null
+      reRender()
+    }
+    if (cutting) {
+      cutting = false
+      cutPath = []
+      cutLayerId = null
+      reRender()
+    }
     panStart = null
     moveStart = null
     cancelLayerTransformFrame()
@@ -856,7 +964,9 @@ function onPointerMove(e: PointerEvent) {
     if (e.pointerType === 'mouse') updateCanvasCursor(x, y)
     return
   }
-  rec.x = x; rec.y = y; rec.t = e.timeStamp
+  rec.x = x
+  rec.y = y
+  rec.t = e.timeStamp
 
   if (gestureActive && pointers.size === 2) {
     const m = gestureMetrics()
@@ -864,12 +974,17 @@ function onPointerMove(e: PointerEvent) {
     const { w, h } = canvasSize()
     const cover = coverViewport(w, h)
     const minS = Math.min(w / PAGE_W, h / PAGE_H) * ZOOM_MARGIN
-    const nextS = Math.min(cover.s * ZOOM_MAX, Math.max(minS, view.s * m.dist / Math.max(gDist0, 1)))
+    const nextS = Math.min(
+      cover.s * ZOOM_MAX,
+      Math.max(minS, (view.s * m.dist) / Math.max(gDist0, 1)),
+    )
     const k = nextS / view.s
     const c = clampOffset(
       m.x - (gCenter0.x - view.ox) * k,
       m.y - (gCenter0.y - view.oy) * k,
-      nextS, w, h,
+      nextS,
+      w,
+      h,
     )
     view.s = nextS
     view.ox = c.ox
@@ -914,11 +1029,7 @@ function onPointerMove(e: PointerEvent) {
 
   if (panStart) {
     const { w, h } = canvasSize()
-    const c = clampOffset(
-      view.ox + (x - panStart.x),
-      view.oy + (y - panStart.y),
-      view.s, w, h,
-    )
+    const c = clampOffset(view.ox + (x - panStart.x), view.oy + (y - panStart.y), view.s, w, h)
     if (c.ox !== view.ox || c.oy !== view.oy) {
       view.ox = c.ox
       view.oy = c.oy
@@ -985,8 +1096,8 @@ function finishCutSelection() {
     ...page,
     layers: [layer],
     strokes: page.strokes.filter((stroke) => (stroke.layerId ?? pageLayerId) === layerId),
-    ops: (page.ops ?? []).filter((op) =>
-      op.layerId === '*' || (op.layerId ?? pageLayerId) === layerId,
+    ops: (page.ops ?? []).filter(
+      (op) => op.layerId === '*' || (op.layerId ?? pageLayerId) === layerId,
     ),
   }
   const source = document.createElement('canvas')
@@ -1006,7 +1117,19 @@ function finishCutSelection() {
   const displayScale = dpr * view.s
   const displayOx = dpr * view.ox
   const displayOy = dpr * view.oy
-  paintLayers(source, sourceCtx, layerPage, ink, snapScale, 0, 0, false, displayScale, displayOx, displayOy)
+  paintLayers(
+    source,
+    sourceCtx,
+    layerPage,
+    ink,
+    snapScale,
+    0,
+    0,
+    false,
+    displayScale,
+    displayOx,
+    displayOy,
+  )
   const piece = extractRegion(source, sourceCtx, path, displayScale, displayOx, displayOy, null)
   paintPaper(baseCtx)
   const previewPage: Page = {
@@ -1016,14 +1139,27 @@ function finishCutSelection() {
       { kind: 'cut', path, dx: 0, dy: 0, after: page.strokes.length, layerId },
     ],
   }
-  paintLayers(base, baseCtx, previewPage, ink, snapScale, 0, 0, false, displayScale, displayOx, displayOy)
+  paintLayers(
+    base,
+    baseCtx,
+    previewPage,
+    ink,
+    snapScale,
+    0,
+    0,
+    false,
+    displayScale,
+    displayOx,
+    displayOy,
+  )
 
   const pieceCtx = piece?.getContext('2d', { willReadFrequently: true })
-  const hasPixels = piece && pieceCtx
-    ? pieceCtx.getImageData(0, 0, piece.width, piece.height).data.some((value, index) =>
-        index % 4 === 3 && value > 0,
-      )
-    : false
+  const hasPixels =
+    piece && pieceCtx
+      ? pieceCtx
+          .getImageData(0, 0, piece.width, piece.height)
+          .data.some((value, index) => index % 4 === 3 && value > 0)
+      : false
   if (piece && hasPixels) {
     // Lift only the active layer; other layers stay visible in the base preview.
     cutPending = { piece, base, path, layerId, dx: 0, dy: 0 }
@@ -1038,8 +1174,11 @@ function commitFill(x: number, y: number) {
   const p = currentPage()
   if (!p) return
   pushOp({
-    kind: 'fill', x: toPageX(x), y: toPageY(y),
-    color: store.color, after: p.strokes.length,
+    kind: 'fill',
+    x: toPageX(x),
+    y: toPageY(y),
+    color: store.color,
+    after: p.strokes.length,
   })
   reRender()
 }
@@ -1074,7 +1213,10 @@ function onPointerUp(e: PointerEvent) {
     layerPreview.value = null
     if (preview?.id === drag.layerId) {
       updateLayer(drag.layerId, {
-        x: preview.x, y: preview.y, scale: preview.scale, rotation: preview.rotation,
+        x: preview.x,
+        y: preview.y,
+        scale: preview.scale,
+        rotation: preview.rotation,
       })
     }
     if (e.pointerType === 'mouse') {
@@ -1095,7 +1237,9 @@ function onPointerUp(e: PointerEvent) {
         if (dir !== 0 && navPage(dir as 1 | -1)) {
           navClass.value = dir === 1 ? 'from-right' : 'from-left'
           reRender()
-          setTimeout(() => { navClass.value = '' }, 300)
+          setTimeout(() => {
+            navClass.value = ''
+          }, 300)
         }
       } else if (store.tool === 'fill' && edgeBuf.length) {
         commitFill(edgeBuf[0].x, edgeBuf[0].y)
@@ -1184,8 +1328,7 @@ function finishLayerReorder(e: PointerEvent) {
   const id = draggingLayerId.value
   const displayIndex = layerDropIndex.value
   cancelLayerReorder()
-  if (id && displayIndex !== null)
-    reorderLayer(id, displayLayers.value.length - 1 - displayIndex)
+  if (id && displayIndex !== null) reorderLayer(id, displayLayers.value.length - 1 - displayIndex)
 }
 
 function cancelLayerReorder() {
@@ -1202,8 +1345,9 @@ function onKeyDown(e: KeyboardEvent) {
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
     e.preventDefault()
-    if (e.shiftKey) { if (redoStroke()) reRender() }
-    else if (undoStroke()) reRender()
+    if (e.shiftKey) {
+      if (redoStroke()) reRender()
+    } else if (undoStroke()) reRender()
   }
 }
 
@@ -1268,9 +1412,13 @@ watch(
   { flush: 'sync' },
 )
 watch(
-  () => currentPage()?.layers?.map((layer) =>
-    `${layer.id}:${layer.visible}:${layer.opacity}:${layer.x}:${layer.y}:${layer.scale}:${layer.rotation}`,
-  ).join('|'),
+  () =>
+    currentPage()
+      ?.layers?.map(
+        (layer) =>
+          `${layer.id}:${layer.visible}:${layer.opacity}:${layer.x}:${layer.y}:${layer.scale}:${layer.rotation}`,
+      )
+      .join('|'),
   () => {
     transformBoundsCache = null
     snapDirty = true

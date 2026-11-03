@@ -9,10 +9,12 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
+import android.provider.Settings;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
+import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -78,6 +80,15 @@ public class ApkInstallerPlugin extends Plugin {
         else call.resolve();
     }
 
+    private boolean canInstallApks() {
+        return Build.VERSION.SDK_INT < 26
+            || getContext().getPackageManager().canRequestPackageInstalls();
+    }
+
+    private void openSettingsScreen(Intent intent) {
+        getContext().startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    }
+
     private Intent installIntent(File apk) {
         Context ctx = getContext();
         Uri uri = FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider", apk);
@@ -87,11 +98,40 @@ public class ApkInstallerPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void installState(PluginCall call) {
+        JSObject r = new JSObject();
+        r.put("granted", canInstallApks());
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void openInstallSettings(PluginCall call) {
+        openSettingsScreen(new Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:" + getContext().getPackageName())));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void openAppSettings(PluginCall call) {
+        openSettingsScreen(new Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:" + getContext().getPackageName())));
+        call.resolve();
+    }
+
+    @PluginMethod
     public void install(PluginCall call) {
         String path = call.getString("path");
         File apk = path == null ? null : new File(path);
         if (apk == null || !apk.isFile()) {
             call.reject("APK file not found");
+            return;
+        }
+        if (!canInstallApks()) {
+            // The "install unknown apps" toggle lives in system settings —
+            // send the user there; they retry once it's granted.
+            openInstallSettings(call);
             return;
         }
         NotificationManagerCompat.from(getContext()).cancel(DONE_ID);

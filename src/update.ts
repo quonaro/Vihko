@@ -19,12 +19,80 @@ interface ApkInstallerPlugin {
   notifyProgress(options: { percent: number; title: string; body: string }): Promise<void>
   notifyComplete(options: { path: string; title: string; body: string }): Promise<void>
   notifyFailed(options: { title: string; body: string }): Promise<void>
+  installState(): Promise<{ granted: boolean }>
+  openInstallSettings(): Promise<void>
+  openAppSettings(): Promise<void>
+  checkPermissions(): Promise<{ notifications: string }>
+  requestPermissions(): Promise<{ notifications: string }>
 }
 const ApkInstaller = registerPlugin<ApkInstallerPlugin>('ApkInstaller')
 
 // Notification posts are best-effort — a denied POST_NOTIFICATIONS or a
 // plugin hiccup must not break the download.
 const notify = (p: Promise<void>) => void p.catch(() => {})
+
+// --- Permissions ------------------------------------------------------------
+
+export type PermState = 'granted' | 'denied' | 'prompt' | 'prompt-with-rationale' | 'unknown'
+
+const onAndroid = () => Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
+
+export const perms = reactive({
+  notifications: 'unknown' as PermState,
+  install: 'unknown' as 'granted' | 'denied' | 'unknown',
+})
+
+// The permission UI is Android-only (custom ApkInstaller plugin).
+export const permsRelevant = (): boolean => onAndroid()
+
+export async function refreshPermissions(): Promise<void> {
+  if (!onAndroid()) return
+  try {
+    perms.notifications = ((await ApkInstaller.checkPermissions()).notifications ||
+      'unknown') as PermState
+  } catch {
+    perms.notifications = 'unknown'
+  }
+  try {
+    perms.install = (await ApkInstaller.installState()).granted ? 'granted' : 'denied'
+  } catch {
+    perms.install = 'unknown'
+  }
+}
+
+// Called once on app start: asks for the notification runtime permission.
+// "Install unknown apps" has no runtime dialog — it's granted from a system
+// settings screen, so it's only surfaced in the settings sheet / install flow.
+export async function requestStartupPermissions(): Promise<void> {
+  if (!onAndroid()) return
+  try {
+    await ApkInstaller.requestPermissions()
+  } catch {
+    /* non-fatal */
+  }
+  await refreshPermissions()
+}
+
+// Notifications: 'denied' means the system dialog won't show again — open the
+// app settings page instead of calling requestPermissions into the void.
+export async function grantNotificationPermission(): Promise<void> {
+  try {
+    if (perms.notifications === 'denied') await ApkInstaller.openAppSettings()
+    else await ApkInstaller.requestPermissions()
+  } catch {
+    /* non-fatal */
+  }
+  await refreshPermissions()
+}
+
+export async function grantInstallPermission(): Promise<void> {
+  try {
+    await ApkInstaller.openInstallSettings()
+  } catch {
+    /* non-fatal */
+  }
+  await refreshPermissions()
+}
 
 export type UpdateStatus = 'idle' | 'checking' | 'uptodate' | 'available' | 'error'
 export type DownloadState = 'idle' | 'downloading' | 'ready' | 'error'
@@ -108,15 +176,23 @@ export async function downloadUpdate(): Promise<void> {
       update.dl = 'downloading'
       update.progress = 0
       const path = `updates/vihko-${update.latest || 'update'}.apk`
+      // downloadFile's `recursive` flag is ignored on Android — the parent
+      // dir must exist beforehand or FileOutputStream fails with ENOENT.
+      await Filesystem.mkdir({
+        path: 'updates',
+        directory: Directory.Cache,
+        recursive: true,
+      }).catch(() => {})
       const listener = await Filesystem.addListener('progress', (p) => {
-        update.progress = p.contentLength > 0
-          ? Math.min(100, Math.round((p.bytes / p.contentLength) * 100))
-          : 0
-        notify(ApkInstaller.notifyProgress({
-          percent: update.progress,
-          title: i18n.global.t('shelf.dlNotifProgressTitle'),
-          body: i18n.global.t('shelf.dlNotifBody', { v: update.latest }),
-        }))
+        update.progress =
+          p.contentLength > 0 ? Math.min(100, Math.round((p.bytes / p.contentLength) * 100)) : 0
+        notify(
+          ApkInstaller.notifyProgress({
+            percent: update.progress,
+            title: i18n.global.t('shelf.dlNotifProgressTitle'),
+            body: i18n.global.t('shelf.dlNotifBody', { v: update.latest }),
+          }),
+        )
       })
       try {
         await Filesystem.downloadFile({
@@ -131,20 +207,25 @@ export async function downloadUpdate(): Promise<void> {
       }
       const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache })
       update.apkPath = uri.replace(/^file:\/\//, '')
-      notify(ApkInstaller.notifyComplete({
-        path: update.apkPath,
-        title: i18n.global.t('shelf.dlNotifDoneTitle'),
-        body: i18n.global.t('shelf.dlNotifDoneBody', { v: update.latest }),
-      }))
+      notify(
+        ApkInstaller.notifyComplete({
+          path: update.apkPath,
+          title: i18n.global.t('shelf.dlNotifDoneTitle'),
+          body: i18n.global.t('shelf.dlNotifDoneBody', { v: update.latest }),
+        }),
+      )
     }
     update.dl = 'ready'
     await ApkInstaller.install({ path: update.apkPath })
-  } catch {
+  } catch (e) {
+    console.error('[update] downloadUpdate failed', e)
     update.dl = 'error'
     update.apkPath = ''
-    notify(ApkInstaller.notifyFailed({
-      title: i18n.global.t('shelf.dlNotifFailTitle'),
-      body: i18n.global.t('shelf.dlNotifBody', { v: update.latest }),
-    }))
+    notify(
+      ApkInstaller.notifyFailed({
+        title: i18n.global.t('shelf.dlNotifFailTitle'),
+        body: i18n.global.t('shelf.dlNotifBody', { v: update.latest }),
+      }),
+    )
   }
 }

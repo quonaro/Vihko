@@ -22,7 +22,9 @@ const { t } = useI18n()
 
 const isMobile = ref(false)
 let mq: MediaQueryList | undefined
-const onMqChange = () => { isMobile.value = mq?.matches ?? false }
+const onMqChange = () => {
+  isMobile.value = mq?.matches ?? false
+}
 
 const dragOffset = ref<number | null>(null)
 const isDragging = ref(false)
@@ -80,7 +82,8 @@ const panelStyle = computed(() =>
 )
 
 function startDrag(e: PointerEvent) {
-  if (!isMobile.value || !(e.target instanceof Element) || e.target.closest('button, input, a')) return
+  if (!isMobile.value || !(e.target instanceof Element) || e.target.closest('button, input, a'))
+    return
   if (e.pointerType === 'mouse' && e.button !== 0) return
   dragStartY = e.clientY
   dragStartedAt = performance.now()

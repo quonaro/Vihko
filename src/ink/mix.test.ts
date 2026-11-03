@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import {
-  hexToRgb01, rgbToHex, rgbToRyb, rybToRgb, mixColors, rotateHue,
-  hexToHsv, hsvToHex,
+  hexToRgb01,
+  rgbToHex,
+  rgbToRyb,
+  rybToRgb,
+  mixColors,
+  rotateHue,
+  hexToHsv,
+  hsvToHex,
 } from './mix'
 
 describe('hexToRgb01', () => {
@@ -40,14 +46,14 @@ describe('rgbToHex', () => {
 
 describe('rybToRgb', () => {
   it('maps RYB cube corners', () => {
-    expect(rybToRgb([0, 0, 0])).toEqual([1, 1, 1])       // white
-    expect(rybToRgb([1, 0, 0])).toEqual([1, 0, 0])       // red
-    expect(rybToRgb([0, 1, 0])).toEqual([1, 1, 0])       // yellow
-    expect(rybToRgb([0, 0, 1])).toEqual([0, 0, 1])       // blue
-    expect(rybToRgb([0, 1, 1])).toEqual([0, 1, 0])       // blue+yellow=green
-    expect(rybToRgb([1, 1, 0])).toEqual([1, 0.5, 0])     // red+yellow=orange
-    expect(rybToRgb([1, 0, 1])).toEqual([0.5, 0, 0.5])   // red+blue=purple
-    expect(rybToRgb([1, 1, 1])).toEqual([0, 0, 0])       // black
+    expect(rybToRgb([0, 0, 0])).toEqual([1, 1, 1]) // white
+    expect(rybToRgb([1, 0, 0])).toEqual([1, 0, 0]) // red
+    expect(rybToRgb([0, 1, 0])).toEqual([1, 1, 0]) // yellow
+    expect(rybToRgb([0, 0, 1])).toEqual([0, 0, 1]) // blue
+    expect(rybToRgb([0, 1, 1])).toEqual([0, 1, 0]) // blue+yellow=green
+    expect(rybToRgb([1, 1, 0])).toEqual([1, 0.5, 0]) // red+yellow=orange
+    expect(rybToRgb([1, 0, 1])).toEqual([0.5, 0, 0.5]) // red+blue=purple
+    expect(rybToRgb([1, 1, 1])).toEqual([0, 0, 0]) // black
   })
 })
 
@@ -62,7 +68,11 @@ describe('rgbToRyb', () => {
 
   it('round-trips within grid resolution', () => {
     // Nearest-neighbour inversion loses a little precision off-grid.
-    for (const ryb of [[0.8, 0.2, 0.1], [0.1, 0.7, 0.6], [0.3, 0.3, 0.9]] as const) {
+    for (const ryb of [
+      [0.8, 0.2, 0.1],
+      [0.1, 0.7, 0.6],
+      [0.3, 0.3, 0.9],
+    ] as const) {
       const back = rybToRgb(rgbToRyb([...ryb]))
       const orig = rybToRgb([...ryb])
       for (let c = 0; c < 3; c++) expect(back[c]).toBeCloseTo(orig[c], 0)
@@ -136,7 +146,7 @@ describe('hexToHsv', () => {
   it('reports zero saturation for achromatic colors', () => {
     expect(hexToHsv('#ffffff')).toEqual([0, 0, 1])
     expect(hexToHsv('#000000')).toEqual([0, 0, 0])
-    const [h, s, v] = hexToHsv('#808080')
+    const [, s, v] = hexToHsv('#808080')
     expect(s).toBe(0)
     expect(v).toBeCloseTo(128 / 255)
   })

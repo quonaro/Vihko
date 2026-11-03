@@ -23,15 +23,8 @@ function fakeCtx(w: number, h: number) {
   const puts: Put[] = []
   const ctx = {
     getImageData: () => img as ImageData,
-    putImageData: (
-      _img: ImageData,
-      _dx: number,
-      _dy: number,
-      x = 0,
-      y = 0,
-      dw = 0,
-      dh = 0,
-    ) => puts.push({ x, y, w: dw, h: dh }),
+    putImageData: (_img: ImageData, _dx: number, _dy: number, x = 0, y = 0, dw = 0, dh = 0) =>
+      puts.push({ x, y, w: dw, h: dh }),
   } as unknown as CanvasRenderingContext2D
   return { ctx, img, puts }
 }
@@ -104,19 +97,20 @@ describe('floodFill', () => {
 
 describe('applyCut', () => {
   it('clears lifted pixels to transparency so lower layers remain visible', () => {
-    const makeContext = () => ({
-      save: vi.fn(),
-      restore: vi.fn(),
-      setTransform: vi.fn(),
-      beginPath: vi.fn(),
-      moveTo: vi.fn(),
-      lineTo: vi.fn(),
-      closePath: vi.fn(),
-      clip: vi.fn(),
-      drawImage: vi.fn(),
-      clearRect: vi.fn(),
-      fillRect: vi.fn(),
-    }) as unknown as CanvasRenderingContext2D
+    const makeContext = () =>
+      ({
+        save: vi.fn(),
+        restore: vi.fn(),
+        setTransform: vi.fn(),
+        beginPath: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        closePath: vi.fn(),
+        clip: vi.fn(),
+        drawImage: vi.fn(),
+        clearRect: vi.fn(),
+        fillRect: vi.fn(),
+      }) as unknown as CanvasRenderingContext2D
     const pieceContext = makeContext()
     const piece = {
       width: 100,
@@ -127,17 +121,32 @@ describe('applyCut', () => {
     const ctx = makeContext()
     const canvas = { width: 100, height: 80 } as HTMLCanvasElement
 
-    applyCut(canvas, ctx, {
-      kind: 'cut',
-      path: [{ x: 10, y: 10 }, { x: 30, y: 10 }, { x: 20, y: 30 }],
-      dx: 5,
-      dy: 0,
-      after: 0,
-      layerId: '*',
-    }, 1, 0, 0)
+    applyCut(
+      canvas,
+      ctx,
+      {
+        kind: 'cut',
+        path: [
+          { x: 10, y: 10 },
+          { x: 30, y: 10 },
+          { x: 20, y: 30 },
+        ],
+        dx: 5,
+        dy: 0,
+        after: 0,
+        layerId: '*',
+      },
+      1,
+      0,
+      0,
+    )
 
-    expect((ctx as unknown as { clearRect: ReturnType<typeof vi.fn> }).clearRect).toHaveBeenCalledWith(0, 0, 100, 80)
-    expect((ctx as unknown as { fillRect: ReturnType<typeof vi.fn> }).fillRect).not.toHaveBeenCalled()
+    expect(
+      (ctx as unknown as { clearRect: ReturnType<typeof vi.fn> }).clearRect,
+    ).toHaveBeenCalledWith(0, 0, 100, 80)
+    expect(
+      (ctx as unknown as { fillRect: ReturnType<typeof vi.fn> }).fillRect,
+    ).not.toHaveBeenCalled()
     createElement.mockRestore()
   })
 })

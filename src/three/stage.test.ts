@@ -55,9 +55,7 @@ describe('FramePump', () => {
       queued.push(cb)
       return queued.length
     })
-    const frame = vi.fn()
-      .mockReturnValueOnce(true)
-      .mockReturnValue(false)
+    const frame = vi.fn().mockReturnValueOnce(true).mockReturnValue(false)
     const pump = new FramePump(frame)
     const draw = () => queued.shift()?.(16)
 

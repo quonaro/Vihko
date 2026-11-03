@@ -31,7 +31,11 @@ describe('jsEngine stroke lifecycle', () => {
     const ink = jsEngine()
     const id = ink.begin('write')
     expect(ink.addPoint(id, 0, 0, 0, 0.5)).toEqual([])
-    for (const n of [[10, 0, 16], [20, 0, 32], [30, 0, 48]]) {
+    for (const n of [
+      [10, 0, 16],
+      [20, 0, 32],
+      [30, 0, 48],
+    ]) {
       expect(ink.addPoint(id, n[0], n[1], n[2], 0.5)).toHaveLength(6)
     }
     const tail = ink.end(id)

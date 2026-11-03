@@ -23,12 +23,25 @@ const mountSized = async (cw: number, ch: number) => {
 }
 
 const tap = (canvas: Element, x: number, y: number) => {
-  canvas.dispatchEvent(pev('pointerdown', {
-    pointerId: 1, pointerType: 'mouse', clientX: x, clientY: y, timeStamp: 0, pressure: 0.5,
-  }))
-  canvas.dispatchEvent(pev('pointerup', {
-    pointerId: 1, pointerType: 'mouse', clientX: x, clientY: y, timeStamp: 8,
-  }))
+  canvas.dispatchEvent(
+    pev('pointerdown', {
+      pointerId: 1,
+      pointerType: 'mouse',
+      clientX: x,
+      clientY: y,
+      timeStamp: 0,
+      pressure: 0.5,
+    }),
+  )
+  canvas.dispatchEvent(
+    pev('pointerup', {
+      pointerId: 1,
+      pointerType: 'mouse',
+      clientX: x,
+      clientY: y,
+      timeStamp: 8,
+    }),
+  )
 }
 
 function pev(type: string, props: Record<string, unknown> = {}) {
@@ -40,7 +53,10 @@ function pev(type: string, props: Record<string, unknown> = {}) {
 }
 
 const journal = (): Journal => ({
-  id: 'j1', title: 'Field Notes', cover: 0, createdAt: 0,
+  id: 'j1',
+  title: 'Field Notes',
+  cover: 0,
+  createdAt: 0,
   pages: [
     { id: 'p1', strokes: [], createdAt: 0 },
     { id: 'p2', strokes: [], createdAt: 0 },
@@ -80,18 +96,45 @@ describe('CanvasView', () => {
   it('a pen drag commits a stroke into the store', async () => {
     const w = await mountCanvas()
     const canvas = w.find('canvas').element
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 1, pointerType: 'mouse', clientX: 100, clientY: 100, timeStamp: 0, pressure: 0.5,
-    }))
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 1, pointerType: 'mouse', clientX: 140, clientY: 120, timeStamp: 16, pressure: 0.5,
-    }))
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 1, pointerType: 'mouse', clientX: 180, clientY: 140, timeStamp: 32, pressure: 0.5,
-    }))
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 1, pointerType: 'mouse', clientX: 180, clientY: 140, timeStamp: 40,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 100,
+        clientY: 100,
+        timeStamp: 0,
+        pressure: 0.5,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 140,
+        clientY: 120,
+        timeStamp: 16,
+        pressure: 0.5,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 180,
+        clientY: 140,
+        timeStamp: 32,
+        pressure: 0.5,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 180,
+        clientY: 140,
+        timeStamp: 40,
+      }),
+    )
     const strokes = currentPage()!.strokes
     expect(strokes).toHaveLength(1)
     expect(strokes[0].tool).toBe('write')
@@ -104,15 +147,36 @@ describe('CanvasView', () => {
     store.tool = 'shapes'
     store.shape = 'rectangle'
     const canvas = w.find('canvas').element
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 1, pointerType: 'mouse', clientX: 100, clientY: 100, timeStamp: 0, pressure: 0.5,
-    }))
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 1, pointerType: 'mouse', clientX: 170, clientY: 150, timeStamp: 16, pressure: 0.5,
-    }))
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 1, pointerType: 'mouse', clientX: 170, clientY: 150, timeStamp: 24, pressure: 0.5,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 100,
+        clientY: 100,
+        timeStamp: 0,
+        pressure: 0.5,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 170,
+        clientY: 150,
+        timeStamp: 16,
+        pressure: 0.5,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 170,
+        clientY: 150,
+        timeStamp: 24,
+        pressure: 0.5,
+      }),
+    )
 
     const strokes = currentPage()!.strokes
     expect(strokes).toHaveLength(1)
@@ -141,23 +205,53 @@ describe('CanvasView', () => {
   it('pinch zooms and pans around the moving two-finger midpoint', async () => {
     const w = await mountSized(400, 800)
     const canvas = w.find('canvas').element
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 350, timeStamp: 0,
-    }))
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 2, pointerType: 'touch', clientX: 200, clientY: 350, timeStamp: 1,
-    }))
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 2, pointerType: 'touch', clientX: 300, clientY: 370, timeStamp: 16,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 100,
+        clientY: 350,
+        timeStamp: 0,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 2,
+        pointerType: 'touch',
+        clientX: 200,
+        clientY: 350,
+        timeStamp: 1,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 2,
+        pointerType: 'touch',
+        clientX: 300,
+        clientY: 370,
+        timeStamp: 16,
+      }),
+    )
     await w.vm.$nextTick()
     expect(w.find('.zoom-actions .fit-btn').exists()).toBe(true)
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 2, pointerType: 'touch', clientX: 300, clientY: 370, timeStamp: 24,
-    }))
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 350, timeStamp: 25,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 2,
+        pointerType: 'touch',
+        clientX: 300,
+        clientY: 370,
+        timeStamp: 24,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 100,
+        clientY: 350,
+        timeStamp: 25,
+      }),
+    )
     tap(canvas, 50, 400)
     expect(currentPage()!.strokes).toHaveLength(1)
     w.unmount()
@@ -170,17 +264,35 @@ describe('CanvasView', () => {
     tap(canvas, 200, 400) // content on the new layer — empty layers can't be transformed
     const revision = pageRev(currentPage()!)
     store.tool = 'transform'
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 300, timeStamp: 0,
-    }))
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 1, pointerType: 'touch', clientX: 140, clientY: 330, timeStamp: 16,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 100,
+        clientY: 300,
+        timeStamp: 0,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 140,
+        clientY: 330,
+        timeStamp: 16,
+      }),
+    )
     expect(pageLayers().find((item) => item.id === layer.id)?.x).toBe(0)
     expect(pageRev(currentPage()!)).toBe(revision)
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 1, pointerType: 'touch', clientX: 140, clientY: 330, timeStamp: 24,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 140,
+        clientY: 330,
+        timeStamp: 24,
+      }),
+    )
     expect(pageLayers().find((item) => item.id === layer.id)?.x).toBeCloseTo(40 / (800 / PAGE_H))
     expect(pageLayers()[0].x).toBe(0)
     expect(pageRev(currentPage()!)).toBeGreaterThan(revision)
@@ -194,19 +306,41 @@ describe('CanvasView', () => {
     tap(canvas, 200, 400)
     store.tool = 'transform'
     const requestFrame = vi.spyOn(window, 'requestAnimationFrame')
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 300, timeStamp: 0,
-    }))
-    for (const [x, timeStamp] of [[120, 8], [140, 16], [160, 24]] as const) {
-      canvas.dispatchEvent(pev('pointermove', {
-        pointerId: 1, pointerType: 'touch', clientX: x, clientY: 300, timeStamp,
-      }))
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 100,
+        clientY: 300,
+        timeStamp: 0,
+      }),
+    )
+    for (const [x, timeStamp] of [
+      [120, 8],
+      [140, 16],
+      [160, 24],
+    ] as const) {
+      canvas.dispatchEvent(
+        pev('pointermove', {
+          pointerId: 1,
+          pointerType: 'touch',
+          clientX: x,
+          clientY: 300,
+          timeStamp,
+        }),
+      )
     }
 
     expect(requestFrame).toHaveBeenCalledTimes(1)
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 1, pointerType: 'touch', clientX: 180, clientY: 300, timeStamp: 32,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 180,
+        clientY: 300,
+        timeStamp: 32,
+      }),
+    )
 
     expect(pageLayers().find((item) => item.id === layer.id)?.x).toBeCloseTo(80 / (800 / PAGE_H))
     requestFrame.mockRestore()
@@ -219,15 +353,33 @@ describe('CanvasView', () => {
     const revision = pageRev(currentPage()!)
     const canvas = w.find('canvas').element
     store.tool = 'transform'
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 300, timeStamp: 0,
-    }))
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 1, pointerType: 'touch', clientX: 140, clientY: 330, timeStamp: 16,
-    }))
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 1, pointerType: 'touch', clientX: 140, clientY: 330, timeStamp: 24,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 100,
+        clientY: 300,
+        timeStamp: 0,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 140,
+        clientY: 330,
+        timeStamp: 16,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 140,
+        clientY: 330,
+        timeStamp: 24,
+      }),
+    )
     expect(pageLayers().find((item) => item.id === layer.id)?.x).toBe(0)
     expect(pageRev(currentPage()!)).toBe(revision)
     w.unmount()
@@ -269,16 +421,34 @@ describe('CanvasView', () => {
     const y = (point.y - 15) * scale
 
     store.tool = 'transform'
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 1, pointerType: 'touch', clientX: x, clientY: y, timeStamp: 0,
-    }))
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 1, pointerType: 'touch', clientX: x - 20, clientY: y - 20, timeStamp: 16,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: x,
+        clientY: y,
+        timeStamp: 0,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: x - 20,
+        clientY: y - 20,
+        timeStamp: 16,
+      }),
+    )
     expect(pageLayers()[0].scale).toBe(1)
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 1, pointerType: 'touch', clientX: x - 20, clientY: y - 20, timeStamp: 24,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: x - 20,
+        clientY: y - 20,
+        timeStamp: 24,
+      }),
+    )
     expect(pageLayers()[0].scale).toBeGreaterThan(1)
     w.unmount()
   })
@@ -290,16 +460,34 @@ describe('CanvasView', () => {
     tap(canvas, 200, 400)
     store.tool = 'transform'
     const handleY = 400 - 15 * (800 / PAGE_H) - 24
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 1, pointerType: 'touch', clientX: 200, clientY: handleY, timeStamp: 0,
-    }))
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 1, pointerType: 'touch', clientX: 230, clientY: 400, timeStamp: 16,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 200,
+        clientY: handleY,
+        timeStamp: 0,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 230,
+        clientY: 400,
+        timeStamp: 16,
+      }),
+    )
     expect(pageLayers()[0].rotation).toBe(0)
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 1, pointerType: 'touch', clientX: 230, clientY: 400, timeStamp: 24,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'touch',
+        clientX: 230,
+        clientY: 400,
+        timeStamp: 24,
+      }),
+    )
     expect(pageLayers()[0].rotation).toBeCloseTo(90)
     w.unmount()
   })
@@ -314,16 +502,24 @@ describe('CanvasView', () => {
     const offsetX = (400 - PAGE_W * scale) / 2
     store.tool = 'transform'
 
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 4, pointerType: 'mouse',
-      clientX: (point.x - 15) * scale + offsetX, clientY: (point.y - 15) * scale,
-    }))
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 4,
+        pointerType: 'mouse',
+        clientX: (point.x - 15) * scale + offsetX,
+        clientY: (point.y - 15) * scale,
+      }),
+    )
     expect(canvas.style.cursor).toBe('nwse-resize')
 
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 4, pointerType: 'mouse',
-      clientX: 200, clientY: 400 - 15 * scale - 24,
-    }))
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 4,
+        pointerType: 'mouse',
+        clientX: 200,
+        clientY: 400 - 15 * scale - 24,
+      }),
+    )
     expect(canvas.style.cursor).toBe('crosshair')
     w.unmount()
   })
@@ -363,20 +559,45 @@ describe('CanvasView', () => {
     const topRow = rows[0]
     vi.spyOn(document, 'elementFromPoint').mockReturnValue(topRow)
     vi.spyOn(topRow, 'getBoundingClientRect').mockReturnValue({
-      x: 0, y: 0, top: 0, left: 0, right: 300, bottom: 42, width: 300, height: 42,
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 300,
+      bottom: 42,
+      width: 300,
+      height: 42,
       toJSON: () => ({}),
     } as DOMRect)
 
     const grip = rows[1].querySelector('.layer-grab')!
-    grip.dispatchEvent(pev('pointerdown', {
-      pointerId: 7, pointerType: 'touch', clientX: 20, clientY: 60, timeStamp: 0,
-    }))
-    grip.dispatchEvent(pev('pointermove', {
-      pointerId: 7, pointerType: 'touch', clientX: 20, clientY: 5, timeStamp: 16,
-    }))
-    grip.dispatchEvent(pev('pointerup', {
-      pointerId: 7, pointerType: 'touch', clientX: 20, clientY: 5, timeStamp: 24,
-    }))
+    grip.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 7,
+        pointerType: 'touch',
+        clientX: 20,
+        clientY: 60,
+        timeStamp: 0,
+      }),
+    )
+    grip.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 7,
+        pointerType: 'touch',
+        clientX: 20,
+        clientY: 5,
+        timeStamp: 16,
+      }),
+    )
+    grip.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 7,
+        pointerType: 'touch',
+        clientX: 20,
+        clientY: 5,
+        timeStamp: 24,
+      }),
+    )
 
     expect(pageLayers()[1].id).toBe(baseLayer.id)
     vi.restoreAllMocks()
@@ -386,12 +607,25 @@ describe('CanvasView', () => {
   it('Ctrl+Z undoes, Ctrl+Shift+Z redoes', async () => {
     const w = await mountCanvas()
     const canvas = w.find('canvas').element
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 1, pointerType: 'mouse', clientX: 100, clientY: 100, timeStamp: 0, pressure: 0.5,
-    }))
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 1, pointerType: 'mouse', clientX: 100, clientY: 100, timeStamp: 8,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 100,
+        clientY: 100,
+        timeStamp: 0,
+        pressure: 0.5,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 100,
+        clientY: 100,
+        timeStamp: 8,
+      }),
+    )
     expect(currentPage()!.strokes).toHaveLength(1)
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true }))
@@ -423,15 +657,33 @@ describe('CanvasView', () => {
     const before = currentPage()!.strokes[0].pts[0].x
 
     store.tool = 'move'
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 1, pointerType: 'mouse', clientX: 200, clientY: 400, timeStamp: 0,
-    }))
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 1, pointerType: 'mouse', clientX: 260, clientY: 400, timeStamp: 16,
-    }))
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 1, pointerType: 'mouse', clientX: 260, clientY: 400, timeStamp: 24,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 200,
+        clientY: 400,
+        timeStamp: 0,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 260,
+        clientY: 400,
+        timeStamp: 16,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 260,
+        clientY: 400,
+        timeStamp: 24,
+      }),
+    )
 
     store.tool = 'write'
     tap(canvas, 200, 400)
@@ -447,15 +699,33 @@ describe('CanvasView', () => {
     const s = 800 / PAGE_H
 
     store.tool = 'move'
-    canvas.dispatchEvent(pev('pointerdown', {
-      pointerId: 1, pointerType: 'mouse', clientX: 200, clientY: 400, timeStamp: 0,
-    }))
-    canvas.dispatchEvent(pev('pointermove', {
-      pointerId: 1, pointerType: 'mouse', clientX: 9999, clientY: 400, timeStamp: 16,
-    }))
-    canvas.dispatchEvent(pev('pointerup', {
-      pointerId: 1, pointerType: 'mouse', clientX: 9999, clientY: 400, timeStamp: 24,
-    }))
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 200,
+        clientY: 400,
+        timeStamp: 0,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 9999,
+        clientY: 400,
+        timeStamp: 16,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 9999,
+        clientY: 400,
+        timeStamp: 24,
+      }),
+    )
 
     store.tool = 'write'
     tap(canvas, 200, 400)

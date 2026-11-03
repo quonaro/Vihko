@@ -28,18 +28,25 @@ export function shapePoints(shape: ShapeKind, start: Point, end: Point): Pt[] {
     }
     case 'rectangle':
       return withTime([
-        { x: left, y: top }, { x: right, y: top }, { x: right, y: bottom },
-        { x: left, y: bottom }, { x: left, y: top },
+        { x: left, y: top },
+        { x: right, y: top },
+        { x: right, y: bottom },
+        { x: left, y: bottom },
+        { x: left, y: top },
       ])
     case 'triangle':
       return withTime([
-        { x: midX, y: top }, { x: right, y: bottom },
-        { x: left, y: bottom }, { x: midX, y: top },
+        { x: midX, y: top },
+        { x: right, y: bottom },
+        { x: left, y: bottom },
+        { x: midX, y: top },
       ])
     case 'diamond':
       return withTime([
-        { x: midX, y: top }, { x: right, y: midY },
-        { x: midX, y: bottom }, { x: left, y: midY },
+        { x: midX, y: top },
+        { x: right, y: midY },
+        { x: midX, y: bottom },
+        { x: left, y: midY },
         { x: midX, y: top },
       ])
     case 'ellipse': {

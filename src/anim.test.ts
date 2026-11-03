@@ -4,8 +4,10 @@ import { morphTo, centeredRect, fullRect } from './anim'
 describe('rect helpers', () => {
   it('fullRect covers the whole window', () => {
     expect(fullRect()).toEqual({
-      left: 0, top: 0,
-      width: window.innerWidth, height: window.innerHeight,
+      left: 0,
+      top: 0,
+      width: window.innerWidth,
+      height: window.innerHeight,
     })
   })
 
@@ -22,7 +24,9 @@ describe('rect helpers', () => {
 
 describe('morphTo', () => {
   afterEach(() => {
-    document.querySelectorAll('.morph').forEach((el) => el.remove())
+    document.querySelectorAll('.morph').forEach((el) => {
+      el.remove()
+    })
     vi.useRealTimers()
     vi.unstubAllGlobals()
   })

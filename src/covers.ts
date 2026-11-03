@@ -16,7 +16,8 @@ function bake(draw: (c: CanvasRenderingContext2D) => void): string {
 }
 
 const mulberry32 = (seed: number) => () => {
-  seed |= 0; seed = (seed + 0x6d2b79f5) | 0
+  seed |= 0
+  seed = (seed + 0x6d2b79f5) | 0
   let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296
@@ -53,7 +54,8 @@ export const presetCovers: { id: string; src: string }[] = [
         for (let x = 0; x <= W; x += 8) {
           c.lineTo(x, y0 + Math.sin(x / 46 + i * 0.9) * 16)
         }
-        c.lineTo(W, H); c.lineTo(0, H)
+        c.lineTo(W, H)
+        c.lineTo(0, H)
         c.closePath()
         c.fill()
       }
@@ -86,10 +88,16 @@ export const presetCovers: { id: string; src: string }[] = [
       c.strokeStyle = 'rgba(74,107,138,0.55)'
       c.lineWidth = 1
       for (let x = 0; x <= W; x += 24) {
-        c.beginPath(); c.moveTo(x, 0); c.lineTo(x, H); c.stroke()
+        c.beginPath()
+        c.moveTo(x, 0)
+        c.lineTo(x, H)
+        c.stroke()
       }
       for (let y = 0; y <= H; y += 24) {
-        c.beginPath(); c.moveTo(0, y); c.lineTo(W, y); c.stroke()
+        c.beginPath()
+        c.moveTo(0, y)
+        c.lineTo(W, y)
+        c.stroke()
       }
       c.strokeStyle = '#e2601e'
       c.lineWidth = 3

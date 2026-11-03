@@ -10,9 +10,7 @@ import PromptDialog from './components/PromptDialog.vue'
 onMounted(() => void checkForUpdate())
 
 const comp = computed(() =>
-  store.view === 'shelf' ? ShelfView
-  : store.view === 'journal' ? JournalView
-  : CanvasView,
+  store.view === 'shelf' ? ShelfView : store.view === 'journal' ? JournalView : CanvasView,
 )
 
 // Remount journal view when switching journals so entrance animations replay.

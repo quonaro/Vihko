@@ -60,7 +60,10 @@ vi.mock('../three/journalScene', () => ({
 const mountJournal = () => mount(JournalView, { global: { plugins: [i18n] } })
 
 const journal = (): Journal => ({
-  id: 'j1', title: 'Field Notes', cover: 2, createdAt: 0,
+  id: 'j1',
+  title: 'Field Notes',
+  cover: 2,
+  createdAt: 0,
   pages: [
     { id: 'p1', strokes: [], createdAt: 0 },
     { id: 'p2', strokes: [], createdAt: 0 },
@@ -288,5 +291,4 @@ describe('JournalView', () => {
       w.unmount()
     })
   })
-
 })

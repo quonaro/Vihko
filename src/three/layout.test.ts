@@ -1,15 +1,37 @@
 import { describe, it, expect } from 'vitest'
 import {
-  rowPoseFocus, PAGE_STEP, canTurnStack, PAGE_W, PAGE_H,
-  pileLean, leafDepth, leafRestAngle, leafRestZ, leafRestFan, leafRestSink,
-  leafPointTheta, leafOutlineTheta, leafTexU,
-  LEAF_LEAN, LEAF_ZSTEP, LEAF_FAN_STEP, LEAF_SINK_STEP, LEAF_FAN_CAP,
-  sheetCameraDistance, GROUND_Y, STACK_LEAN, ROW_LEAN, rowRestY, stackRestY,
-  sheetPoint, HALF_W, SHEET_CORNER_R,
-  sheetOutline, sheetOutline3D, packOutline,
+  rowPoseFocus,
+  PAGE_STEP,
+  canTurnStack,
+  PAGE_W,
+  PAGE_H,
+  pileLean,
+  leafDepth,
+  leafRestAngle,
+  leafRestZ,
+  leafRestFan,
+  leafRestSink,
+  leafPointTheta,
+  leafOutlineTheta,
+  leafTexU,
+  LEAF_LEAN,
+  LEAF_ZSTEP,
+  LEAF_FAN_STEP,
+  LEAF_SINK_STEP,
+  LEAF_FAN_CAP,
+  sheetCameraDistance,
+  GROUND_Y,
+  STACK_LEAN,
+  ROW_LEAN,
+  rowRestY,
+  stackRestY,
+  sheetPoint,
+  HALF_W,
+  SHEET_CORNER_R,
+  sheetOutline,
+  sheetOutline3D,
+  packOutline,
 } from './layout'
-
-type V = [number, number, number]
 
 describe('tabletop rest heights', () => {
   it('lays overview sheets flat on the tabletop, face up', () => {
@@ -281,7 +303,7 @@ describe('sheet outline', () => {
       const h = PAGE_H / 2
       expect(open[0]).toEqual([0, side === 'left' ? -h : h])
       expect(open[open.length - 1]).toEqual([0, side === 'left' ? h : -h])
-      for (const [x, y] of closed) {
+      for (const [x] of closed) {
         if (side === 'left') expect(x).toBeLessThanOrEqual(1e-9)
         else expect(x).toBeGreaterThanOrEqual(-1e-9)
       }

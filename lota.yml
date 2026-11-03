@@ -13,14 +13,14 @@ dev:
     desc: Vite dev server on :7357 (builds wasm engine first)
     color: green
     depends:
-    - wasm
+      - wasm
     script: pnpm dev
 
   android:
     desc: Live-reload on Android — app WebView loads from vite :7357, so vue/HMR works on device (boots an AVD if none connected)
     color: green
     depends:
-    - wasm
+      - wasm
     script: |
       # Boot an emulator if no device/emulator is connected
       if ! adb devices | grep -qw device; then
@@ -95,7 +95,7 @@ push:
   desc: Push to GitHub (with tag — triggers CI/CD release pipeline)
   color: cyan
   args:
-  - "tag:str?"
+    - "tag:str?"
   script: |
     if [ -n "$tag" ]; then
       git tag -f $tag

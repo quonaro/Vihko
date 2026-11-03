@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest'
 import { renderSamples } from './renderer'
 import type { Sample, ToolId } from '../types'
 
-interface Op { name: string; args: unknown[] }
+interface Op {
+  name: string
+  args: unknown[]
+}
 interface MockCtx {
   ops: Op[]
   fillStyle: unknown
@@ -13,7 +16,9 @@ interface MockCtx {
 function makeCtx(): CanvasRenderingContext2D & MockCtx {
   const grad = {
     stops: [] as [number, string][],
-    addColorStop(o: number, c: string) { this.stops.push([o, c]) },
+    addColorStop(o: number, c: string) {
+      this.stops.push([o, c])
+    },
   }
   const ctx: MockCtx & Record<string, unknown> = {
     ops: [],
@@ -21,12 +26,24 @@ function makeCtx(): CanvasRenderingContext2D & MockCtx {
     globalAlpha: 1,
     globalCompositeOperation: 'source-over',
     grad,
-    beginPath() { ctx.ops.push({ name: 'beginPath', args: [] }) },
-    closePath() { ctx.ops.push({ name: 'closePath', args: [] }) },
-    moveTo(...a: number[]) { ctx.ops.push({ name: 'moveTo', args: a }) },
-    lineTo(...a: number[]) { ctx.ops.push({ name: 'lineTo', args: a }) },
-    arc(...a: number[]) { ctx.ops.push({ name: 'arc', args: a }) },
-    fill() { ctx.ops.push({ name: 'fill', args: [] }) },
+    beginPath() {
+      ctx.ops.push({ name: 'beginPath', args: [] })
+    },
+    closePath() {
+      ctx.ops.push({ name: 'closePath', args: [] })
+    },
+    moveTo(...a: number[]) {
+      ctx.ops.push({ name: 'moveTo', args: a })
+    },
+    lineTo(...a: number[]) {
+      ctx.ops.push({ name: 'lineTo', args: a })
+    },
+    arc(...a: number[]) {
+      ctx.ops.push({ name: 'arc', args: a })
+    },
+    fill() {
+      ctx.ops.push({ name: 'fill', args: [] })
+    },
     createRadialGradient(...a: number[]) {
       ctx.ops.push({ name: 'createRadialGradient', args: a })
       return grad
@@ -37,8 +54,7 @@ function makeCtx(): CanvasRenderingContext2D & MockCtx {
 
 const ops = (ctx: MockCtx, name: string) => ctx.ops.filter((o) => o.name === name)
 
-const stroke = (...xs: number[]): Sample[] =>
-  xs.map((x) => ({ x, y: 10, w: 2, a: 0.9 }))
+const stroke = (...xs: number[]): Sample[] => xs.map((x) => ({ x, y: 10, w: 2, a: 0.9 }))
 
 describe('renderSamples', () => {
   it('does nothing for an empty stroke', () => {
@@ -91,7 +107,10 @@ describe('renderSamples', () => {
     const ctx = makeCtx()
     const seen: string[] = []
     const orig = ctx.fill
-    ctx.fill = () => { seen.push(ctx.globalCompositeOperation); orig() }
+    ctx.fill = () => {
+      seen.push(ctx.globalCompositeOperation)
+      orig()
+    }
     renderSamples(ctx, 'eraser', '#ffffff', stroke(0, 5))
     expect(ctx.fillStyle).toBe('#000')
     expect(seen.every((c) => c === 'destination-out')).toBe(true)

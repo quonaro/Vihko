@@ -1,9 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import {
-  RUBBER_BAND, FLICK_WINDOW_MS, MOMENTUM_DECAY,
-  ZOOM_MIN, ZOOM_MAX, PAN_LIMIT,
-  rubberScroll, flickVelocity, momentumStep, clampZoom, pinchZoom,
-  panLimit, clampPan,
+  RUBBER_BAND,
+  FLICK_WINDOW_MS,
+  MOMENTUM_DECAY,
+  ZOOM_MIN,
+  ZOOM_MAX,
+  PAN_LIMIT,
+  rubberScroll,
+  flickVelocity,
+  momentumStep,
+  clampZoom,
+  pinchZoom,
+  panLimit,
+  clampPan,
 } from './gesture'
 
 describe('rubberScroll', () => {
@@ -45,7 +54,13 @@ describe('flickVelocity', () => {
     expect(flickVelocity([{ x: 10, t: 95 }], 100)).toBe(0)
     // Held still: the only recent samples have no time between them.
     expect(
-      flickVelocity([{ x: 10, t: 0 }, { x: 10, t: 100 }], 500),
+      flickVelocity(
+        [
+          { x: 10, t: 0 },
+          { x: 10, t: 100 },
+        ],
+        500,
+      ),
     ).toBe(0)
   })
 })

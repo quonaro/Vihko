@@ -21,15 +21,20 @@ describe('saveFile', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.isNative.mockReturnValue(false)
-    vi.stubGlobal('URL', Object.assign(URL, {
-      createObjectURL: vi.fn(() => 'blob:fake'),
-      revokeObjectURL: vi.fn(),
-    }))
+    vi.stubGlobal(
+      'URL',
+      Object.assign(URL, {
+        createObjectURL: vi.fn(() => 'blob:fake'),
+        revokeObjectURL: vi.fn(),
+      }),
+    )
   })
 
   it('downloads via an anchor on the web', async () => {
     let clicked: HTMLAnchorElement | null = null
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
       clicked = this
     })
     await saveFile('page-1.png', new Blob(['png']))

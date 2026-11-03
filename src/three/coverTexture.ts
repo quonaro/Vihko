@@ -16,7 +16,9 @@ export function dominantColorFromPixels(data: Uint8ClampedArray): string {
   const bins = new Map<number, { count: number; r: number; g: number; b: number }>()
   for (let i = 0; i + 3 < data.length; i += 4) {
     if (data[i + 3] < 128) continue
-    const r = data[i], g = data[i + 1], b = data[i + 2]
+    const r = data[i],
+      g = data[i + 1],
+      b = data[i + 2]
     const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3)
     const bin = bins.get(key) ?? { count: 0, r: 0, g: 0, b: 0 }
     bin.count++
@@ -28,13 +30,17 @@ export function dominantColorFromPixels(data: Uint8ClampedArray): string {
   const dominant = [...bins.values()].sort((a, b) => b.count - a.count)[0]
   if (!dominant) return '#000000'
   return `#${[dominant.r, dominant.g, dominant.b]
-    .map((sum) => Math.round(sum / dominant.count).toString(16).padStart(2, '0'))
+    .map((sum) =>
+      Math.round(sum / dominant.count)
+        .toString(16)
+        .padStart(2, '0'),
+    )
     .join('')}`
 }
 
 export function dominantCoverColor(input: CoverInput): string {
   const img = input.coverImg ? getPhoto(input.coverImg) : null
-  if (!img || !img.naturalWidth || !img.naturalHeight) return input.color
+  if (!img?.naturalWidth || !img.naturalHeight) return input.color
   const size = 32
   const canvas = document.createElement('canvas')
   canvas.width = canvas.height = size
@@ -100,10 +106,7 @@ export function paintCover(
 }
 
 // Offscreen canvas snapshot of a cover; null when 2D is unavailable (jsdom).
-export function coverCanvas(
-  input: CoverInput,
-  width = COVER_W,
-): HTMLCanvasElement | null {
+export function coverCanvas(input: CoverInput, width = COVER_W): HTMLCanvasElement | null {
   const c = document.createElement('canvas')
   c.width = width
   c.height = Math.round(width / 0.735)

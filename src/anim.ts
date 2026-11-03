@@ -9,10 +9,14 @@ export interface Rect {
   height: number
 }
 
-export function morphTo(target: Rect, source: HTMLElement, opts: {
-  fade?: boolean
-  extraTransform?: string
-} = {}) {
+export function morphTo(
+  target: Rect,
+  source: HTMLElement,
+  opts: {
+    fade?: boolean
+    extraTransform?: string
+  } = {},
+) {
   const r = source.getBoundingClientRect()
   const cs = getComputedStyle(source)
 

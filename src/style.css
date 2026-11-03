@@ -9,65 +9,75 @@
   color-scheme: light;
   --paper-text: #20211f;
   --paper-muted: #70716b;
-  --paper-hover: rgba(30, 31, 27, .07);
+  --paper-hover: rgba(30, 31, 27, 0.07);
   --paper-shell:
-    radial-gradient(ellipse at 50% 42%, rgba(255,255,255,.96) 0%, rgba(250,249,245,.9) 36%, transparent 73%),
+    radial-gradient(
+      ellipse at 50% 42%,
+      rgba(255, 255, 255, 0.96) 0%,
+      rgba(250, 249, 245, 0.9) 36%,
+      transparent 73%
+    ),
     linear-gradient(145deg, #eeece6 0%, #f8f7f3 48%, #e5e2db 100%);
   --journal-shell: radial-gradient(ellipse at 48% 42%, #efefec 0%, #d5d6d2 58%, #b9bbb6 100%);
   --chrome-bg: #f8f7f3;
   --chrome-text: #282925;
   --chrome-muted: #73746e;
-  --chrome-border: rgba(35, 35, 31, .14);
-  --chrome-hover: rgba(30, 31, 27, .06);
-  --chrome-control-bg: rgba(30, 31, 27, .07);
-  --chrome-input-bg: rgba(30, 31, 27, .04);
-  --chrome-shadow: 0 20px 60px rgba(32, 33, 31, .2);
-  --brush-panel-bg: rgba(248, 247, 243, .94);
-  --brush-panel-border: rgba(35, 35, 31, .16);
+  --chrome-border: rgba(35, 35, 31, 0.14);
+  --chrome-hover: rgba(30, 31, 27, 0.06);
+  --chrome-control-bg: rgba(30, 31, 27, 0.07);
+  --chrome-input-bg: rgba(30, 31, 27, 0.04);
+  --chrome-shadow: 0 20px 60px rgba(32, 33, 31, 0.2);
+  --brush-panel-bg: rgba(248, 247, 243, 0.94);
+  --brush-panel-border: rgba(35, 35, 31, 0.16);
   --brush-panel-text: #55544e;
-  --brush-panel-shadow: rgba(32, 33, 31, .18);
+  --brush-panel-shadow: rgba(32, 33, 31, 0.18);
   --brush-value: #2a8097;
-  --brush-mark: rgba(76, 77, 73, .38);
+  --brush-mark: rgba(76, 77, 73, 0.38);
   --brush-thumb: #fffefa;
-  --brush-thumb-border: rgba(35, 35, 31, .24);
-  --brush-thumb-shadow: rgba(0, 0, 0, .2);
+  --brush-thumb-border: rgba(35, 35, 31, 0.24);
+  --brush-thumb-shadow: rgba(0, 0, 0, 0.2);
   --layer-accent: #2a8097;
-  --layer-active-bg: rgba(42, 128, 151, .1);
-  --layer-active-border: rgba(42, 128, 151, .65);
+  --layer-active-bg: rgba(42, 128, 151, 0.1);
+  --layer-active-border: rgba(42, 128, 151, 0.65);
   --layer-accent-bg: #6dbbcf;
   --layer-accent-text: #16303a;
   --warn-icon: #ca8a04;
 }
 
-:root[data-theme='dark'] {
+:root[data-theme="dark"] {
   color-scheme: dark;
   --paper-text: #eeede8;
   --paper-muted: #a3a39b;
-  --paper-hover: rgba(255, 255, 255, .1);
+  --paper-hover: rgba(255, 255, 255, 0.1);
   --paper-shell:
-    radial-gradient(ellipse at 50% 42%, rgba(69,69,66,.96) 0%, rgba(48,48,47,.92) 38%, transparent 74%),
+    radial-gradient(
+      ellipse at 50% 42%,
+      rgba(69, 69, 66, 0.96) 0%,
+      rgba(48, 48, 47, 0.92) 38%,
+      transparent 74%
+    ),
     linear-gradient(145deg, #292a29 0%, #383936 48%, #222321 100%);
   --journal-shell: radial-gradient(ellipse at 48% 42%, #3d3e3b 0%, #2a2b29 58%, #1d1e1c 100%);
   --chrome-bg: #262628;
   --chrome-text: #f5f4ef;
   --chrome-muted: #aaa9a2;
-  --chrome-border: rgba(255, 255, 255, .14);
-  --chrome-hover: rgba(255, 255, 255, .08);
-  --chrome-control-bg: rgba(255, 255, 255, .1);
-  --chrome-input-bg: rgba(0, 0, 0, .24);
-  --chrome-shadow: 0 20px 60px rgba(0, 0, 0, .42);
-  --brush-panel-bg: rgba(30, 31, 33, .94);
-  --brush-panel-border: rgba(255, 255, 255, .14);
+  --chrome-border: rgba(255, 255, 255, 0.14);
+  --chrome-hover: rgba(255, 255, 255, 0.08);
+  --chrome-control-bg: rgba(255, 255, 255, 0.1);
+  --chrome-input-bg: rgba(0, 0, 0, 0.24);
+  --chrome-shadow: 0 20px 60px rgba(0, 0, 0, 0.42);
+  --brush-panel-bg: rgba(30, 31, 33, 0.94);
+  --brush-panel-border: rgba(255, 255, 255, 0.14);
   --brush-panel-text: #eeede8;
-  --brush-panel-shadow: rgba(0, 0, 0, .34);
+  --brush-panel-shadow: rgba(0, 0, 0, 0.34);
   --brush-value: #6dbbcf;
-  --brush-mark: rgba(220, 220, 218, .64);
+  --brush-mark: rgba(220, 220, 218, 0.64);
   --brush-thumb: #fff;
-  --brush-thumb-border: rgba(255, 255, 255, .65);
-  --brush-thumb-shadow: rgba(0, 0, 0, .45);
+  --brush-thumb-border: rgba(255, 255, 255, 0.65);
+  --brush-thumb-shadow: rgba(0, 0, 0, 0.45);
   --layer-accent: #6dbbcf;
-  --layer-active-bg: rgba(109, 187, 207, .1);
-  --layer-active-border: rgba(109, 187, 207, .7);
+  --layer-active-bg: rgba(109, 187, 207, 0.1);
+  --layer-active-border: rgba(109, 187, 207, 0.7);
   --layer-accent-bg: #6dbbcf;
   --layer-accent-text: #0d1b20;
   --warn-icon: #eab308;
@@ -81,7 +91,7 @@ body,
 }
 
 body {
-  font-family: 'Avenir Next', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif;
   background: var(--chrome-bg);
   color: var(--chrome-text);
   user-select: none;
@@ -94,7 +104,9 @@ body,
 .journal-view,
 .mslider,
 .tray {
-  transition: background-color .2s ease, color .2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 button {
@@ -134,10 +146,14 @@ button {
 
 /* ---- view transitions ---- */
 .view-enter-active {
-  transition: opacity 0.24s ease, transform 0.24s ease;
+  transition:
+    opacity 0.24s ease,
+    transform 0.24s ease;
 }
 .view-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
 .view-enter-from {
   opacity: 0;
@@ -180,7 +196,9 @@ button {
   }
 }
 @keyframes fade-in {
-  from { opacity: 0; }
+  from {
+    opacity: 0;
+  }
 }
 
 /* page flip while navigating on canvas */
@@ -201,8 +219,11 @@ button {
   *,
   *::before,
   *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion overrides must win */
     animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion overrides must win */
     animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced-motion overrides must win */
     transition-duration: 0.01ms !important;
   }
 }

@@ -11,7 +11,7 @@ export const PAGE_STEP = PAGE_W + 0.22
 export function sheetCameraDistance(aspect: number, minDistance = 4.4) {
   const safeAspect = Math.max(aspect, 0.1)
   const halfFov = Math.PI / 10 // 36-degree vertical field of view
-  return Math.max(minDistance, PAGE_W * 0.72 / (Math.tan(halfFov) * safeAspect))
+  return Math.max(minDistance, (PAGE_W * 0.72) / (Math.tan(halfFov) * safeAspect))
 }
 
 export interface Pose {
@@ -57,8 +57,8 @@ export function sheetPoint(x: number, y: number, fold = true): [number, number, 
   // past a straight edge (dy = 0) just clamp that axis, otherwise the
   // sheet's side-edge vertices would collapse onto the corner tangent.
   if (dx > 0 && dy > 0 && length > r) {
-    x = Math.sign(x) * (cx + dx * r / length)
-    y = Math.sign(y) * (cy + dy * r / length)
+    x = Math.sign(x) * (cx + (dx * r) / length)
+    y = Math.sign(y) * (cy + (dy * r) / length)
   } else if (dx > r) {
     x = Math.sign(x) * (cx + r)
   } else if (dy > r) {
@@ -338,10 +338,7 @@ export function sheetOutline3D(
 // Flat xyz strip for LineGeometry.setPositions / BufferGeometry positions.
 // closed (default) repeats the first point so the loop seals; pass
 // closed=false for hinge:false half outlines (open path).
-export function packOutline(
-  pts: [number, number, number][],
-  closed = true,
-): Float32Array {
+export function packOutline(pts: [number, number, number][], closed = true): Float32Array {
   const n = closed ? pts.length + 1 : pts.length
   const out = new Float32Array(n * 3)
   for (let i = 0; i < n; i++) {

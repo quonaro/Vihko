@@ -10,6 +10,9 @@
     "build:wasm": "cd engine && GOOS=js GOARCH=wasm go build -o ../public/engine.wasm . && cp \"$(go env GOROOT)/lib/wasm/wasm_exec.js\" ../public/",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:go": "cd engine && go test ./...",
@@ -29,6 +32,7 @@
     "vue-i18n": "11.4.16"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.3",
     "@capacitor/cli": "8.5.3",
     "@types/three": "^0.187.0",
     "@vitejs/plugin-vue": "^5.2.1",

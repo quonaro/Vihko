@@ -42,6 +42,11 @@ const messages = {
       dlNotifDoneBody: 'Tap to install v{v}',
       dlNotifFailTitle: 'Update download failed',
       checkFailed: 'Failed — retry',
+      permNotif: 'Notifications',
+      permInstall: 'App installs',
+      permGranted: 'Allowed',
+      permGrant: 'Allow',
+      permOpenSettings: 'Open settings',
       webglError: '3D rendering is unavailable on this device.',
     },
     journal: {
@@ -170,6 +175,11 @@ const messages = {
       dlNotifDoneBody: 'Нажмите для установки v{v}',
       dlNotifFailTitle: 'Не удалось загрузить обновление',
       checkFailed: 'Ошибка — повторить',
+      permNotif: 'Уведомления',
+      permInstall: 'Установка приложений',
+      permGranted: 'Разрешено',
+      permGrant: 'Разрешить',
+      permOpenSettings: 'Открыть настройки',
       webglError: 'На этом устройстве недоступен 3D-режим.',
     },
     journal: {

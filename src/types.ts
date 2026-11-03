@@ -47,7 +47,9 @@ export interface PhotoItem {
 // of strokes already drawn when the op ran, so replay can interleave them.
 export type PageOp =
   | ({ kind: 'fill'; x: number; y: number; color: string; after: number } & { layerId?: string })
-  | ({ kind: 'cut'; path: { x: number; y: number }[]; dx: number; dy: number; after: number } & { layerId?: string })
+  | ({ kind: 'cut'; path: { x: number; y: number }[]; dx: number; dy: number; after: number } & {
+      layerId?: string
+    })
   | ({ kind: 'photo'; photo: PhotoItem; after: number } & { layerId?: string })
   | ({ kind: 'clear'; after: number } & { layerId?: string })
 

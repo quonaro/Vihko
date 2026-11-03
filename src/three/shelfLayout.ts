@@ -60,10 +60,7 @@ export const TILT_LIFT = 0.07
 // the tilt starts before the pointer actually reaches the book's edge.
 export const HIT_MARGIN = 1.14
 export function inHitBox(px: number, py: number): boolean {
-  return (
-    Math.abs(px) <= (BOOK_W / 2) * HIT_MARGIN &&
-    Math.abs(py) <= (BOOK_H / 2) * HIT_MARGIN
-  )
+  return Math.abs(px) <= (BOOK_W / 2) * HIT_MARGIN && Math.abs(py) <= (BOOK_H / 2) * HIT_MARGIN
 }
 
 // Half of the world width visible at z = 0 for a camera `dist` away.

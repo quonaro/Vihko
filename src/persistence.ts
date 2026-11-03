@@ -32,9 +32,10 @@ async function openDatabase(): Promise<SQLiteDBConnection> {
   connection ??= new SQLiteConnection(CapacitorSQLite)
   const consistency = await connection.checkConnectionsConsistency()
   const exists = await connection.isConnection(DATABASE_NAME, false)
-  database = consistency.result && exists.result
-    ? await connection.retrieveConnection(DATABASE_NAME, false)
-    : await connection.createConnection(DATABASE_NAME, false, 'no-encryption', 1, false)
+  database =
+    consistency.result && exists.result
+      ? await connection.retrieveConnection(DATABASE_NAME, false)
+      : await connection.createConnection(DATABASE_NAME, false, 'no-encryption', 1, false)
   await database.open()
   return database
 }
@@ -59,11 +60,7 @@ export async function initializeJournalDatabase(
   }
 
   const serialized = JSON.stringify(fallback)
-  await db.run(
-    'INSERT INTO app_state (key, value) VALUES (?, ?)',
-    [JOURNALS_KEY, serialized],
-    true,
-  )
+  await db.run('INSERT INTO app_state (key, value) VALUES (?, ?)', [JOURNALS_KEY, serialized], true)
   return fallback
 }
 

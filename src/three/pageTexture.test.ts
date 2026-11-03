@@ -1,10 +1,20 @@
 import { describe, it, expect } from 'vitest'
-import { paintPage, pageCanvas, repaintInto, PAGE_ASPECT, PAGE_UNIT, SHEET_SHADE } from './pageTexture'
+import {
+  paintPage,
+  pageCanvas,
+  repaintInto,
+  PAGE_ASPECT,
+  PAGE_UNIT,
+  SHEET_SHADE,
+} from './pageTexture'
 import { jsEngine } from '../ink/engine'
 import { addJournal, openJournal, openPage, pushStroke } from '../store'
 import type { InkEngine, Page } from '../types'
 
-interface Op { name: string; args: unknown[] }
+interface Op {
+  name: string
+  args: unknown[]
+}
 interface MockCtx {
   ops: Op[]
   fillStyle: unknown
@@ -18,16 +28,36 @@ function makeCtx(): CanvasRenderingContext2D & MockCtx {
     ops: [],
     fillStyle: '#000',
     globalCompositeOperation: 'source-over',
-    beginPath() { ctx.ops.push({ name: 'beginPath', args: [] }) },
-    closePath() { ctx.ops.push({ name: 'closePath', args: [] }) },
-    moveTo(...a: number[]) { ctx.ops.push({ name: 'moveTo', args: a }) },
-    lineTo(...a: number[]) { ctx.ops.push({ name: 'lineTo', args: a }) },
-    arc(...a: number[]) { ctx.ops.push({ name: 'arc', args: a }) },
-    fill() { ctx.ops.push({ name: 'fill', args: [] }) },
-    fillRect(...a: number[]) { ctx.ops.push({ name: 'fillRect', args: a }) },
-    createRadialGradient() { return grad },
-    createLinearGradient() { return grad },
-    save() { stack.push({ fillStyle: ctx.fillStyle, gco: ctx.globalCompositeOperation }) },
+    beginPath() {
+      ctx.ops.push({ name: 'beginPath', args: [] })
+    },
+    closePath() {
+      ctx.ops.push({ name: 'closePath', args: [] })
+    },
+    moveTo(...a: number[]) {
+      ctx.ops.push({ name: 'moveTo', args: a })
+    },
+    lineTo(...a: number[]) {
+      ctx.ops.push({ name: 'lineTo', args: a })
+    },
+    arc(...a: number[]) {
+      ctx.ops.push({ name: 'arc', args: a })
+    },
+    fill() {
+      ctx.ops.push({ name: 'fill', args: [] })
+    },
+    fillRect(...a: number[]) {
+      ctx.ops.push({ name: 'fillRect', args: a })
+    },
+    createRadialGradient() {
+      return grad
+    },
+    createLinearGradient() {
+      return grad
+    },
+    save() {
+      stack.push({ fillStyle: ctx.fillStyle, gco: ctx.globalCompositeOperation })
+    },
     restore() {
       const s = stack.pop()
       if (s) {
@@ -35,7 +65,9 @@ function makeCtx(): CanvasRenderingContext2D & MockCtx {
         ctx.globalCompositeOperation = s.gco
       }
     },
-    setTransform(...a: number[]) { ctx.ops.push({ name: 'setTransform', args: a }) },
+    setTransform(...a: number[]) {
+      ctx.ops.push({ name: 'setTransform', args: a })
+    },
   }
   return ctx as unknown as CanvasRenderingContext2D & MockCtx
 }
@@ -128,10 +160,18 @@ describe('cached content rasters', () => {
       fillStyle: '#000',
       globalAlpha: 1,
       globalCompositeOperation: 'source-over',
-      save() {}, restore() {}, setTransform() {}, clearRect() {},
-      drawImage() {}, fillRect() {},
-      beginPath() {}, closePath() {}, moveTo() {}, lineTo() {},
-      arc() {}, fill() {},
+      save() {},
+      restore() {},
+      setTransform() {},
+      clearRect() {},
+      drawImage() {},
+      fillRect() {},
+      beginPath() {},
+      closePath() {},
+      moveTo() {},
+      lineTo() {},
+      arc() {},
+      fill() {},
       createLinearGradient: () => grad,
       createRadialGradient: () => grad,
     }
@@ -144,7 +184,10 @@ describe('cached content rasters', () => {
     return {
       count: () => n,
       engine: {
-        begin: (tool: string) => { n++; return eng.begin(tool) },
+        begin: (tool: string) => {
+          n++
+          return eng.begin(tool)
+        },
         addPoint: eng.addPoint,
         end: eng.end,
       } as InkEngine,

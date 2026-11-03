@@ -4,8 +4,7 @@ import { i18n } from './i18n'
 import { PAGE_W, PAGE_H } from './pageSpace'
 import { loadOrCreateNativeJournals, saveJournalSnapshot, usesNativeSqlite } from './persistence'
 
-const t = (key: string, named?: Record<string, unknown>) =>
-  i18n.global.t(key, named ?? {})
+const t = (key: string, named?: Record<string, unknown>) => i18n.global.t(key, named ?? {})
 
 export type ViewName = 'shelf' | 'journal' | 'canvas'
 export type JournalMode = 'stack' | 'overview'
@@ -42,16 +41,27 @@ export function migrateToPageSpace(journals: Journal[], cssW: number, cssH: numb
     for (const p of j.pages) {
       touchPage(p)
       for (const s of p.strokes) {
-        for (const pt of s.pts) { pt.x *= kx; pt.y *= ky }
+        for (const pt of s.pts) {
+          pt.x *= kx
+          pt.y *= ky
+        }
       }
       for (const op of p.ops ?? []) {
-        if (op.kind === 'fill') { op.x *= kx; op.y *= ky }
-        else if (op.kind === 'cut') {
-          for (const pt of op.path) { pt.x *= kx; pt.y *= ky }
-          op.dx *= kx; op.dy *= ky
+        if (op.kind === 'fill') {
+          op.x *= kx
+          op.y *= ky
+        } else if (op.kind === 'cut') {
+          for (const pt of op.path) {
+            pt.x *= kx
+            pt.y *= ky
+          }
+          op.dx *= kx
+          op.dy *= ky
         } else if (op.kind === 'photo') {
-          op.photo.x *= kx; op.photo.y *= ky
-          op.photo.w *= kx; op.photo.h *= ky
+          op.photo.x *= kx
+          op.photo.y *= ky
+          op.photo.w *= kx
+          op.photo.h *= ky
         }
       }
     }
@@ -80,8 +90,22 @@ function newPage(): Page {
   const id = uid()
   const layerId = uid()
   return {
-    id, strokes: [], createdAt: Date.now(), activeLayerId: layerId,
-    layers: [{ id: layerId, name: t('layers.defaultName', { n: 1 }), visible: true, opacity: 1, x: 0, y: 0, scale: 1, rotation: 0 }],
+    id,
+    strokes: [],
+    createdAt: Date.now(),
+    activeLayerId: layerId,
+    layers: [
+      {
+        id: layerId,
+        name: t('layers.defaultName', { n: 1 }),
+        visible: true,
+        opacity: 1,
+        x: 0,
+        y: 0,
+        scale: 1,
+        rotation: 0,
+      },
+    ],
   }
 }
 
@@ -114,12 +138,16 @@ function load(): Journal[] {
             // might not flush before a reload, leaving stale data otherwise.
             localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed))
             localStorage.setItem(SPACE_KEY, '1')
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
         return parsed
       }
     }
-  } catch { /* corrupted state -> reseed */ }
+  } catch {
+    /* corrupted state -> reseed */
+  }
   return seed()
 }
 
@@ -134,22 +162,44 @@ export const store = reactive<StoreState>({
   tool: 'draw',
   shape: 'rectangle',
   toolSizes: {
-    eraser: 1, draw: 1, sketch: 1, outline: 1, write: 1,
-    color: 1, shapes: 1, fill: 1, cut: 1, move: 1, transform: 1,
+    eraser: 1,
+    draw: 1,
+    sketch: 1,
+    outline: 1,
+    write: 1,
+    color: 1,
+    shapes: 1,
+    fill: 1,
+    cut: 1,
+    move: 1,
+    transform: 1,
   },
   color: '#22221f',
   trayOpen: true,
 })
 
 export const covers = [
-  '#3a3f4a', '#6b4a3a', '#3f5a4c', '#7a6a3f',
-  '#54321f', '#2f4a5a', '#6e3a52', '#444444',
+  '#3a3f4a',
+  '#6b4a3a',
+  '#3f5a4c',
+  '#7a6a3f',
+  '#54321f',
+  '#2f4a5a',
+  '#6e3a52',
+  '#444444',
 ]
 
 export const palette = [
-  '#22221f', '#b8a88a', '#e8dcc0', '#d9a441',
-  '#e2601e', '#f2c43d', '#4a6b8a', '#7a9e7e',
-  '#9a7bb8', '#3f8f8a',
+  '#22221f',
+  '#b8a88a',
+  '#e8dcc0',
+  '#d9a441',
+  '#e2601e',
+  '#f2c43d',
+  '#4a6b8a',
+  '#7a9e7e',
+  '#9a7bb8',
+  '#3f8f8a',
 ]
 
 export function currentJournal(): Journal | null {
@@ -192,7 +242,10 @@ export function closeToShelf() {
 }
 
 export function addJournal() {
-  const j = newJournal(t('names.journal', { n: store.journals.length + 1 }), Math.floor(Math.random() * covers.length))
+  const j = newJournal(
+    t('names.journal', { n: store.journals.length + 1 }),
+    Math.floor(Math.random() * covers.length),
+  )
   store.journals.push(j)
   return j
 }
@@ -251,7 +304,18 @@ const MAX_UNDO = 40
 export function ensurePageLayers(p: Page): Layer[] {
   if (!p.layers?.length) {
     const id = uid()
-    p.layers = [{ id, name: t('layers.defaultName', { n: 1 }), visible: true, opacity: 1, x: 0, y: 0, scale: 1, rotation: 0 }]
+    p.layers = [
+      {
+        id,
+        name: t('layers.defaultName', { n: 1 }),
+        visible: true,
+        opacity: 1,
+        x: 0,
+        y: 0,
+        scale: 1,
+        rotation: 0,
+      },
+    ]
     p.activeLayerId = id
   }
   const first = p.layers[0]
@@ -278,8 +342,14 @@ export function addLayer(): Layer | null {
   if (!p) return null
   const layers = ensurePageLayers(p)
   const layer: Layer = {
-    id: uid(), name: t('layers.defaultName', { n: layers.length + 1 }), visible: true, opacity: 1,
-    x: 0, y: 0, scale: 1, rotation: 0,
+    id: uid(),
+    name: t('layers.defaultName', { n: layers.length + 1 }),
+    visible: true,
+    opacity: 1,
+    x: 0,
+    y: 0,
+    scale: 1,
+    rotation: 0,
   }
   layers.push(layer)
   p.activeLayerId = layer.id
@@ -354,7 +424,8 @@ export function pushOp(op: PageOp) {
   const p = currentPage()
   if (!p) return
   op.layerId ??= p.activeLayerId ?? ensurePageLayers(p)[0].id
-  ;(p.ops ??= []).push(op)
+  p.ops ??= []
+  p.ops.push(op)
   touchPage(p)
   undone.length = 0
 }
@@ -394,8 +465,10 @@ export function redoStroke(): boolean {
   const p = currentPage()
   const a = undone.pop()
   if (!p || !a) return false
-  if (a.kind === 'op') (p.ops ??= []).push(a.op)
-  else p.strokes.push(a.stroke)
+  if (a.kind === 'op') {
+    p.ops ??= []
+    p.ops.push(a.op)
+  } else p.strokes.push(a.stroke)
   touchPage(p)
   return true
 }

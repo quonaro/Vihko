@@ -18,10 +18,7 @@ export const FLICK_WINDOW_MS = 110
 
 // Horizontal pointer velocity in px/s from a move trail ({x, t: ms}), or 0
 // when there is too little recent motion to trust a flick.
-export function flickVelocity(
-  trail: readonly { x: number; t: number }[],
-  now: number,
-): number {
+export function flickVelocity(trail: readonly { x: number; t: number }[], now: number): number {
   const recent = trail.filter((s) => now - s.t <= FLICK_WINDOW_MS)
   if (recent.length < 2) return 0
   const dt = recent[recent.length - 1].t - recent[0].t

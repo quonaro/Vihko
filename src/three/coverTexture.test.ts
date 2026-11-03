@@ -1,22 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import {
-  coverCanvas, paintCover, dominantColorFromPixels,
-} from './coverTexture'
+import { coverCanvas, paintCover, dominantColorFromPixels } from './coverTexture'
 
 describe('dominantColorFromPixels', () => {
   it('returns the most common opaque color', () => {
-    expect(dominantColorFromPixels(new Uint8ClampedArray([
-      40, 50, 60, 255,
-      40, 50, 60, 255,
-      220, 20, 30, 255,
-      0, 0, 0, 0,
-    ]))).toBe('#28323c')
+    expect(
+      dominantColorFromPixels(
+        new Uint8ClampedArray([40, 50, 60, 255, 40, 50, 60, 255, 220, 20, 30, 255, 0, 0, 0, 0]),
+      ),
+    ).toBe('#28323c')
   })
 
   it('ignores transparent pixels', () => {
-    expect(dominantColorFromPixels(new Uint8ClampedArray([
-      200, 10, 10, 0,
-    ]))).toBe('#000000')
+    expect(dominantColorFromPixels(new Uint8ClampedArray([200, 10, 10, 0]))).toBe('#000000')
   })
 })
 
@@ -61,7 +56,9 @@ describe('paintCover', () => {
     const { ctx } = stubCtx()
     Object.assign(ctx, {
       arc: (...a: number[]) => arcs.push(a),
-      strokeRect: () => { bordered = true },
+      strokeRect: () => {
+        bordered = true
+      },
     })
     paintCover(canvas, ctx, { color: '#333' })
     expect(arcs.length).toBeGreaterThan(100)
@@ -72,7 +69,11 @@ describe('paintCover', () => {
     const canvas = { width: 384, height: 522 } as HTMLCanvasElement
     let textDrawn = false
     const { ctx } = stubCtx()
-    Object.assign(ctx, { fillText: () => { textDrawn = true } })
+    Object.assign(ctx, {
+      fillText: () => {
+        textDrawn = true
+      },
+    })
     paintCover(canvas, ctx, { color: '#333' })
     expect(textDrawn).toBe(false)
   })

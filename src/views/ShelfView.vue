@@ -1,13 +1,29 @@
 <script setup lang="ts">
 import {
-  store, covers, addJournal, deleteJournal, openJournal,
-  renameJournal, setCoverImage, journalToJson,
+  store,
+  covers,
+  addJournal,
+  deleteJournal,
+  openJournal,
+  renameJournal,
+  setCoverImage,
+  journalToJson,
 } from '../store'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { setLocale } from '../i18n'
 import { setTheme, theme } from '../theme'
-import { appVersion, update, checkForUpdate, downloadUpdate } from '../update'
+import {
+  appVersion,
+  update,
+  checkForUpdate,
+  downloadUpdate,
+  perms,
+  permsRelevant,
+  refreshPermissions,
+  grantNotificationPermission,
+  grantInstallPermission,
+} from '../update'
 import { morphTo, centeredRect } from '../anim'
 import { presetCovers } from '../covers'
 import { imageFileToPhoto } from '../ink/ops'
@@ -31,10 +47,14 @@ const coverInput = ref<HTMLInputElement>()
 const selected = computed(() => store.journals.find((j) => j.id === selectedId.value) ?? null)
 const updateLabel = computed(() => {
   switch (update.dl) {
-    case 'downloading': return t('shelf.downloading', { n: update.progress })
-    case 'ready': return t('shelf.installUpdate', { v: update.latest })
-    case 'error': return t('shelf.downloadFailed')
-    default: return t('shelf.updateAvailable', { v: update.latest })
+    case 'downloading':
+      return t('shelf.downloading', { n: update.progress })
+    case 'ready':
+      return t('shelf.installUpdate', { v: update.latest })
+    case 'error':
+      return t('shelf.downloadFailed')
+    default:
+      return t('shelf.updateAvailable', { v: update.latest })
   }
 })
 const results = computed(() => {
@@ -46,6 +66,26 @@ function openSearch() {
   query.value = ''
   searchOn.value = true
 }
+
+// --- Permissions (Android) ---------------------------------------------------
+
+const showPerms = permsRelevant()
+
+// Re-read states when the sheet opens and when the user returns from a system
+// settings screen (e.g. after toggling "install unknown apps").
+function onVisible() {
+  if (!document.hidden) void refreshPermissions()
+}
+watch(settingsOn, (on) => {
+  if (!showPerms) return
+  if (on) {
+    void refreshPermissions()
+    document.addEventListener('visibilitychange', onVisible)
+  } else {
+    document.removeEventListener('visibilitychange', onVisible)
+  }
+})
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible))
 
 function openFromSearch(id: string) {
   searchOn.value = false
@@ -79,9 +119,7 @@ const sceneJournals = (): ShelfJournal[] =>
 // Rebuild book meshes when the row or a cover's look (color/photo) changes —
 // same signature the scene uses for its texture cache.
 const journalSig = computed(() =>
-  store.journals
-    .map((j) => `${j.id}${j.cover}${j.coverImg?.slice(-24) ?? ''}`)
-    .join(''),
+  store.journals.map((j) => `${j.id}${j.cover}${j.coverImg?.slice(-24) ?? ''}`).join(''),
 )
 
 function setLabelEl(id: string, el: unknown) {
@@ -128,11 +166,7 @@ const belowBook = (a: ShelfAnchor, dx: number) =>
 
 const delBtns = computed(() =>
   anchors.value
-    .filter(
-      (a) =>
-        a.onScreen && (coarse ? a.actions : a.del) &&
-        (coarse || a.id === hoverId.value),
-    )
+    .filter((a) => a.onScreen && (coarse ? a.actions : a.del) && (coarse || a.id === hoverId.value))
     .map((a) => ({
       id: a.id,
       ...(coarse ? belowBook(a, -18)! : a.del!),
@@ -143,7 +177,8 @@ const selBtns = computed(() =>
   anchors.value
     .filter(
       (a) =>
-        a.onScreen && (coarse ? a.actions : a.sel) &&
+        a.onScreen &&
+        (coarse ? a.actions : a.sel) &&
         (coarse || a.id === hoverId.value || a.id === selectedId.value),
     )
     .map((a) => ({
@@ -460,6 +495,20 @@ async function onCoverPicked(e: Event) {
             : update.status === 'error' ? t('shelf.checkFailed')
             : t('shelf.checkUpdate') }}</button>
       </div>
+      <template v-if="showPerms">
+        <div class="set-row">
+          <span class="set-label">{{ t('shelf.permNotif') }}</span>
+          <span v-if="perms.notifications === 'granted'" class="set-value">{{ t('shelf.permGranted') }}</span>
+          <button v-else class="set-action" @click="grantNotificationPermission()">{{
+            perms.notifications === 'denied' ? t('shelf.permOpenSettings') : t('shelf.permGrant')
+          }}</button>
+        </div>
+        <div class="set-row">
+          <span class="set-label">{{ t('shelf.permInstall') }}</span>
+          <span v-if="perms.install === 'granted'" class="set-value">{{ t('shelf.permGranted') }}</span>
+          <button v-else class="set-action" @click="grantInstallPermission()">{{ t('shelf.permOpenSettings') }}</button>
+        </div>
+      </template>
     </MobileSlider>
 
     <MobileSlider v-model:open="searchOn" :title="t('shelf.search')" size="sm">

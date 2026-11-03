@@ -1,4 +1,7 @@
-interface V { x: number; y: number }
+interface V {
+  x: number
+  y: number
+}
 
 // Ramer-Douglas-Peucker polyline simplification.
 export function rdp(pts: V[], eps: number): V[] {
@@ -15,7 +18,10 @@ export function rdp(pts: V[], eps: number): V[] {
       len < 1e-6
         ? Math.hypot(pts[i].x - a.x, pts[i].y - a.y)
         : Math.abs(dy * pts[i].x - dx * pts[i].y + b.x * a.y - b.y * a.x) / len
-    if (d > dmax) { dmax = d; idx = i }
+    if (d > dmax) {
+      dmax = d
+      idx = i
+    }
   }
   if (dmax <= eps || idx < 0) return [a, b]
   const left = rdp(pts.slice(0, idx + 1), eps)

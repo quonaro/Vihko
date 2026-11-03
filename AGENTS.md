@@ -13,6 +13,11 @@ no decompiled code is used.
 - `pnpm dev` — Vite dev server on :7357
 - `pnpm build` — wasm + typecheck + `vite build` → `dist/`
 - `pnpm typecheck` — vue-tsc (also typechecks `*.test.ts`)
+- `pnpm lint` — Biome check (lint + format verify) over the repo;
+  `pnpm lint:fix` — apply safe fixes and reformat; `pnpm format` — format
+  only. Style: single quotes, no semicolons, trailing commas, 2-space
+  indent (`biome.json`). `noUnusedImports`/`noUnusedVariables` are off for
+  `*.vue` — Biome doesn't see `<template>` usage.
 - `pnpm test` — Vitest (jsdom): ink engine fallback, renderer, RYB mixing,
   store, anim, i18n, component tests. `pnpm test:go` — `go test` for the
   engine (pure logic lives in `engine/ink.go`, build-tag-free).
@@ -39,6 +44,11 @@ which triggers the GitHub release workflow.
 
 ## CI/CD
 
+`.github/workflows/ci.yml` runs on pushes to `main` and on PRs, in four
+parallel jobs: `lint` (`biome ci` — lint + format), `typecheck`
+(`pnpm typecheck`), `test-web` (`pnpm test`) and `test-go` (`gofmt -l`,
+`go vet`, `go test` for `engine/`).
+
 `.github/workflows/release.yml` runs on tag pushes matching `v*.*.*` (and
 manually via workflow_dispatch), but only when the tagged commit is an
 ancestor of `main` — tag a commit on another branch and the job fails
@@ -61,7 +71,8 @@ every release gets a fresh signature and Android rejects updates
 ## Testing
 
 Tests are required: every behavior change must come with tests, and a change
-is only done once `pnpm test`, `pnpm test:go` and `pnpm typecheck` are green.
+is only done once `pnpm test`, `pnpm test:go`, `pnpm typecheck` and
+`pnpm lint` are green.
 
 - TS tests live next to sources as `*.test.ts` (Vitest + jsdom).
   `src/test.setup.ts` stubs what jsdom lacks: rAF, pointer capture,

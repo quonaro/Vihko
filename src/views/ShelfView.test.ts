@@ -45,16 +45,15 @@ vi.mock('../three/shelfScene', () => ({
 const mountShelf = () => mount(ShelfView, { global: { plugins: [i18n] } })
 
 const journal = (id: string, title: string): Journal => ({
-  id, title, cover: 0, createdAt: 0,
+  id,
+  title,
+  cover: 0,
+  createdAt: 0,
   pages: [{ id: `${id}-p1`, strokes: [], createdAt: 0 }],
 })
 
 beforeEach(() => {
-  store.journals.splice(
-    0, store.journals.length,
-    journal('a', 'Alpha'),
-    journal('b', 'Beta'),
-  )
+  store.journals.splice(0, store.journals.length, journal('a', 'Alpha'), journal('b', 'Beta'))
   store.journalId = null
   store.pageId = null
   store.view = 'shelf'
@@ -75,8 +74,12 @@ afterEach(() => {
   usePrompt().settle(null)
   setTheme('light')
   localStorage.removeItem('vihko:theme')
-  document.querySelectorAll('.morph').forEach((el) => el.remove())
-  document.querySelectorAll('.mslider-backdrop').forEach((el) => el.remove())
+  document.querySelectorAll('.morph').forEach((el) => {
+    el.remove()
+  })
+  document.querySelectorAll('.mslider-backdrop').forEach((el) => {
+    el.remove()
+  })
 })
 
 describe('ShelfView', () => {
@@ -113,16 +116,24 @@ describe('ShelfView', () => {
     const rows = document.body.querySelectorAll<HTMLElement>('.set-row')
     expect(rows).toHaveLength(4)
     expect(rows[0].querySelector('.set-value')?.textContent?.trim()).toMatch(/^v\d+\.\d+\.\d+/)
-    expect(rows[3].querySelector<HTMLButtonElement>('.set-action')?.textContent).toBe('Check for updates')
+    expect(rows[3].querySelector<HTMLButtonElement>('.set-action')?.textContent).toBe(
+      'Check for updates',
+    )
     expect(document.body.textContent).not.toContain('2D')
   })
 
   it('checks for updates from the settings sheet', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ tag_name: 'v99.0.0', html_url: 'https://example.com/rel' }),
-    } as Response)))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: true,
+            status: 200,
+            json: async () => ({ tag_name: 'v99.0.0', html_url: 'https://example.com/rel' }),
+          }) as Response,
+      ),
+    )
     const w = mountShelf()
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
     const btn = document.body.querySelector<HTMLButtonElement>('.set-action')!

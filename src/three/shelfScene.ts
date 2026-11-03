@@ -1,14 +1,31 @@
 import * as THREE from 'three'
 import {
-  createRenderer, addStudioRig, createComposer, detectQuality, FramePump,
-  addComicOutline, outlineMaterial, type Quality,
+  createRenderer,
+  addStudioRig,
+  createComposer,
+  detectQuality,
+  FramePump,
+  addComicOutline,
+  outlineMaterial,
+  type Quality,
 } from './stage'
-import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
+import type { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import {
-  BOOK_W, BOOK_H, BOOK_D, SHELF_STEP, TILT_LIFT,
-  BOARD_T, PAGES_D, SPINE_W, SPINE_H, SPINE_D, SPINE_PROUD,
-  shelfPose, inHitBox, scrollLimit,
+  BOOK_W,
+  BOOK_H,
+  BOOK_D,
+  SHELF_STEP,
+  TILT_LIFT,
+  BOARD_T,
+  PAGES_D,
+  SPINE_W,
+  SPINE_H,
+  SPINE_D,
+  SPINE_PROUD,
+  shelfPose,
+  inHitBox,
+  scrollLimit,
 } from './shelfLayout'
 import { rubberScroll, flickVelocity, momentumStep, MOMENTUM_MIN } from './gesture'
 import { coverCanvas, paintCover, type CoverInput } from './coverTexture'
@@ -143,10 +160,14 @@ export class ShelfScene {
     group.rotation.order = 'ZYX'
     const coverC = new THREE.Color(j.coverImg ? '#33333a' : j.color)
     const paper = new THREE.MeshStandardMaterial({
-      color: 0xf2ecdd, roughness: 0.95, envMapIntensity: 0.25,
+      color: 0xf2ecdd,
+      roughness: 0.95,
+      envMapIntensity: 0.25,
     })
     const board = new THREE.MeshStandardMaterial({
-      color: coverC, roughness: 0.9, envMapIntensity: 0.3,
+      color: coverC,
+      roughness: 0.9,
+      envMapIntensity: 0.3,
     })
     const cnv = coverCanvas(j)
     const ctx = cnv?.getContext('2d') ?? null
@@ -158,7 +179,8 @@ export class ShelfScene {
     }
     const face = new THREE.MeshStandardMaterial({
       color: tex ? 0xffffff : coverC,
-      roughness: 0.85, envMapIntensity: 0.35,
+      roughness: 0.85,
+      envMapIntensity: 0.35,
     })
     if (tex) face.map = tex
 
@@ -185,10 +207,18 @@ export class ShelfScene {
     this.row.add(group)
 
     const e: BookEntry = {
-      id: j.id, sig, order: 0, group,
-      coverMat: face, boardMat: board,
-      fadeMats: [paper, board, face], outlineMat,
-      canvas: cnv, ctx, tex, input: j,
+      id: j.id,
+      sig,
+      order: 0,
+      group,
+      coverMat: face,
+      boardMat: board,
+      fadeMats: [paper, board, face],
+      outlineMat,
+      canvas: cnv,
+      ctx,
+      tex,
+      input: j,
       enterT: 0,
     }
     return e
@@ -254,12 +284,22 @@ export class ShelfScene {
     const e = this.books.find((b) => b.id === id)
     if (!e) return null
     e.group.updateWorldMatrix(true, false)
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const [lx, ly] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity
+    for (const [lx, ly] of [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+    ]) {
       const p = this.project(e, (lx * BOOK_W) / 2, (ly * BOOK_H) / 2, BOOK_D / 2)
       if (!p) return null
-      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x)
-      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y)
+      minX = Math.min(minX, p.x)
+      maxX = Math.max(maxX, p.x)
+      minY = Math.min(minY, p.y)
+      maxY = Math.max(maxY, p.y)
     }
     return { left: minX, top: minY, width: maxX - minX, height: maxY - minY }
   }
@@ -285,8 +325,11 @@ export class ShelfScene {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose()
         const m = o.material
-        if (Array.isArray(m)) m.forEach((x) => x.dispose())
-        else m.dispose()
+        if (Array.isArray(m)) {
+          m.forEach((x) => {
+            x.dispose()
+          })
+        } else m.dispose()
       }
     })
     this.post.dispose()
@@ -343,7 +386,7 @@ export class ShelfScene {
   private endDrag(e: PointerEvent, flick: boolean) {
     this.pump.wake()
     if (this.drag && e.pointerId !== this.drag.id) return // other finger lifted
-    if (this.drag && this.drag.moved && flick) {
+    if (this.drag?.moved && flick) {
       this.vel = -flickVelocity(this.trail, e.timeStamp) * this.worldPerPx
       this.scrollTarget = this.clampScroll(this.scrollTarget)
     }
@@ -479,10 +522,10 @@ export class ShelfScene {
       if (e.enterT < 1) moving = true
       const base = shelfPose(e.order, n)
       let ty = base.y
-      let tz = base.z
-      let trx = base.rotX
+      const tz = base.z
+      const trx = base.rotX
       let try_ = base.rotY
-      let trz = base.rotZ
+      const trz = base.rotZ
       let ts = base.scale
       if (e === this.hovered) {
         ty += TILT_LIFT
@@ -495,9 +538,12 @@ export class ShelfScene {
       ts *= 0.94 + 0.06 * en
       const g = e.group
       const d =
-        Math.abs(base.x - g.position.x) + Math.abs(ty - g.position.y) +
-        Math.abs(tz - g.position.z) + Math.abs(trx - g.rotation.x) +
-        Math.abs(try_ - g.rotation.y) + Math.abs(trz - g.rotation.z) +
+        Math.abs(base.x - g.position.x) +
+        Math.abs(ty - g.position.y) +
+        Math.abs(tz - g.position.z) +
+        Math.abs(trx - g.rotation.x) +
+        Math.abs(try_ - g.rotation.y) +
+        Math.abs(trz - g.rotation.z) +
         Math.abs(ts - g.scale.x)
       if (d > 1e-3) moving = true
       g.position.x += (base.x - g.position.x) * k

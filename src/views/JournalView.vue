@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  store, currentJournal, addPage, deletePage, openPage, closeToShelf,
-  renameJournal, deleteJournal, journalToJson,
+  store,
+  currentJournal,
+  addPage,
+  deletePage,
+  openPage,
+  closeToShelf,
+  renameJournal,
+  deleteJournal,
+  journalToJson,
 } from '../store'
 import { useI18n } from 'vue-i18n'
 import { initInk } from '../ink/engine'
@@ -19,11 +26,15 @@ const journal = computed(() => currentJournal())
 const deleteTarget = ref<{ type: 'page' | 'journal'; id: string } | null>(null)
 const mode = computed({
   get: () => store.journalMode,
-  set: (value) => { store.journalMode = value },
+  set: (value) => {
+    store.journalMode = value
+  },
 })
 const pageIdx = computed({
   get: () => store.journalPageIdx,
-  set: (value) => { store.journalPageIdx = value },
+  set: (value) => {
+    store.journalPageIdx = value
+  },
 })
 const menuOn = ref(false)
 const glCanvas = ref<HTMLCanvasElement>()
@@ -84,7 +95,9 @@ async function startScene() {
       onHoverPage: (id, anchor) => {
         glHover.value = id && anchor ? { id, x: anchor.x, y: anchor.y } : null
       },
-      onSheetAnchors: (list) => { glDels.value = list },
+      onSheetAnchors: (list) => {
+        glDels.value = list
+      },
       onFlipDone: (dir) => {
         pageIdx.value = Math.max(0, pageIdx.value + dir)
       },
@@ -96,7 +109,9 @@ async function startScene() {
     scene.start()
     // Keep the loading stage blank until the first complete 3D frame is ready.
     const s = scene
-    s.ready.then(() => { if (scene === s) glOk.value = true })
+    s.ready.then(() => {
+      if (scene === s) glOk.value = true
+    })
   } catch {
     scene = null
     if (request === sceneRequest && canvas.isConnected) glFailed.value = true

@@ -40,10 +40,7 @@ export function outlineMaterial(): LineMaterial {
   })
 }
 
-export function addComicOutline(
-  mesh: THREE.Mesh,
-  material = outlineMaterial(),
-) {
+export function addComicOutline(mesh: THREE.Mesh, material = outlineMaterial()) {
   const edges = new THREE.EdgesGeometry(mesh.geometry, 24)
   const geometry = new LineSegmentsGeometry()
   geometry.setPositions(edges.attributes.position.array as Float32Array)
@@ -76,9 +73,7 @@ export function gridEdgeLoop(segX: number, segY: number): number[] {
 // localStorage override for testing: vihko:gl-quality = low|high.
 export function detectQuality(): Quality {
   const forced =
-    typeof localStorage !== 'undefined'
-      ? localStorage.getItem('vihko:gl-quality')
-      : null
+    typeof localStorage !== 'undefined' ? localStorage.getItem('vihko:gl-quality') : null
   if (forced === 'low' || forced === 'high') return forced
   return 'low'
 }

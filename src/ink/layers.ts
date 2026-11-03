@@ -44,8 +44,8 @@ export function clearLayerRasterCache(pageId?: string) {
 // the original op objects (cache-signature stable); `local` has cut paths
 // remapped from page coordinates into the layer's current local space.
 function layerLocalOps(page: Page, layer: Layer) {
-  const ops = (page.ops ?? []).filter((op) =>
-    op.layerId === '*' || (op.layerId ?? page.layers?.[0]?.id ?? 'legacy') === layer.id,
+  const ops = (page.ops ?? []).filter(
+    (op) => op.layerId === '*' || (op.layerId ?? page.layers?.[0]?.id ?? 'legacy') === layer.id,
   )
   return {
     ops,
@@ -69,9 +69,21 @@ export function layerContentBounds(
   layerId: string,
   scale: number,
 ): LayerContentBounds | null | undefined {
-  const layer = (page.layers?.length
-    ? page.layers
-    : [{ id: 'legacy', name: 'Layer 1', visible: true, opacity: 1, x: 0, y: 0, scale: 1, rotation: 0 }]
+  const layer = (
+    page.layers?.length
+      ? page.layers
+      : [
+          {
+            id: 'legacy',
+            name: 'Layer 1',
+            visible: true,
+            opacity: 1,
+            x: 0,
+            y: 0,
+            scale: 1,
+            rotation: 0,
+          },
+        ]
   ).find((item) => item.id === layerId)
   if (!layer) return null
   const raster = document.createElement('canvas')
@@ -81,7 +93,10 @@ export function layerContentBounds(
   if (!rc) return undefined
   replayLayer(raster, rc, page, ink, layer, scale, layerLocalOps(page, layer).local)
   const { data, width, height } = rc.getImageData(0, 0, raster.width, raster.height)
-  let left = width, top = height, right = -1, bottom = -1
+  let left = width,
+    top = height,
+    right = -1,
+    bottom = -1
   for (let y = 0; y < height; y++) {
     const row = y * width
     for (let x = 0; x < width; x++) {
@@ -117,13 +132,36 @@ export function paintLayers(
 ) {
   const layers = page.layers?.length
     ? page.layers
-    : [{ id: 'legacy', name: 'Layer 1', visible: true, opacity: 1, x: 0, y: 0, scale: 1, rotation: 0 }]
+    : [
+        {
+          id: 'legacy',
+          name: 'Layer 1',
+          visible: true,
+          opacity: 1,
+          x: 0,
+          y: 0,
+          scale: 1,
+          rotation: 0,
+        },
+      ]
   for (const layer of layers) {
     if (!layer.visible) continue
     const paintLayerState = overrides?.has(layer.id)
       ? { ...layer, ...overrides.get(layer.id) }
       : layer
-    paintLayer(target, ctx, page, ink, layer, paintLayerState, scale, ox, oy, force, displayScale, displayOx, displayOy)
+    paintLayer(
+      target,
+      ctx,
+      page,
+      ink,
+      layer,
+      paintLayerState,
+      scale,
+      force,
+      displayScale,
+      displayOx,
+      displayOy,
+    )
   }
 }
 
@@ -135,20 +173,22 @@ function paintLayer(
   layer: Layer,
   paintLayerState: Layer,
   scale: number,
-  ox: number,
-  oy: number,
   force: boolean,
   displayScale: number,
   displayOx: number,
   displayOy: number,
 ) {
   const { ops, local: layerOps } = layerLocalOps(page, layer)
-  const strokes = page.strokes.filter((stroke) =>
-    (stroke.layerId ?? page.layers?.[0]?.id ?? 'legacy') === layer.id,
+  const strokes = page.strokes.filter(
+    (stroke) => (stroke.layerId ?? page.layers?.[0]?.id ?? 'legacy') === layer.id,
   )
 
   // Canvas mocks in jsdom cannot composite cached layer rasters.
-  if (typeof ctx.translate !== 'function' || typeof ctx.rotate !== 'function' || typeof ctx.scale !== 'function') {
+  if (
+    typeof ctx.translate !== 'function' ||
+    typeof ctx.rotate !== 'function' ||
+    typeof ctx.scale !== 'function'
+  ) {
     let opIdx = 0
     const drainOps = (after: number) => {
       while (opIdx < layerOps.length && layerOps[opIdx].after <= after) {
@@ -163,7 +203,14 @@ function paintLayer(
       ctx.save()
       ctx.setTransform(displayScale, 0, 0, displayScale, displayOx, displayOy)
       for (const pt of stroke.pts)
-        renderSamples(ctx, stroke.tool, stroke.color, ink.addPoint(id, pt.x, pt.y, pt.t, pt.p), index + 1, stroke.size ?? 1)
+        renderSamples(
+          ctx,
+          stroke.tool,
+          stroke.color,
+          ink.addPoint(id, pt.x, pt.y, pt.t, pt.p),
+          index + 1,
+          stroke.size ?? 1,
+        )
       renderSamples(ctx, stroke.tool, stroke.color, ink.end(id), index + 1, stroke.size ?? 1)
       ctx.restore()
     })
@@ -181,7 +228,10 @@ function paintLayer(
     : [...strokes, ...ops]
   let entry = rasterCache.get(key)
   const oldSignature = entry?.signature
-  const cacheHit = !force && !!entry && !!oldSignature &&
+  const cacheHit =
+    !force &&
+    !!entry &&
+    !!oldSignature &&
     oldSignature.length === signature.length &&
     signature.every((item, i) => item === oldSignature[i])
   if (!cacheHit) {
@@ -240,7 +290,14 @@ function replayLayer(
     ctx.save()
     ctx.setTransform(scale, 0, 0, scale, 0, 0)
     for (const pt of stroke.pts)
-      renderSamples(ctx, stroke.tool, stroke.color, ink.addPoint(id, pt.x, pt.y, pt.t, pt.p), index + 1, stroke.size ?? 1)
+      renderSamples(
+        ctx,
+        stroke.tool,
+        stroke.color,
+        ink.addPoint(id, pt.x, pt.y, pt.t, pt.p),
+        index + 1,
+        stroke.size ?? 1,
+      )
     renderSamples(ctx, stroke.tool, stroke.color, ink.end(id), index + 1, stroke.size ?? 1)
     ctx.restore()
   })

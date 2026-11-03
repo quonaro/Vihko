@@ -3,29 +3,17 @@
 
 type RGB = [number, number, number]
 
-// RYB cube corners: index bits = r,y,b; value = RGB equivalent.
-const RYB_CUBE: RGB[] = [
-  [1, 1, 1],       // 000 white
-  [1, 0, 0],       // 001 blue side? — corners below follow standard RYB mapping
-  [1, 1, 0],       // 010
-  [1, 0.5, 0],     // 011
-  [0.163, 0.373, 0.6], // 100
-  [0, 0.66, 0.2],  // 101
-  [0.5, 0.094, 0], // 110
-  [0.2, 0.094, 0], // 111
-]
-
 // Standard RGB<->RYB corner mapping (used in the well-known paper js
 // implementations): RYB(r,y,b) -> RGB via trilinear interp over this cube:
 const CUBE: RGB[] = [
-  [1, 1, 1],            // r=0,y=0,b=0 : white
-  [0, 0, 1],            // r=0,y=0,b=1 : blue
-  [1, 1, 0],            // r=0,y=1,b=0 : yellow
-  [0, 1, 0],            // r=0,y=1,b=1 : green
-  [1, 0, 0],            // r=1,y=0,b=0 : red
-  [0.5, 0, 0.5],        // r=1,y=0,b=1 : purple
-  [1, 0.5, 0],          // r=1,y=1,b=0 : orange
-  [0, 0, 0],            // r=1,y=1,b=1 : black
+  [1, 1, 1], // r=0,y=0,b=0 : white
+  [0, 0, 1], // r=0,y=0,b=1 : blue
+  [1, 1, 0], // r=0,y=1,b=0 : yellow
+  [0, 1, 0], // r=0,y=1,b=1 : green
+  [1, 0, 0], // r=1,y=0,b=0 : red
+  [0.5, 0, 0.5], // r=1,y=0,b=1 : purple
+  [1, 0.5, 0], // r=1,y=1,b=0 : orange
+  [0, 0, 0], // r=1,y=1,b=1 : black
 ]
 
 function trilerp(cube: RGB[], r: number, y: number, b: number): RGB {
@@ -63,10 +51,7 @@ export function rgbToRyb(rgb: RGB): RGB {
   let best: RGB = [0, 0, 0]
   let bestD = Infinity
   for (const g of rybGrid!) {
-    const d =
-      (g.rgb[0] - rgb[0]) ** 2 +
-      (g.rgb[1] - rgb[1]) ** 2 +
-      (g.rgb[2] - rgb[2]) ** 2
+    const d = (g.rgb[0] - rgb[0]) ** 2 + (g.rgb[1] - rgb[1]) ** 2 + (g.rgb[2] - rgb[2]) ** 2
     if (d < bestD) {
       bestD = d
       best = g.ryb
@@ -81,7 +66,13 @@ export function rybToRgb(ryb: RGB): RGB {
 
 export function hexToRgb01(hex: string): RGB {
   const h = hex.replace('#', '')
-  const v = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  const v =
+    h.length === 3
+      ? h
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : h
   return [
     parseInt(v.slice(0, 2), 16) / 255,
     parseInt(v.slice(2, 4), 16) / 255,
@@ -112,7 +103,8 @@ export function mixColors(into: string, ingredient: string, weight = 0.35): stri
 // Hex <-> HSV (h: 0..360, s/v: 0..1) for the color picker modal.
 export function hexToHsv(hex: string): [number, number, number] {
   const [r, g, b] = hexToRgb01(hex)
-  const max = Math.max(r, g, b), min = Math.min(r, g, b)
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b)
   const d = max - min
   let h = 0
   if (d > 0) {
@@ -144,7 +136,8 @@ export function hsvToHex(h: number, s: number, v: number): string {
 // Rotate hue of a hex color by degrees.
 export function rotateHue(hex: string, deg: number): string {
   const [r, g, b] = hexToRgb01(hex)
-  const max = Math.max(r, g, b), min = Math.min(r, g, b)
+  const max = Math.max(r, g, b),
+    min = Math.min(r, g, b)
   const l = (max + min) / 2
   const d = max - min
   let h = 0

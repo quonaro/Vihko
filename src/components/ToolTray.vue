@@ -43,7 +43,11 @@ function chooseShape(shape: ShapeKind) {
 
 function closeShapeMenuOutside(e: PointerEvent) {
   const target = e.target
-  if (target instanceof Element && (target.closest('.shape-menu') || target.closest('.tool[aria-expanded]'))) return
+  if (
+    target instanceof Element &&
+    (target.closest('.shape-menu') || target.closest('.tool[aria-expanded]'))
+  )
+    return
   shapeMenuOpen.value = false
 }
 

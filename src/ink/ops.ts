@@ -4,12 +4,14 @@ const PAPER = '#f6f1e6'
 
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
-  const v = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
-  return [
-    parseInt(v.slice(0, 2), 16),
-    parseInt(v.slice(2, 4), 16),
-    parseInt(v.slice(4, 6), 16),
-  ]
+  const v =
+    h.length === 3
+      ? h
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : h
+  return [parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)]
 }
 
 // --- flood fill -----------------------------------------------------------
@@ -70,7 +72,10 @@ export function floodFill(
       const idx = y * wDev + i
       visited[idx] = 1
       const o = idx * 4
-      d[o] = tr; d[o + 1] = tg; d[o + 2] = tb; d[o + 3] = 255
+      d[o] = tr
+      d[o + 1] = tg
+      d[o + 2] = tb
+      d[o + 3] = 255
     }
     if (l < x0) x0 = l
     if (r > x1) x1 = r
@@ -173,7 +178,10 @@ export function getPhoto(src: string): HTMLImageElement | null {
   let img = imageCache.get(src)
   if (!img) {
     img = new Image()
-    img.onload = () => loadListeners.forEach((f) => f())
+    img.onload = () =>
+      loadListeners.forEach((f) => {
+        f()
+      })
     img.src = src
     imageCache.set(src, img)
   }
@@ -231,7 +239,10 @@ export function applyOp(
 }
 
 // Downscale an imported image so the dataURL fits localStorage comfortably.
-export function imageFileToPhoto(file: File, maxDim = 1024): Promise<{ src: string; w: number; h: number }> {
+export function imageFileToPhoto(
+  file: File,
+  maxDim = 1024,
+): Promise<{ src: string; w: number; h: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => {

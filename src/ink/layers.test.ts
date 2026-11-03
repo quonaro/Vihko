@@ -15,14 +15,17 @@ describe('cutOpForLayer', () => {
       scale: 2,
       rotation: 90,
     }
-    const op = cutOpForLayer({
-      kind: 'cut',
-      path: [{ x: PAGE_W / 2 + 10 - 12, y: PAGE_H / 2 + 20 + 8 }],
-      dx: -6,
-      dy: 10,
-      after: 0,
-      layerId: '*',
-    }, layer)
+    const op = cutOpForLayer(
+      {
+        kind: 'cut',
+        path: [{ x: PAGE_W / 2 + 10 - 12, y: PAGE_H / 2 + 20 + 8 }],
+        dx: -6,
+        dy: 10,
+        after: 0,
+        layerId: '*',
+      },
+      layer,
+    )
 
     expect(op.path[0].x).toBeCloseTo(PAGE_W / 2 + 4)
     expect(op.path[0].y).toBeCloseTo(PAGE_H / 2 + 6)
@@ -32,7 +35,14 @@ describe('cutOpForLayer', () => {
 
   it('replays a global raster operation on every layer', () => {
     const layers: Layer[] = ['lower', 'upper'].map((id) => ({
-      id, name: id, visible: true, opacity: 1, x: 0, y: 0, scale: 1, rotation: 0,
+      id,
+      name: id,
+      visible: true,
+      opacity: 1,
+      x: 0,
+      y: 0,
+      scale: 1,
+      rotation: 0,
     }))
     const page: Page = {
       id: 'page',
@@ -55,7 +65,14 @@ describe('cutOpForLayer', () => {
 
   it('replays a layer-scoped raster operation only on its target layer', () => {
     const layers: Layer[] = ['lower', 'upper'].map((id) => ({
-      id, name: id, visible: true, opacity: 1, x: 0, y: 0, scale: 1, rotation: 0,
+      id,
+      name: id,
+      visible: true,
+      opacity: 1,
+      x: 0,
+      y: 0,
+      scale: 1,
+      rotation: 0,
     }))
     const page: Page = {
       id: 'page',

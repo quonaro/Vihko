@@ -12,13 +12,15 @@ function fakeDatabase(savedValue?: string): JournalDatabase {
   }
 }
 
-const saved: Journal[] = [{
-  id: 'saved',
-  title: 'Saved journal',
-  cover: 0,
-  createdAt: 1,
-  pages: [{ id: 'page', strokes: [], createdAt: 1 }],
-}]
+const saved: Journal[] = [
+  {
+    id: 'saved',
+    title: 'Saved journal',
+    cover: 0,
+    createdAt: 1,
+    pages: [{ id: 'page', strokes: [], createdAt: 1 }],
+  },
+]
 
 describe('SQLite journal persistence', () => {
   it('restores saved journals from the database', async () => {

@@ -1,23 +1,51 @@
 import * as THREE from 'three'
 import type { InkEngine, Page } from '../types'
 import {
-  PAGE_W, PAGE_H, PAGE_STEP, sheetCameraDistance, HALF_W,
-  rowPoseFocus, canTurnStack, leafTexU,
-  STACK_LEAN, stackRestY, leafRestAngle, leafRestZ, leafRestFan, leafRestSink,
-  ROW_LEAN, rowRestY, sheetPoint, sheetOutline3D, packOutline,
-  leafPointTheta, leafOutlineTheta, GROUND_Y,
-  SHEET_OUTLINE_COLOR, SHEET_OUTLINE_OPACITY, SHEET_OUTLINE_PX,
+  PAGE_W,
+  PAGE_H,
+  PAGE_STEP,
+  sheetCameraDistance,
+  HALF_W,
+  rowPoseFocus,
+  canTurnStack,
+  leafTexU,
+  STACK_LEAN,
+  stackRestY,
+  leafRestAngle,
+  leafRestZ,
+  leafRestFan,
+  leafRestSink,
+  ROW_LEAN,
+  rowRestY,
+  sheetPoint,
+  sheetOutline3D,
+  packOutline,
+  leafPointTheta,
+  leafOutlineTheta,
+  GROUND_Y,
+  SHEET_OUTLINE_COLOR,
+  SHEET_OUTLINE_OPACITY,
+  SHEET_OUTLINE_PX,
   type Pose,
 } from './layout'
 import {
-  rubberScroll, flickVelocity, momentumStep, MOMENTUM_MIN, pinchZoom,
+  rubberScroll,
+  flickVelocity,
+  momentumStep,
+  MOMENTUM_MIN,
+  pinchZoom,
   clampPan,
 } from './gesture'
 import { pageCanvas, repaintInto, SHEET_SHADE } from './pageTexture'
 import { createPageTurn } from './pageTurn'
 import {
-  createRenderer, addStudioRig, createComposer, detectQuality, FramePump,
-  outlineMaterial, type Quality,
+  createRenderer,
+  addStudioRig,
+  createComposer,
+  detectQuality,
+  FramePump,
+  outlineMaterial,
+  type Quality,
 } from './stage'
 import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
@@ -180,7 +208,9 @@ export class JournalScene {
     q: Quality = detectQuality(),
   ) {
     this.stage = canvas.parentElement
-    this.ready = new Promise((res) => { this.readyResolve = res })
+    this.ready = new Promise((res) => {
+      this.readyResolve = res
+    })
     this.renderer = createRenderer(canvas, q)
     this.inkMat.color.setHex(SHEET_OUTLINE_COLOR)
     this.inkMat.opacity = SHEET_OUTLINE_OPACITY
@@ -384,8 +414,13 @@ export class JournalScene {
       const rest = leaf.rest
       for (let i = 0; i < pos.count; i++) {
         const [x, y, z] = leafPointTheta(
-          rest[i * 3], rest[i * 3 + 1], HALF_W,
-          leaf.theta, leaf.curl, leaf.fan, leaf.sink,
+          rest[i * 3],
+          rest[i * 3 + 1],
+          HALF_W,
+          leaf.theta,
+          leaf.curl,
+          leaf.fan,
+          leaf.sink,
         )
         pos.setXYZ(i, x, y, z)
       }
@@ -393,20 +428,16 @@ export class JournalScene {
       geo.computeVertexNormals()
       geo.computeBoundingSphere()
     }
-    leaf.outline.geometry.setPositions(packOutline(
-      leafOutlineTheta(leaf.theta, leaf.curl, leaf.fan, leaf.sink),
-    ))
+    leaf.outline.geometry.setPositions(
+      packOutline(leafOutlineTheta(leaf.theta, leaf.curl, leaf.fan, leaf.sink)),
+    )
     leaf.front.position.z = leaf.hingeZ
     leaf.back.position.z = leaf.hingeZ
   }
 
   // --- textures -----------------------------------------------------------
 
-  private texFor(
-    page: Page | null,
-    fold?: boolean,
-    edgeShade?: boolean,
-  ): THREE.Texture | null {
+  private texFor(page: Page | null, fold?: boolean, edgeShade?: boolean): THREE.Texture | null {
     if (!page) return null
     const key = page.id + (fold ? 'f' : '') + (edgeShade ? 'e' : '')
     const hit = this.texCache.get(key)
@@ -429,8 +460,13 @@ export class JournalScene {
       const forceBase = !refreshed.has(key)
       refreshed.add(key)
       repaintInto(
-        e.ctx, e.tex.image as HTMLCanvasElement, e.page, this.ink,
-        e.fold, e.edgeShade, forceBase,
+        e.ctx,
+        e.tex.image as HTMLCanvasElement,
+        e.page,
+        this.ink,
+        e.fold,
+        e.edgeShade,
+        forceBase,
       )
       e.tex.needsUpdate = true
     }
@@ -447,17 +483,13 @@ export class JournalScene {
     this.stackPos = this.cur
     this.camHome.set(
       0,
-      mode === 'stack'
-        ? 0.5
-        : GROUND_Y + sheetCameraDistance(this.camera.aspect),
+      mode === 'stack' ? 0.5 : GROUND_Y + sheetCameraDistance(this.camera.aspect),
       mode === 'stack' ? sheetCameraDistance(this.camera.aspect) : 0,
     )
     // Overview is a straight 90-degree top-down look at the tabletop.
     // up = -z so a sheet's far edge reads as the top of the screen.
     this.lookTarget.set(0, mode === 'stack' ? -0.2 : GROUND_Y, 0)
-    this.camera.up.set(
-      0, mode === 'stack' ? 1 : 0, mode === 'stack' ? 0 : -1,
-    )
+    this.camera.up.set(0, mode === 'stack' ? 1 : 0, mode === 'stack' ? 0 : -1)
     this.stackGroup.visible = mode === 'stack'
     this.rowGroup.visible = mode === 'overview'
     if (mode === 'overview') {
@@ -514,7 +546,9 @@ export class JournalScene {
         if (o !== p.mesh && o instanceof THREE.Mesh) o.geometry.dispose()
       })
       p.mesh.geometry.dispose()
-      p.mesh.material.forEach((m) => m.dispose())
+      p.mesh.material.forEach((m) => {
+        m.dispose()
+      })
     }
     this.sheets = pages.map((page, i) => {
       const mesh = this.makePage(null)
@@ -530,9 +564,7 @@ export class JournalScene {
     // Rasterizing N pages up front froze the journal-open animation, so
     // faces go up as blank paper and the texture queue inks them a slice
     // per frame, starting from the faces nearest the focus.
-    const focus = this.mode === 'stack'
-      ? this.stackPos
-      : this.rowTarget + (pages.length - 1) / 2
+    const focus = this.mode === 'stack' ? this.stackPos : this.rowTarget + (pages.length - 1) / 2
     const jobs: TexJob[] = []
     for (const leaf of this.leaves) {
       const fp = leaf.front.userData.page as Page | null
@@ -587,8 +619,11 @@ export class JournalScene {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose()
         const m = o.material
-        if (Array.isArray(m)) m.forEach((x) => x.dispose())
-        else m.dispose()
+        if (Array.isArray(m)) {
+          m.forEach((x) => {
+            x.dispose()
+          })
+        } else m.dispose()
       }
     })
     this.inkMat.dispose()
@@ -606,8 +641,14 @@ export class JournalScene {
     // Wake on resolution: if the pump already went idle, `ready` still has
     // to resolve one tick later so the view can reveal the canvas.
     Promise.resolve(warm).then(
-      () => { this.compiled = true; this.pump.wake() },
-      () => { this.compiled = true; this.pump.wake() },
+      () => {
+        this.compiled = true
+        this.pump.wake()
+      },
+      () => {
+        this.compiled = true
+        this.pump.wake()
+      },
     )
     this.last = performance.now()
     this.pump.start()
@@ -639,9 +680,7 @@ export class JournalScene {
   private updateWorldPerPx() {
     const w = this.canvas.clientWidth || 2
     const h = this.canvas.clientHeight || 2
-    const dist = (this.mode === 'stack'
-      ? this.camHome.z
-      : this.camHome.y - GROUND_Y) / this.zoom
+    const dist = (this.mode === 'stack' ? this.camHome.z : this.camHome.y - GROUND_Y) / this.zoom
     const halfW = Math.tan((this.camera.fov * Math.PI) / 360) * dist * (w / h)
     this.worldPerPx = (2 * halfW) / w
   }
@@ -670,9 +709,14 @@ export class JournalScene {
     }
     if (this.touches.size > 2 || this.pinch || this.drag || this.busy) return
     this.drag = {
-      id: e.pointerId, x0: e.clientX, y0: e.clientY, v0: this.rowTarget,
-      pan0x: this.pan.x, pan0y: this.pan.y,
-      moved: false, turnDir: 0,
+      id: e.pointerId,
+      x0: e.clientX,
+      y0: e.clientY,
+      v0: this.rowTarget,
+      pan0x: this.pan.x,
+      pan0y: this.pan.y,
+      moved: false,
+      turnDir: 0,
     }
     this.trail = [{ x: e.clientX, t: e.timeStamp }]
     this.vel = 0
@@ -682,13 +726,13 @@ export class JournalScene {
   private onPointerMove = (e: PointerEvent) => {
     this.pump.wake()
     const touch = this.touches.get(e.pointerId)
-    if (touch) { touch.x = e.clientX; touch.y = e.clientY }
+    if (touch) {
+      touch.x = e.clientX
+      touch.y = e.clientY
+    }
     if (this.pinch && this.touches.size >= 2) {
       const [a, b] = [...this.touches.values()]
-      this.zoom = pinchZoom(
-        this.pinch.zoom0, this.pinch.d0,
-        Math.hypot(a.x - b.x, a.y - b.y),
-      )
+      this.zoom = pinchZoom(this.pinch.zoom0, this.pinch.d0, Math.hypot(a.x - b.x, a.y - b.y))
       this.updateWorldPerPx()
       // The midpoint's travel pans the view — incrementally, so the pan
       // keeps tracking the fingers while the px→world gain changes.
@@ -755,7 +799,7 @@ export class JournalScene {
     }
     if (this.turn.phase === 'dragging') {
       const span = Math.max(140, this.canvas.getBoundingClientRect().width * 0.55)
-      const signed = -Math.sign(dx) * Math.max(0, Math.abs(dx) - 12) / span
+      const signed = (-Math.sign(dx) * Math.max(0, Math.abs(dx) - 12)) / span
       // Reversal under the finger swaps the live leaf inside the machine —
       // the leaf loop then drives the other boundary leaf instead, and the
       // released one simply eases back onto its pile.
@@ -796,16 +840,21 @@ export class JournalScene {
       } else if (this.touches.size === 1 && this.zoom > 1.05 && !this.busy) {
         const [id, t] = [...this.touches.entries()][0]
         this.drag = {
-          id, x0: t.x, y0: t.y, v0: this.rowTarget,
-          pan0x: this.pan.x, pan0y: this.pan.y,
-          moved: true, turnDir: 2,
+          id,
+          x0: t.x,
+          y0: t.y,
+          v0: this.rowTarget,
+          pan0x: this.pan.x,
+          pan0y: this.pan.y,
+          moved: true,
+          turnDir: 2,
         }
         this.trail = [{ x: t.x, t: e.timeStamp }]
       }
     }
     if (this.drag && e.pointerId !== this.drag.id) return // other finger lifted
     const pv = flick ? flickVelocity(this.trail, e.timeStamp) : 0
-    if (this.drag && this.drag.moved && flick && this.mode === 'overview') {
+    if (this.drag?.moved && flick && this.mode === 'overview') {
       const lim = (this.sheets.length - 1) / 2
       this.vel = -flickVelocity(this.trail, e.timeStamp) * this.pxPerIndex
       this.rowTarget = Math.max(-lim, Math.min(lim, this.rowTarget))
@@ -839,9 +888,7 @@ export class JournalScene {
       return
     }
     this.pick(e.offsetX, e.offsetY)
-    const id = this.mode === 'stack'
-      ? this.hoveredLeafPageId()
-      : this.hoveredCard?.id ?? null
+    const id = this.mode === 'stack' ? this.hoveredLeafPageId() : (this.hoveredCard?.id ?? null)
     if (id) this.events.onPageClick?.(id)
   }
 
@@ -874,9 +921,10 @@ export class JournalScene {
     if (!this.hoveredLeaf) return null
     const hit = this.hoveredLeafHit
     if (!hit) return null
-    const page = hit === 'front'
-      ? this.hoveredLeaf.front.userData.page as Page | null
-      : this.hoveredLeaf.back.userData.page as Page | null
+    const page =
+      hit === 'front'
+        ? (this.hoveredLeaf.front.userData.page as Page | null)
+        : (this.hoveredLeaf.back.userData.page as Page | null)
     return page?.id ?? null
   }
 
@@ -901,13 +949,9 @@ export class JournalScene {
       .filter((h) => h.object.visible)[0]
     this.hoveredCard = null
     if (hit && hit.object instanceof THREE.Mesh) {
-      const leaf = this.leaves.find(
-        (l) => l.front === hit.object || l.back === hit.object,
-      )
+      const leaf = this.leaves.find((l) => l.front === hit.object || l.back === hit.object)
       this.hoveredLeaf = leaf ?? null
-      this.hoveredLeafHit = leaf
-        ? (hit.object === leaf.front ? 'front' : 'back')
-        : null
+      this.hoveredLeafHit = leaf ? (hit.object === leaf.front ? 'front' : 'back') : null
     } else {
       this.hoveredLeaf = null
       this.hoveredLeafHit = null
@@ -920,7 +964,9 @@ export class JournalScene {
   // just track the (damped) front index.
   private pileFocus(): number {
     return this.turn.phase === 'settling'
-      ? (this.turn.settleTarget === 1 ? this.turn.dstIndex : this.turn.srcIndex)
+      ? this.turn.settleTarget === 1
+        ? this.turn.dstIndex
+        : this.turn.srcIndex
       : this.stackPos
   }
 
@@ -941,9 +987,7 @@ export class JournalScene {
       const t0 = performance.now()
       do {
         const job = this.texJobs.shift()!
-        const tex = this.texFor(
-          job.page, job.fold ?? SHEET_SHADE.fold, SHEET_SHADE.edgeShade,
-        )
+        const tex = this.texFor(job.page, job.fold ?? SHEET_SHADE.fold, SHEET_SHADE.edgeShade)
         if (tex) job.mat.map = tex
       } while (this.texJobs.length && performance.now() - t0 < 8)
     }
@@ -1013,9 +1057,10 @@ export class JournalScene {
           leaf.sink += dSink * k
           leaf.curl += dCurl * k
           if (
-            Math.abs(dTheta) + Math.abs(dZ) + Math.abs(dFan) +
-            Math.abs(dSink) + Math.abs(dCurl) < 1e-4
-          ) continue
+            Math.abs(dTheta) + Math.abs(dZ) + Math.abs(dFan) + Math.abs(dSink) + Math.abs(dCurl) <
+            1e-4
+          )
+            continue
         }
         this.deformLeaf(leaf)
         moving = true
@@ -1045,7 +1090,8 @@ export class JournalScene {
         if (!m.visible) continue
         const pose = this.poseForCard(i)
         const d =
-          Math.abs(pose.x - m.position.x) + Math.abs(pose.y - m.position.y) +
+          Math.abs(pose.x - m.position.x) +
+          Math.abs(pose.y - m.position.y) +
           Math.abs(pose.z - m.position.z) +
           Math.abs(pose.rotY - m.rotation.y) +
           Math.abs(pose.rotZ - m.rotation.z)
@@ -1073,10 +1119,9 @@ export class JournalScene {
     this.camera.getWorldDirection(this.tmpDir)
     this.tmpRight.crossVectors(this.tmpDir, this.camera.up).normalize()
     this.tmpUp.crossVectors(this.tmpRight, this.tmpDir).normalize()
-    this.effHome
-      .addScaledVector(this.tmpRight, this.pan.x)
-      .addScaledVector(this.tmpUp, this.pan.y)
-    const lt = this.tmpLook.copy(this.lookTarget)
+    this.effHome.addScaledVector(this.tmpRight, this.pan.x).addScaledVector(this.tmpUp, this.pan.y)
+    const lt = this.tmpLook
+      .copy(this.lookTarget)
       .addScaledVector(this.tmpRight, this.pan.x)
       .addScaledVector(this.tmpUp, this.pan.y)
     const ck = damp(this.pinch ? 16 : 6, dt)
@@ -1093,9 +1138,7 @@ export class JournalScene {
     this.camera.lookAt(this.lookPos)
 
     // Emit hover + delete-button anchor.
-    const id = this.mode === 'stack'
-      ? this.hoveredLeafPageId()
-      : this.hoveredCard?.id ?? null
+    const id = this.mode === 'stack' ? this.hoveredLeafPageId() : (this.hoveredCard?.id ?? null)
     let anchor: { x: number; y: number } | null = null
     if (id && this.mode === 'overview' && this.hoveredCard) {
       const v = new THREE.Vector3(PAGE_W * 0.47, PAGE_H * 0.47, 0)
@@ -1105,9 +1148,13 @@ export class JournalScene {
       anchor = { x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height }
     } else if (id && this.hoveredLeaf) {
       const p = leafPointTheta(
-        HALF_W, PAGE_H * 0.47, HALF_W,
-        this.hoveredLeaf.theta, this.hoveredLeaf.curl,
-        this.hoveredLeaf.fan, this.hoveredLeaf.sink,
+        HALF_W,
+        PAGE_H * 0.47,
+        HALF_W,
+        this.hoveredLeaf.theta,
+        this.hoveredLeaf.curl,
+        this.hoveredLeaf.fan,
+        this.hoveredLeaf.sink,
       )
       const v = new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(this.hoveredLeaf.front.matrixWorld)
       v.project(this.camera)

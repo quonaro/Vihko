@@ -28,8 +28,7 @@ export const SETTLE_TIME = 0.62
 export const CANCEL_TIME = SETTLE_TIME * 0.65
 
 // Ease applied to a settle segment's elapsed-time fraction ONLY.
-export const easeInOut = (t: number) =>
-  t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2
+export const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2)
 
 export type CanTurn = (dir: TurnDir, cur: number, total: number) => boolean
 
@@ -221,15 +220,33 @@ export function createPageTurn(opts: PageTurnOptions = {}): PageTurn {
   }
 
   return {
-    get phase() { return phase },
-    get dir() { return dir },
-    get srcIndex() { return srcIndex },
-    get dstIndex() { return dstIndex },
-    get progress() { return progress },
-    get busy() { return phase !== 'idle' },
-    get leafIndex() { return phase === 'idle' ? null : Math.min(srcIndex, dstIndex) },
-    get revealIndex() { return phase === 'idle' ? null : Math.max(srcIndex, dstIndex) },
-    get settleTarget() { return phase === 'settling' ? segTo : null },
+    get phase() {
+      return phase
+    },
+    get dir() {
+      return dir
+    },
+    get srcIndex() {
+      return srcIndex
+    },
+    get dstIndex() {
+      return dstIndex
+    },
+    get progress() {
+      return progress
+    },
+    get busy() {
+      return phase !== 'idle'
+    },
+    get leafIndex() {
+      return phase === 'idle' ? null : Math.min(srcIndex, dstIndex)
+    },
+    get revealIndex() {
+      return phase === 'idle' ? null : Math.max(srcIndex, dstIndex)
+    },
+    get settleTarget() {
+      return phase === 'settling' ? segTo : null
+    },
     begin,
     flip,
     drag,

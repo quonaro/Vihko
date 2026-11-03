@@ -1,8 +1,21 @@
 import { describe, it, expect } from 'vitest'
 import {
-  BOOK_W, BOOK_H, BOOK_D, SHELF_STEP, TILT_LIFT, HIT_MARGIN, LIE_PITCH,
-  BOARD_T, PAGES_D, SPINE_H, SPINE_D, SPINE_PROUD,
-  shelfPose, inHitBox, viewHalfWidth, scrollLimit,
+  BOOK_W,
+  BOOK_H,
+  BOOK_D,
+  SHELF_STEP,
+  TILT_LIFT,
+  HIT_MARGIN,
+  LIE_PITCH,
+  BOARD_T,
+  PAGES_D,
+  SPINE_H,
+  SPINE_D,
+  SPINE_PROUD,
+  shelfPose,
+  inHitBox,
+  viewHalfWidth,
+  scrollLimit,
 } from './shelfLayout'
 
 describe('shelfPose', () => {
@@ -86,9 +99,7 @@ describe('scrollLimit', () => {
     // -halfW + EDGE_PAD; fully right mirrors it for the last book.
     const first = shelfPose(0, n).x - BOOK_W / 2
     expect(first + limit).toBeGreaterThan(-halfW)
-    expect(limit).toBeCloseTo(
-      Math.max(0, ((n - 1) * SHELF_STEP) / 2 + BOOK_W / 2 + 0.3 - halfW),
-    )
+    expect(limit).toBeCloseTo(Math.max(0, ((n - 1) * SHELF_STEP) / 2 + BOOK_W / 2 + 0.3 - halfW))
   })
 
   it('book height keeps the DOM cover aspect', () => {

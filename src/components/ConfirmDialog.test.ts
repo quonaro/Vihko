@@ -30,7 +30,8 @@ describe('ConfirmDialog', () => {
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     expect(w.emitted('cancel')).toHaveLength(1)
-    document.body.querySelector<HTMLElement>('.mslider-backdrop')!
+    document.body
+      .querySelector<HTMLElement>('.mslider-backdrop')!
       .dispatchEvent(new MouseEvent('click', { bubbles: true }))
     expect(w.emitted('cancel')).toHaveLength(2)
 

@@ -1,24 +1,48 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
-  store, covers,
-  currentJournal, currentPage,
-  openJournal, openPage, closeToJournal, closeToShelf,
-  addJournal, addPage, deletePage, deleteJournal, navPage,
-  pushStroke, pushOp, undoStroke, redoStroke, pageRev,
-  renameJournal, setCoverImage, journalToJson, migrateToPageSpace,
-  addLayer, pageLayers, selectLayer, activeLayer, updateLayer, moveLayer, deleteLayer,
+  store,
+  covers,
+  currentJournal,
+  currentPage,
+  openJournal,
+  openPage,
+  closeToJournal,
+  closeToShelf,
+  addJournal,
+  addPage,
+  deletePage,
+  deleteJournal,
+  navPage,
+  pushStroke,
+  pushOp,
+  undoStroke,
+  redoStroke,
+  pageRev,
+  renameJournal,
+  setCoverImage,
+  journalToJson,
+  migrateToPageSpace,
+  addLayer,
+  pageLayers,
+  selectLayer,
+  activeLayer,
+  updateLayer,
+  moveLayer,
+  deleteLayer,
 } from './store'
 import { PAGE_W, PAGE_H } from './pageSpace'
 import { i18n } from './i18n'
 import { nextTick } from 'vue'
 import type { Journal, Stroke } from './types'
 
-const t = (key: string, named?: Record<string, unknown>) =>
-  i18n.global.t(key, named ?? {})
+const t = (key: string, named?: Record<string, unknown>) => i18n.global.t(key, named ?? {})
 
 function makeJournal(id: string, pageIds: string[]): Journal {
   return {
-    id, title: `Journal ${id}`, cover: 0, createdAt: 0,
+    id,
+    title: `Journal ${id}`,
+    cover: 0,
+    createdAt: 0,
     pages: pageIds.map((pid) => ({ id: pid, strokes: [], createdAt: 0 })),
   }
 }
@@ -32,7 +56,8 @@ const stroke = (n = 1): Stroke => ({
 beforeEach(() => {
   localStorage.clear()
   store.journals.splice(
-    0, store.journals.length,
+    0,
+    store.journals.length,
     makeJournal('j1', ['p1', 'p2']),
     makeJournal('j2', ['q1']),
   )
@@ -43,7 +68,9 @@ beforeEach(() => {
   store.journalPageIdx = 0
   store.journalOverviewIdx = 0
   // drain the shared redo stack so tests stay order-independent
-  while (redoStroke()) { /* pop leftovers onto p1 */ }
+  while (redoStroke()) {
+    /* pop leftovers onto p1 */
+  }
   currentPage()!.strokes.length = 0
 })
 
@@ -249,7 +276,14 @@ describe('layers', () => {
     const base = pageLayers()[0]
     const second = addLayer()!
     updateLayer(second.id, { visible: false, opacity: 0.4, x: 12, y: -8, scale: 1.5, rotation: 20 })
-    expect(pageLayers()[1]).toMatchObject({ visible: false, opacity: 0.4, x: 12, y: -8, scale: 1.5, rotation: 20 })
+    expect(pageLayers()[1]).toMatchObject({
+      visible: false,
+      opacity: 0.4,
+      x: 12,
+      y: -8,
+      scale: 1.5,
+      rotation: 20,
+    })
 
     moveLayer(second.id, -1)
     expect(pageLayers()[0].id).toBe(second.id)
@@ -295,7 +329,11 @@ describe('persistence', () => {
 
   it('migrates stored screen-px coordinates to page space once', async () => {
     const j = makeJournal('saved', ['s1'])
-    j.pages[0].strokes.push({ tool: 'draw', color: '#000', pts: [{ x: 100, y: 200, t: 0, p: 0.5 }] })
+    j.pages[0].strokes.push({
+      tool: 'draw',
+      color: '#000',
+      pts: [{ x: 100, y: 200, t: 0, p: 0.5 }],
+    })
     localStorage.setItem('vihko:v1', JSON.stringify([j]))
     vi.resetModules()
     const { store: fresh } = await import('./store')
@@ -313,18 +351,26 @@ describe('persistence', () => {
 
 describe('migrateToPageSpace', () => {
   it('scales strokes and op coordinates anisotropically', () => {
-    const j: Journal[] = [{
-      id: 'j', title: 't', cover: 0, createdAt: 0,
-      pages: [{
-        id: 'p', createdAt: 0,
-        strokes: [{ tool: 'draw', color: '#000', pts: [{ x: 100, y: 200, t: 0, p: 0.5 }] }],
-        ops: [
-          { kind: 'fill', x: 40, y: 50, color: '#fff', after: 0 },
-          { kind: 'cut', path: [{ x: 10, y: 20 }], dx: 5, dy: 6, after: 0 },
-          { kind: 'photo', photo: { src: 'x', x: 1, y: 2, w: 30, h: 40 }, after: 0 },
+    const j: Journal[] = [
+      {
+        id: 'j',
+        title: 't',
+        cover: 0,
+        createdAt: 0,
+        pages: [
+          {
+            id: 'p',
+            createdAt: 0,
+            strokes: [{ tool: 'draw', color: '#000', pts: [{ x: 100, y: 200, t: 0, p: 0.5 }] }],
+            ops: [
+              { kind: 'fill', x: 40, y: 50, color: '#fff', after: 0 },
+              { kind: 'cut', path: [{ x: 10, y: 20 }], dx: 5, dy: 6, after: 0 },
+              { kind: 'photo', photo: { src: 'x', x: 1, y: 2, w: 30, h: 40 }, after: 0 },
+            ],
+          },
         ],
-      }],
-    }]
+      },
+    ]
     migrateToPageSpace(j, 400, 800)
     const kx = PAGE_W / 400
     const ky = PAGE_H / 800

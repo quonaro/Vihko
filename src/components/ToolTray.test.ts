@@ -37,7 +37,9 @@ describe('ToolTray', () => {
     expect(document.body.querySelector('[role="menu"]')).not.toBeNull()
 
     const ellipseLabel = i18n.global.t('shapeMenu.ellipse')
-    document.body.querySelector<HTMLButtonElement>(`.shape-option[aria-label="${ellipseLabel}"]`)!.click()
+    document.body
+      .querySelector<HTMLButtonElement>(`.shape-option[aria-label="${ellipseLabel}"]`)!
+      .click()
     await w.vm.$nextTick()
     expect(store.tool).toBe('shapes')
     expect(store.shape).toBe('ellipse')
@@ -79,7 +81,9 @@ describe('ToolTray', () => {
     dot.element.dispatchEvent(pev('pointerdown', { clientX: 5, clientY: 5, pointerId: 1 }))
     await w.vm.$nextTick()
     expect(w.find('.ghost').exists()).toBe(true)
-    dot.element.dispatchEvent(pev('pointerup', { clientX: 5, clientY: 5, movementY: 0, pointerId: 1 }))
+    dot.element.dispatchEvent(
+      pev('pointerup', { clientX: 5, clientY: 5, movementY: 0, pointerId: 1 }),
+    )
     expect(store.color).toBe(color)
     await w.vm.$nextTick()
     expect(w.find('.ghost').exists()).toBe(false)
@@ -104,7 +108,9 @@ describe('ToolTray', () => {
     document.elementFromPoint = () => w.find('.swatch').element
     const dot = w.findAll('.dot')[3]
     dot.element.dispatchEvent(pev('pointerdown', { clientX: 5, clientY: 5, pointerId: 1 }))
-    dot.element.dispatchEvent(pev('pointerup', { clientX: 40, clientY: 40, movementY: 60, pointerId: 1 }))
+    dot.element.dispatchEvent(
+      pev('pointerup', { clientX: 40, clientY: 40, movementY: 60, pointerId: 1 }),
+    )
     expect(store.color).toBe(mixColors(before, palette[3], 0.35))
     document.elementFromPoint = () => null
   })
