@@ -40,7 +40,9 @@ which triggers the GitHub release workflow.
 ## CI/CD
 
 `.github/workflows/release.yml` runs on tag pushes matching `v*.*.*` (and
-manually via workflow_dispatch): installs Go/Node/pnpm/JDK 21/Android SDK,
+manually via workflow_dispatch), but only when the tagged commit is an
+ancestor of `main` — tag a commit on another branch and the job fails
+fast: installs Go/Node/pnpm/JDK 21/Android SDK,
 runs `pnpm test` + `pnpm test:go`, builds the web bundle, `cap sync android`,
 `gradlew assembleRelease`, then publishes a GitHub Release with
 `vihko-<tag>.apk` attached. Requires `contents: write` permission

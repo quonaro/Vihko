@@ -15,6 +15,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tag is on main
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor HEAD FETCH_HEAD; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not on main — releases are built only from tagged commits on the main branch."
+            exit 1
+          fi
 
       - name: Set up Go
         uses: actions/setup-go@v5
