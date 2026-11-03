@@ -70,10 +70,9 @@ export function gridEdgeLoop(segX: number, segY: number): number[] {
   return idx
 }
 
-// 'low' targets phones/tablets (primary pointer is touch): mid-range
-// mobile GPUs choke on the HDR MSAA composer + VSM blur, so the low tier
-// renders straight to the canvas with plain PCF shadows, a lower pixel
-// ratio and standard materials. Desktop keeps 'high'.
+// One render path for every device — a desktop shows what a phone shows:
+// straight to the canvas with plain PCF shadows and a lower pixel ratio.
+// The HDR MSAA composer + VSM blur stay available as 'high' via the
 // localStorage override for testing: vihko:gl-quality = low|high.
 export function detectQuality(): Quality {
   const forced =
@@ -81,8 +80,7 @@ export function detectQuality(): Quality {
       ? localStorage.getItem('vihko:gl-quality')
       : null
   if (forced === 'low' || forced === 'high') return forced
-  if (typeof matchMedia !== 'function') return 'high'
-  return matchMedia('(pointer: coarse)').matches ? 'low' : 'high'
+  return 'low'
 }
 
 // Render-on-demand scheduler: wake() guarantees a frame; the loop keeps
