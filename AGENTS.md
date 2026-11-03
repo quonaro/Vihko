@@ -43,9 +43,18 @@ which triggers the GitHub release workflow.
 manually via workflow_dispatch): installs Go/Node/pnpm/JDK 21/Android SDK,
 runs `pnpm test` + `pnpm test:go`, builds the web bundle, `cap sync android`,
 `gradlew assembleRelease`, then publishes a GitHub Release with
-`vihko-<tag>.apk` attached (the release APK is signed with the debug
-key per `android/app/build.gradle`). Requires `contents: write` permission
+`vihko-<tag>.apk` attached. Requires `contents: write` permission
 (granted in the workflow).
+
+Release signing: `android/app/build.gradle` uses `signingConfigs.release`
+when `android/keystore.properties` exists (gitignored; see
+`android/keystore.properties` on the build machine — the `.jks` it points
+to is the only copy, keep a backup) and falls back to the debug key
+otherwise. CI rebuilds `keystore.properties` + `android/app/vihko-release.jks`
+from secrets `ANDROID_KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`,
+`KEY_PASSWORD` and fails fast if any is missing — without a stable key
+every release gets a fresh signature and Android rejects updates
+("package conflicts with another package").
 
 ## Testing
 
