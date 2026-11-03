@@ -1,11 +1,10 @@
-// Pure 3D layout math for the journal scenes (sheet stack + overview row).
+// Pure 3D layout math for the journal scenes (leaf piles + overview row).
 // No three.js imports here so the geometry is unit-testable under jsdom.
 
 // Page size in world units. A page is a landscape two-page spread — the same
 // sheet the editor draws on, rendered with a centre fold in the stack view.
 export const PAGE_W = 2.8
 export const PAGE_H = PAGE_W * (380 / 600)
-export const PAGE_ASPECT = PAGE_W / PAGE_H // ~1.27, matches pageTexture
 export const PAGE_STEP = PAGE_W + 0.22
 
 // Camera distance that keeps the full landscape sheet inside the viewport.
@@ -23,49 +22,14 @@ export interface Pose {
   rotZ: number
 }
 
-// --- sheet stack ------------------------------------------------------------
-// Each stored page is an entire folded spread. Neighbours remain face-up
-// behind it, not a separate pile of blank backs a sheet-width to the left.
+// --- table ------------------------------------------------------------------
+// The journal rests on a tabletop instead of floating: GROUND_Y is the
+// shadow-catcher plane, and each group's y is derived so its lowest point
+// touches it.
+export const GROUND_Y = -PAGE_H / 2 - 0.3
+
+// --- sheet stack -------------------------------------------------------------
 export const STACK_LEAN = -0.12
-
-// How far the right fan spreads before new sheets only nudge deeper.
-const STACK_FAN_CAP = 7
-
-export function stackPose(d: number): Pose {
-  const depth = Math.abs(d)
-  const f = Math.min(depth, STACK_FAN_CAP)
-  const side = Math.sign(d)
-  return {
-    x: side * f * PAGE_W * 0.075,
-    y: -f * 0.018,
-    z: -depth * 0.16,
-    rotY: side * f * 0.012,
-    rotZ: -side * f * 0.012,
-  }
-}
-
-// Hovered sheet lifts toward the camera — only meaningful on the front and
-// right-fan sheets (the left pile is face-down and barely interactive).
-export function stackHoverPose(d: number): Pose {
-  const p = stackPose(d)
-  return { ...p, y: p.y + 0.015, z: p.z + 0.025 }
-}
-
-// Lowest corner of any posed sheet once the group leans — used to rest the
-// stack on the table like the overview row.
-export function stackDrop(): number {
-  let drop = 0
-  for (let d = -8; d <= STACK_FAN_CAP; d++) {
-    const p = stackPose(d)
-    const y = p.y - (PAGE_H / 2) * Math.cos(p.rotZ) - (PAGE_W / 2) * Math.abs(Math.sin(p.rotZ))
-    drop = Math.min(drop, y * Math.cos(STACK_LEAN) - p.z * Math.sin(STACK_LEAN))
-  }
-  return drop
-}
-
-export function stackRestY(): number {
-  return GROUND_Y + PAGE_H / 2 + 0.16
-}
 
 // A turn moves the front sheet onto the left pile (+1) or brings the pile's
 // top sheet back (-1).
@@ -73,9 +37,9 @@ export function canTurnStack(dir: 1 | -1, cur: number, total: number): boolean {
   return total > 0 && cur >= 0 && cur < total && (dir > 0 ? cur < total - 1 : cur > 0)
 }
 
+// --- folded sheet ------------------------------------------------------------
 // Outer corner radius and the width of each fold half — shared by the
-// resting sheets, their left/right half surfaces and the turning leaf so
-// all four traces agree at the handoff instants.
+// resting leaves and their outlines so every trace agrees.
 export const SHEET_CORNER_R = PAGE_H * 0.045
 export const HALF_W = PAGE_W / 2
 
@@ -104,7 +68,7 @@ export function sheetPoint(x: number, y: number): [number, number, number] {
   return [x, y, z]
 }
 
-// --- overview row -----------------------------------------------------------
+// --- overview row ------------------------------------------------------------
 // Every sheet stays upright and evenly spaced while `focus` shifts
 // horizontally through the bounded list.
 export function rowPoseFocus(i: number, focus: number): Pose {
@@ -117,243 +81,144 @@ export function rowPoseFocus(i: number, focus: number): Pose {
   }
 }
 
-export function rowHoverFocus(i: number, focus: number): Pose {
-  return { ...rowPoseFocus(i, focus), y: 0.06, z: 0.16 }
-}
-
-// --- table ------------------------------------------------------------------
-// Both journal modes rest on the same tabletop instead of floating:
-// GROUND_Y is the shadow-catcher plane, and each group's y is derived so
-// its lowest point touches it.
-export const GROUND_Y = -PAGE_H / 2 - 0.3
-export const ROW_LEAN = -0.5 // overview group rotation.x — row leans back, rad
-
 // Group y that puts the row's bottom edge on the table.
+export const ROW_LEAN = -0.5 // overview group rotation.x — row leans back, rad
 export function rowRestY(): number {
   return GROUND_Y + (PAGE_H / 2) * Math.cos(ROW_LEAN)
 }
 
-// --- page turn --------------------------------------------------------------
-// Position of a point on the turning sheet, spine (the sheet's left edge) at
-// x = 0. x: distance along the sheet from the spine [0, w]; y: across the page.
-// dir=+1 turns the front sheet onto the left pile (t: 0 flat → 1 flipped);
-// dir=-1 brings a sheet back from the pile. With curl = 0 the sheet rotates
-// as a flat plane; a positive curl lets the free edge trail the spine and
-// peaks mid-turn, giving the leaf a paper bend instead of a plank.
-export function stackHeight(x: number) {
-  return Math.abs(x) * 0.05 + 0.006
+// === leaf piles (fanned half-sheets hinged at the centre spine) =============
+// The journal is a row of half-sheet leaves sharing the spine line x = 0,
+// like a real book block. Leaf k carries spread k-1's right half on its
+// front face and spread k's left half on its back face, so the open spread
+// is always just the two boundary leaves — and a page turn is a single
+// leaf rotating, never surfaces being hidden or swapped.
+//
+// Angle convention: theta is the leaf's rotation about the spine (+y).
+// theta = 0 lies flat to the right face-up (front visible), theta = PI lies
+// flat to the left face-down (back visible), theta = PI/2 stands upright.
+
+// Tilt of a leaf off flat by its depth inside a pile. The pile-top leaf
+// (depth 0) leans the most — like the open page lifted off a real book
+// block — and deeper leaves settle flatter under it. Fanning the other way
+// would poke deeper pages up through the open one.
+export const LEAF_LEAN = 0.14
+export const LEAF_FAN_DECAY = 0.3
+// Hinge offset along -z per pile depth so leaves stack without coplanar
+// z-fighting.
+export const LEAF_ZSTEP = 0.014
+
+// The page block fans like a real open book: each deeper leaf's FREE EDGE
+// peeks a step further out and settles a bit lower, so the pile sides form
+// a stair-step skirt past the open spread. Both taper to zero at the hinge —
+// the spine never detaches, which a whole-leaf offset would do. Capped so
+// a thick journal's block spreads only so wide.
+export const LEAF_FAN_STEP = 0.055 // free-edge extension per depth
+export const LEAF_SINK_STEP = 0.022 // free-edge drop per depth
+export const LEAF_FAN_CAP = 8
+
+export function pileLean(depth: number): number {
+  return LEAF_LEAN / (1 + Math.max(0, depth) * LEAF_FAN_DECAY)
 }
 
-// Constant z-offset the turning leaf carries so its flat poses win the
-// depth test against the resting surface they replace by a hair. Both
-// endpoint correspondences below include it — subtract when comparing.
-export const TURN_LIFT = 0.005
+// Pile depth of leaf k for focus `cur`: 0 for the two boundary leaves of
+// the open spread, growing into the block on either side. Both piles share
+// the same magnitudes — the fan stays symmetric.
+export function leafDepth(k: number, cur: number): number {
+  return Math.max(0, k <= cur ? cur - k : k - cur - 1)
+}
 
-export function curlPoint(
+// Rest angle of leaf k while spread `cur` is open: k <= cur lies on the
+// left pile, k > cur on the right. Fractional `cur` interpolates depths.
+export function leafRestAngle(k: number, cur: number): number {
+  return k <= cur ? Math.PI - pileLean(cur - k) : pileLean(k - cur - 1)
+}
+
+// Hinge z of leaf k for focus `cur` — the pile top sits at 0.
+export function leafRestZ(k: number, cur: number): number {
+  const j = leafDepth(k, cur)
+  return j <= 0 ? 0 : -j * LEAF_ZSTEP
+}
+
+// How far leaf k's free edge extends past its hinge, world units.
+export function leafRestFan(k: number, cur: number): number {
+  return Math.min(leafDepth(k, cur), LEAF_FAN_CAP) * LEAF_FAN_STEP
+}
+
+// How far leaf k's free edge drops below the hinge line, world units.
+export function leafRestSink(k: number, cur: number): number {
+  return Math.min(leafDepth(k, cur), LEAF_FAN_CAP) * LEAF_SINK_STEP
+}
+
+// Group y that puts the fanned block's lowest corner on the table. Sampler
+// (not closed form) so it stays right for any lean, fan depth or curl.
+export function stackRestY(): number {
+  const c = Math.cos(STACK_LEAN)
+  const s = Math.sin(STACK_LEAN)
+  let drop = 0
+  for (let j = 0; j <= LEAF_FAN_CAP + 2; j++) {
+    const theta = pileLean(j)
+    const hingeZ = -j * LEAF_ZSTEP
+    const fan = Math.min(j, LEAF_FAN_CAP) * LEAF_FAN_STEP
+    const sink = Math.min(j, LEAF_FAN_CAP) * LEAF_SINK_STEP
+    for (const x of [0, HALF_W]) {
+      for (const y of [-PAGE_H / 2, PAGE_H / 2]) {
+        const [, py, pz] = leafPointTheta(x, y, HALF_W, theta, 0, fan, sink)
+        drop = Math.min(drop, py * c - (pz + hingeZ) * s)
+      }
+    }
+  }
+  return GROUND_Y - drop + 0.02
+}
+
+// Half-leaf point hinged at local x = 0, free edge at x = w (HALF_W),
+// rotated `theta` about the spine. The sheet edge-lift bump folds under
+// |cos θ| so the free edge always curls toward the face-up side; `curl`
+// trails the free edge behind the spine mid-turn (a paper bend). `fan`
+// extends the free edge radially and `sink` tilts it down — both scale with
+// the distance from the hinge (x/w), so x = 0 stays glued to the spine and
+// the leaf can never tear away from the fold.
+export function leafPointTheta(
   x: number,
   y: number,
   w: number,
-  t: number,
-  dir: 1 | -1,
+  theta: number,
   curl = 0,
+  fan = 0,
+  sink = 0,
 ): [number, number, number] {
-  const phi = Math.PI * (dir > 0 ? t : 1 - t)
-  const theta = phi - curl * Math.sin(phi) * (x / w) ** 1.5
+  const ext = x / w
+  const th = theta - curl * Math.sin(theta) * ext ** 1.5
   const [rx, ry, rz] = sheetPoint(x, y)
-  const px = rx * Math.cos(theta)
-  const pz = rx * Math.sin(theta) + rz * Math.abs(Math.cos(theta)) + TURN_LIFT
-  return [px, ry, pz]
+  const px = (rx + fan * ext) * Math.cos(th)
+  const pz = (rx + fan * ext) * Math.sin(th) + rz * Math.abs(Math.cos(th))
+  return [px, ry - sink * ext, pz]
 }
 
-// === shared resting/turning surfaces ========================================
-// Parametric surface samplers so a resting sheet, its left/right halves and
-// the turning leaf are all evaluated from the same `sheetPoint` rounding +
-// centre-fold math — a moving half therefore lands exactly on the resting
-// surface it replaces at progress 0 and 1.
-//
-// Parameter convention: u ∈ [0,1] sweeps the surface left→right (for a half,
-// from its outer edge to the fold is NOT used — see below), v ∈ [0,1] sweeps
-// top→bottom of the sheet. `sheetUV` maps (u,v) to texture UV matching the
-// existing page texture orientation (uv.y = 1 - v, same as PlaneGeometry).
-
-export type SheetSide = 'left' | 'right' | 'full'
-
-// Texture UV for sheet parameter (u,v): one continuous texture across the
-// fold — left half covers u∈[0,0.5], right half u∈[0.5,1].
-export function sheetUV(u: number, v: number): [number, number] {
-  return [u, 1 - v]
-}
-
-// Resting sheet point at (u,v): u spans the whole sheet left→right.
-export function sheetPointUV(u: number, v: number): [number, number, number] {
-  return sheetPoint(-PAGE_W / 2 + u * PAGE_W, PAGE_H / 2 - v * PAGE_H)
-}
-
-// Resting half-sheet point. u ∈ [0,1] sweeps the half in sheet direction:
-// 'left': x goes -PAGE_W/2 → 0 (u 0→1, outer edge to fold), 'right': x goes
-// 0 → +PAGE_W/2 (fold to outer edge).
-export function halfPointUV(
-  side: 'left' | 'right',
-  u: number,
-  v: number,
-): [number, number, number] {
-  return sheetPointUV(side === 'left' ? u * 0.5 : 0.5 + u * 0.5, v)
-}
-
-// Turning leaf point. u ∈ [0,1] runs hinge (fold, local x=0) → free edge
-// (local x=HALF_W); v sweeps top→bottom exactly like the resting halves.
-// Endpoint correspondence (the pose of the leaf's parent group is
-// `turnLeafPose`, i.e. the front slot's pose):
-//   dir=+1, t=0 → 'right' half:  leafPointUV(u,v,0,+1) = halfPointUV('right', u, v)   + (0,0,TURN_LIFT)
-//   dir=+1, t=1 → 'left'  half:  leafPointUV(u,v,1,+1) = halfPointUV('left', 1-u, v)  + (0,0,TURN_LIFT)
-//   dir=-1, t=0 → 'left'  half:  leafPointUV(u,v,0,-1) = halfPointUV('left', 1-u, v)  + (0,0,TURN_LIFT)
-//   dir=-1, t=1 → 'right' half:  leafPointUV(u,v,1,-1) = halfPointUV('right', u, v)   + (0,0,TURN_LIFT)
-// (The 'left' correspondence mirrors u because the leaf's free edge travels
-// to the sheet's outer left edge.) Positions, normals and UVs agree with the
-// resting halves because both come from sheetPoint.
-export function leafPointUV(
-  u: number,
-  v: number,
-  t: number,
-  dir: 1 | -1,
+// Perimeter of a leaf at absolute theta — outline points ride the same
+// deformation as the mesh and nudge a hair along the face-up normal so the
+// ink never sinks into its own paper at grazing angles.
+export function leafOutlineTheta(
+  theta: number,
   curl = 0,
-): [number, number, number] {
-  return curlPoint(u * HALF_W, PAGE_H / 2 - v * PAGE_H, HALF_W, t, dir, curl)
+  fan = 0,
+  sink = 0,
+): [number, number, number][] {
+  const s = Math.cos(theta) >= 0 ? 1 : -1
+  const e = 0.004
+  return sheetOutline({ side: 'right', hinge: true }).map(([x, y]) => {
+    const [px, py, pz] = leafPointTheta(x, y, HALF_W, theta, curl, fan, sink)
+    return [px + Math.sin(theta) * s * e, py, pz + Math.cos(theta) * s * e]
+  })
 }
 
-// Texture u for a leaf face at leaf param u. Convention (same as the
-// previous buildLeaf remap): the front face always shows the texture's
-// RIGHT half (u∈[0.5,1]); the back face shows the LEFT half, mirrored —
-// when the leaf lies face-down on the left it reads as the destination
-// spread's left page. Scene assigns the textures per direction; uv.y
-// comes from the leaf grid unchanged.
+// Texture u for a leaf face at leaf param u. Convention: the front face
+// always shows the texture's RIGHT half (u∈[0.5,1]); the back face shows
+// the LEFT half, mirrored — when the leaf lies face-down on the left it
+// reads as the destination spread's left page. Scene assigns the textures
+// per direction; uv.y comes from the leaf grid unchanged.
 export function leafTexU(face: 'front' | 'back', u: number): number {
   return face === 'front' ? 0.5 + u * 0.5 : 0.5 - u * 0.5
-}
-
-// Pose of the leaf's parent group while the sheet `slot` steps from the
-// front turns in direction `dir` (slot 0 for dir=+1, -1 for dir=-1 — i.e.
-// the source sheet's stack slot before the turn). The leaf surface is
-// generated in this frame, so at t=0/t=1 it coincides with the resting
-// halves of the sheet at that pose (see leafPointUV). Both endpoints
-// share one pose — the fold never moves; only the surfaces underneath
-// recede/advance.
-export function turnLeafPose(slot: number, dir: 1 | -1): Pose {
-  return stackPose(dir > 0 ? slot : slot + 1)
-}
-
-// Which resting half-surface the leaf coincides with at a motion endpoint:
-// dir=+1 lifts the 'right' half (t=0) and lands it as the 'left' half (t=1);
-// dir=-1 mirrors. Use with halfPointUV (mirroring u for 'left').
-export function turnEndpointHalf(t: 0 | 1, dir: 1 | -1): 'left' | 'right' {
-  const onLeft = dir > 0 ? t === 1 : t === 0
-  return onLeft ? 'left' : 'right'
-}
-
-// Pose + texture range of a resting half-sheet at stack slot d — the
-// counterpart of turnLeafPose for the stationary surfaces.
-export function restingHalf(
-  d: number,
-  side: 'left' | 'right',
-): { pose: Pose; side: 'left' | 'right'; uRange: [number, number] } {
-  return {
-    pose: stackPose(d),
-    side,
-    uRange: side === 'left' ? [0, 0.5] : [0.5, 1],
-  }
-}
-
-// Linear pose interpolation (all five fields) for captured→target handoffs.
-export function lerpPose(a: Pose, b: Pose, t: number): Pose {
-  return {
-    x: a.x + (b.x - a.x) * t,
-    y: a.y + (b.y - a.y) * t,
-    z: a.z + (b.z - a.z) * t,
-    rotY: a.rotY + (b.rotY - a.rotY) * t,
-    rotZ: a.rotZ + (b.rotZ - a.rotZ) * t,
-  }
-}
-
-// === triangulated grids =====================================================
-// Vertex grids for BufferGeometry construction: positions in the surface's
-// local frame, UVs in the continuous-page convention, triangle indices
-// wound CCW seen from +z. The scene builds BufferGeometry from these
-// (computeVertexNormals afterwards); keeping three.js out of this file
-// leaves the math unit-testable under jsdom.
-
-export interface SheetGrid {
-  positions: Float32Array // (rows+1)×(cols+1) xyz triples
-  uvs: Float32Array // same count, uv pairs
-  indices: Uint32Array // rows×cols×2 triangles
-  cols: number
-  rows: number
-}
-
-function buildGrid(
-  cols: number,
-  rows: number,
-  point: (u: number, v: number) => [number, number, number],
-  texU: (u: number) => number,
-): SheetGrid {
-  const positions = new Float32Array((cols + 1) * (rows + 1) * 3)
-  const uvs = new Float32Array((cols + 1) * (rows + 1) * 2)
-  const indices = new Uint32Array(cols * rows * 6)
-  for (let j = 0; j <= rows; j++) {
-    const v = j / rows
-    for (let i = 0; i <= cols; i++) {
-      const u = i / cols
-      const k = j * (cols + 1) + i
-      const [x, y, z] = point(u, v)
-      positions[k * 3] = x
-      positions[k * 3 + 1] = y
-      positions[k * 3 + 2] = z
-      uvs[k * 2] = texU(u)
-      uvs[k * 2 + 1] = 1 - v
-    }
-  }
-  let n = 0
-  const at = (i: number, j: number) => j * (cols + 1) + i
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const a = at(i, j)
-      const b = at(i + 1, j)
-      const c = at(i, j + 1)
-      const d = at(i + 1, j + 1)
-      indices[n++] = a
-      indices[n++] = d
-      indices[n++] = b
-      indices[n++] = a
-      indices[n++] = c
-      indices[n++] = d
-    }
-  }
-  return { positions, uvs, indices, cols, rows }
-}
-
-// Resting surface grid. side 'left'/'right' give the two explicit
-// half-sheets (fold included in both at u/v edge), 'full' the whole sheet.
-// UVs always span the shared page texture — never [0,1] per half.
-export function sheetGrid(side: SheetSide = 'full', cols = 32, rows = 16): SheetGrid {
-  if (side === 'full') return buildGrid(cols, rows, sheetPointUV, (u) => u)
-  return buildGrid(
-    cols,
-    rows,
-    (u, v) => halfPointUV(side, u, v),
-    (u) => (side === 'left' ? u * 0.5 : 0.5 + u * 0.5),
-  )
-}
-
-// Turning-leaf rest grid in leaf space: flat, hinge at x=0, free edge at
-// x=HALF_W. uv.x holds the raw leaf parameter 0→1 — remap per face with
-// leafTexU('front'|'back', u). Deform every frame by rewriting positions
-// with leafPointUV, then computeVertexNormals.
-export function leafGrid(cols = 32, rows = 16): SheetGrid {
-  return buildGrid(
-    cols,
-    rows,
-    (u, v) => [u * HALF_W, PAGE_H / 2 - v * PAGE_H, 0],
-    (u) => u,
-  )
 }
 
 // === perimeter / outline samplers ===========================================
@@ -363,7 +228,7 @@ export function leafGrid(cols = 32, rows = 16): SheetGrid {
 export interface SheetOutlineSpec {
   // Which surface to trace. Half sheets include their fold edge as the
   // closing segment unless `hinge` is false.
-  side?: SheetSide
+  side?: 'left' | 'right' | 'full'
   // Sample count per straight edge segment (default 8).
   edgeSteps?: number
   // Sample count per rounded corner arc (default 6).
@@ -398,17 +263,6 @@ const arc = (
     const a = a0 + ((a1 - a0) * k) / n
     pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)])
   }
-}
-
-// Number of points sheetOutline returns for a spec — size buffers with
-// (sheetOutlineCount(spec) + 1) * 3 floats for a closed packed loop.
-export function sheetOutlineCount(spec: SheetOutlineSpec = {}): number {
-  const e = spec.edgeSteps ?? 8
-  const c = spec.cornerSteps ?? 6
-  const side = spec.side ?? 'full'
-  // The first corner seeds the path, then each segment appends its count.
-  if (side === 'full') return 1 + 4 * e + 4 * c
-  return 1 + (spec.hinge === false ? 3 : 4) * e + 2 * c
 }
 
 // Ordered 2D boundary loop in sheet space (x right, y up), clockwise
@@ -463,6 +317,7 @@ export function sheetOutline(spec: SheetOutlineSpec = {}): [number, number][] {
   arc(pts, -cx, -cy, r, -Math.PI / 2, -Math.PI, c)
   edge(pts, -w, -cy, -w, cy, e)
   arc(pts, -cx, cy, r, Math.PI, Math.PI / 2, c)
+  edge(pts, -cx, h, -cx, h, e)
   return pts
 }
 
@@ -471,44 +326,6 @@ export function sheetOutline(spec: SheetOutlineSpec = {}): [number, number][] {
 // circle, edge samples inside it), so the outline rides the sheet.
 export function sheetOutline3D(spec: SheetOutlineSpec = {}): [number, number, number][] {
   return sheetOutline(spec).map(([x, y]) => sheetPoint(x, y))
-}
-
-// Perimeter of the turning leaf at progress t, evaluated through the same
-// curl deformation as leafPointUV — the outline follows the deformed
-// vertices every frame. Leaf space: hinge at x=0, free edge at x=HALF_W.
-// At the endpoints this equals the corresponding half's sheetOutline3D
-// (mirrored for 'left') plus TURN_LIFT — see leafPointUV.
-export function leafOutline3D(
-  t: number,
-  dir: 1 | -1,
-  curl = 0,
-  spec: SheetOutlineSpec = {},
-): [number, number, number][] {
-  return sheetOutline({ ...spec, side: 'right', hinge: true }).map(([x, y]) =>
-    curlPoint(x, y, HALF_W, t, dir, curl),
-  )
-}
-
-// Per-frame fast path: rewrite a packed closed outline buffer in place.
-// `dst` must hold at least (sheetOutlineCount(spec) + 1) * 3 floats; the
-// leaf outline is always closed (the moving half's fold edge is a real
-// silhouette). Returns the float count written — feed dst.subarray(0, n)
-// to LineGeometry.setPositions or copy into the instanced segment buffer.
-export function writeLeafOutline(
-  t: number,
-  dir: 1 | -1,
-  curl: number,
-  dst: Float32Array,
-  spec: SheetOutlineSpec = {},
-): number {
-  const ring = leafOutline3D(t, dir, curl, spec)
-  for (let i = 0; i <= ring.length; i++) {
-    const p = ring[i % ring.length]
-    dst[i * 3] = p[0]
-    dst[i * 3 + 1] = p[1]
-    dst[i * 3 + 2] = p[2]
-  }
-  return (ring.length + 1) * 3
 }
 
 // Flat xyz strip for LineGeometry.setPositions / BufferGeometry positions.
@@ -529,36 +346,10 @@ export function packOutline(
   return out
 }
 
-// Resolution hook for fat-line materials (three/addons LineMaterial, used
-// by Line2/LineSegments2 — already vendored in this codebase). Call once
-// after creation and on every canvas resize with the CSS pixel size; the
-// linewidth uniform is in CSS px and goes stale without this. Duck-typed
-// so layout.ts stays free of three.js imports.
-export function setOutlineResolution(
-  material: { resolution: { set(x: number, y: number): void } },
-  cssWidth: number,
-  cssHeight: number,
-): void {
-  material.resolution.set(cssWidth, cssHeight)
-}
-
 // === journal sheet outline material contract ================================
-// Recommended parameters for the scene's dedicated journal outline
-// LineMaterial (journal only — shelf keeps its own outlineMaterial):
-//   new LineMaterial({
-//     color: SHEET_OUTLINE_COLOR, linewidth: SHEET_OUTLINE_PX,
-//     transparent: true, opacity: SHEET_OUTLINE_OPACITY,
-//     depthTest: true, depthWrite: false, toneMapped: false,
-//     polygonOffset: true, polygonOffsetFactor: OUTLINE_POLYGON_OFFSET.factor,
-//     polygonOffsetUnits: OUTLINE_POLYGON_OFFSET.units,
-//   })
-// and line.renderOrder = OUTLINE_RENDER_ORDER. Depth testing stays ON so
-// rear-sheet borders never draw through the front sheet; the small
-// negative bias pulls the ink a hair in front of its own paper, avoiding
-// the white dashed z-fight ladder at grazing angles while staying behind
-// geometry genuinely in front.
+// Parameters for the scene's dedicated journal outline LineMaterial (journal
+// only — shelf keeps its own outlineMaterial). Depth testing stays ON so
+// rear-sheet borders never draw through the front sheet.
 export const SHEET_OUTLINE_PX = 1.3 // ~1–1.5 CSS px
 export const SHEET_OUTLINE_COLOR = 0x453c31 // dark warm grey
 export const SHEET_OUTLINE_OPACITY = 0.55
-export const OUTLINE_POLYGON_OFFSET = { factor: -1, units: -1 } as const
-export const OUTLINE_RENDER_ORDER = 2

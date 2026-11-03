@@ -1,19 +1,22 @@
 import * as THREE from 'three'
 import type { InkEngine, Page } from '../types'
 import {
-  PAGE_W, PAGE_H, PAGE_STEP, sheetCameraDistance,
-  rowPoseFocus, rowHoverFocus, canTurnStack, curlPoint,
-  STACK_LEAN, stackPose, stackHoverPose, stackRestY,
-  ROW_LEAN, rowRestY, sheetPoint,
+  PAGE_W, PAGE_H, PAGE_STEP, sheetCameraDistance, HALF_W,
+  rowPoseFocus, canTurnStack, leafTexU,
+  STACK_LEAN, stackRestY, leafRestAngle, leafRestZ, leafRestFan, leafRestSink,
+  ROW_LEAN, rowRestY, sheetPoint, sheetOutline3D, packOutline,
+  leafPointTheta, leafOutlineTheta,
+  SHEET_OUTLINE_COLOR, SHEET_OUTLINE_OPACITY, SHEET_OUTLINE_PX,
   type Pose,
 } from './layout'
 import {
   rubberScroll, flickVelocity, momentumStep, MOMENTUM_MIN,
 } from './gesture'
-import { pageCanvas, repaintInto } from './pageTexture'
+import { pageCanvas, repaintInto, SHEET_SHADE } from './pageTexture'
+import { createPageTurn } from './pageTurn'
 import {
   createRenderer, addStudioRig, createComposer, detectQuality, FramePump,
-  gridEdgeLoop, outlineMaterial, type Quality,
+  outlineMaterial, type Quality,
 } from './stage'
 import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
@@ -30,20 +33,37 @@ export interface SceneEvents {
   onFlipDone?: (dir: 1 | -1) => void
 }
 
-const FLIP_TIME = 0.62
 const TEX_W = 1024
 // The free edge trails the spine mid-turn — a paper bend, not a plank.
 const LEAF_CURL = 0.4
 
-const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2)
 const damp = (rate: number, dt: number) => 1 - Math.exp(-rate * dt)
 
 type PageMesh = THREE.Mesh<THREE.BoxGeometry, THREE.Material[]>
 type PaperMaterial = THREE.MeshStandardMaterial
 type LeafMesh = THREE.Mesh<THREE.PlaneGeometry, PaperMaterial>
 
+// One leaf = one half-sheet hinged at the centre spine (local x = 0, free
+// edge at local x = HALF_W). Leaf k shows page k-1's right half on its front
+// face and page k's left half on its back face, so spread `cur` is always
+// leaf[cur].back + leaf[cur+1].front — and a page turn rotates one leaf,
+// never hides or re-textures anything.
+interface LeafEntry {
+  front: LeafMesh
+  back: LeafMesh
+  outline: Line2
+  rest: Float32Array // undeformed vertex xyz, shared by both face geos
+  k: number
+  theta: number
+  hingeZ: number
+  fan: number
+  sink: number
+  curl: number
+}
+
 interface PageEntry {
   mesh: PageMesh
+  outline: Line2
   id: string
   page: Page
 }
@@ -56,6 +76,12 @@ interface TexEntry {
   edgeShade?: boolean
 }
 
+interface TexJob {
+  mat: PaperMaterial
+  page: Page
+  order: number
+}
+
 export class JournalScene {
   private renderer: THREE.WebGLRenderer
   private stage: HTMLElement | null
@@ -64,44 +90,35 @@ export class JournalScene {
   private camera: THREE.PerspectiveCamera
   private raycaster = new THREE.Raycaster()
   private stackGroup = new THREE.Group()
+  private rowGroup = new THREE.Group()
   private texCache = new Map<string, TexEntry>()
-  private sheets: PageEntry[] = []
-  private turnFront!: LeafMesh
-  private turnBack!: LeafMesh
+  private sheets: PageEntry[] = [] // overview cards
+  private leaves: LeafEntry[] = []
   private edgeMat: PaperMaterial | null = null
   private inkMat = outlineMaterial()
+  // The spine crease gets its own material — always drawn, but softer than
+  // the sheet outlines so it reads as a valley, not a border.
+  private foldMat = outlineMaterial()
   private bump: THREE.Texture | null = null
   private blankTex: THREE.Texture | null = null
   // Pages rasterize into textures a slice at a time after setPages — see tick.
-  private texJobs: { mesh: PageMesh; page: Page }[] = []
+  private texJobs: TexJob[] = []
   // Resolved once shaders are compiled and the initial texture queue has
   // drained; the view reveals the canvas after its first complete frame.
   readonly ready: Promise<void>
   private readyResolve!: () => void
   private compiled = false
   private readyDone = false
-  private turnGroup = new THREE.Group()
-  private turnBase!: Float32Array
-  private turnOutline!: Line2
-  private leafRing: number[] = []
   private mode: 'stack' | 'overview' = 'stack'
   private pages: Page[] = []
-  // Front sheet index in the stack; stackPos trails it smoothly.
+  // Front spread index; stackPos trails it smoothly for pile easing.
   private cur = 0
   private stackPos = 0
-  // Sheet hidden under the turning leaf while a turn is in flight.
-  private hideIdx: number | null = null
-  private revealIdx: number | null = null
-  private keepLeft = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0)
-  private keepRight = new THREE.Plane(new THREE.Vector3(1, 0, 0), 0)
-  private hovered: PageEntry | null = null
+  private turn = createPageTurn({ canTurn: canTurnStack })
+  private hoveredLeaf: LeafEntry | null = null
+  private hoveredLeafHit: 'front' | 'back' | null = null
+  private hoveredCard: PageEntry | null = null
   private lastHoverId: string | null = null
-  // 'idle' → 'manual' (leaf follows the finger) → 'run' (finish the turn) or
-  // 'cancel' (animate back onto its pile). 'run' is also entered directly
-  // by button/wheel flips.
-  private turnState: 'idle' | 'manual' | 'run' | 'cancel' = 'idle'
-  private flipT = 0
-  private flipDir: 1 | -1 = 1
   private drag: {
     id: number
     x0: number
@@ -143,8 +160,13 @@ export class JournalScene {
     this.stage = canvas.parentElement
     this.ready = new Promise((res) => { this.readyResolve = res })
     this.renderer = createRenderer(canvas, q)
-    this.renderer.localClippingEnabled = true
-    this.inkMat.opacity = 0.08
+    this.inkMat.color.setHex(SHEET_OUTLINE_COLOR)
+    this.inkMat.opacity = SHEET_OUTLINE_OPACITY
+    this.inkMat.linewidth = SHEET_OUTLINE_PX
+    this.foldMat.color.setHex(SHEET_OUTLINE_COLOR)
+    this.foldMat.opacity = 0.3
+    this.foldMat.linewidth = SHEET_OUTLINE_PX
+    this.foldMat.transparent = true
     this.camera = new THREE.PerspectiveCamera(36, 1, 0.1, 50)
     this.camHome.set(0, 0.5, 4.6)
     this.camera.position.copy(this.camHome)
@@ -163,11 +185,12 @@ export class JournalScene {
 
     this.stackGroup.rotation.x = STACK_LEAN
     this.stackGroup.position.y = stackRestY()
-    this.turnGroup.rotation.x = STACK_LEAN
-    this.turnGroup.position.set(0, stackRestY(), 0.006)
-    this.scene.add(this.stackGroup, this.turnGroup)
+    this.rowGroup.rotation.x = ROW_LEAN
+    this.rowGroup.position.y = rowRestY()
+    this.rowGroup.visible = false
+    this.scene.add(this.stackGroup, this.rowGroup)
+    this.buildFoldLine()
 
-    this.buildLeaf()
     this.unsubImages = onImageLoaded(() => this.refreshTextures())
 
     canvas.addEventListener('pointerdown', this.onPointerDown)
@@ -198,32 +221,20 @@ export class JournalScene {
     return g
   }
 
-  // Turning leaf stays a subdivided plane — the curl deforms it per frame.
-  // x runs 0..w with the spine (the sheet's left edge) at local x = 0.
+  // A leaf is a subdivided half-plane, hinge at local x = 0.
   private leafGeometry() {
-    const g = new THREE.PlaneGeometry(PAGE_W / 2, PAGE_H, 32, 32)
-    g.translate(PAGE_W / 4, 0, 0)
+    const g = new THREE.PlaneGeometry(HALF_W, PAGE_H, 32, 16)
+    g.translate(HALF_W / 2, 0, 0)
     return g
   }
 
-  // The leaf can't use EdgesGeometry — that would freeze the border on the
-  // flat rest pose while the curl deforms the mesh. A Line2 strip over the
-  // grid's perimeter vertices stays glued to the edge as long as its
-  // instanced segment buffer is re-mirrored each frame (see tick).
-  private leafOutline(geo: THREE.PlaneGeometry) {
-    const { widthSegments: sx, heightSegments: sy } = geo.parameters
-    this.leafRing = gridEdgeLoop(sx, sy)
-    const src = geo.attributes.position.array as Float32Array
-    const pts = new Float32Array((this.leafRing.length + 1) * 3)
-    for (let i = 0; i <= this.leafRing.length; i++) {
-      const v = this.leafRing[i % this.leafRing.length] * 3
-      pts[i * 3] = src[v]
-      pts[i * 3 + 1] = src[v + 1]
-      pts[i * 3 + 2] = src[v + 2]
-    }
+  private makeOutline(points: [number, number, number][], closed = true) {
     const g = new LineGeometry()
-    g.setPositions(pts)
+    g.setPositions(packOutline(points, closed))
     const line = new Line2(g, this.inkMat)
+    // Clear the sheet's thin front face without disabling occlusion by
+    // other sheets. The bias lives with this path, not the shared shelf rig.
+    line.position.z = 0.006
     line.renderOrder = 2
     line.frustumCulled = false
     line.raycast = () => {}
@@ -287,9 +298,8 @@ export class JournalScene {
     return this.edgeMat
   }
 
-  // Box page: textured front (+z face, material index 4), paper back and
-  // edges — so the leaf reads as a sheet, not a plane. The back face doubles
-  // as the turned sheet's visible side on the left pile.
+  // Overview card: textured front (+z face, material index 4), paper back
+  // and edges — the same thin box the stack used to show per page.
   private makePage(map: THREE.Texture | null) {
     const face = this.pageMaterial(map, THREE.FrontSide)
     const back = this.pageMaterial(null, THREE.FrontSide)
@@ -307,21 +317,64 @@ export class JournalScene {
     return mesh as LeafMesh
   }
 
-  private buildLeaf() {
-    const turnGeo = this.leafGeometry()
-    this.turnBase = (turnGeo.attributes.position.array as Float32Array).slice()
-    this.turnFront = this.makeLeaf(null, THREE.FrontSide, turnGeo)
-    this.turnBack = this.makeLeaf(null, THREE.BackSide, turnGeo.clone())
-    const frontUv = turnGeo.attributes.uv
-    const backUv = this.turnBack.geometry.attributes.uv
+  // A faint crease line riding the spine between the two open halves —
+  // static, so it stays put while a leaf pivots over it.
+  private buildFoldLine() {
+    const g = new LineGeometry()
+    const pts: number[] = []
+    for (let i = 0; i <= 16; i++) {
+      const y = -PAGE_H / 2 + (PAGE_H * i) / 16
+      pts.push(0, y, 0.004)
+    }
+    g.setPositions(pts)
+    const line = new Line2(g, this.foldMat)
+    line.renderOrder = 2
+    line.frustumCulled = false
+    line.raycast = () => {}
+    this.stackGroup.add(line)
+  }
+
+  private buildLeaf(k: number): LeafEntry {
+    const frontGeo = this.leafGeometry()
+    const backGeo = frontGeo.clone()
+    const rest = (frontGeo.attributes.position.array as Float32Array).slice()
+    const frontUv = frontGeo.attributes.uv
+    const backUv = backGeo.attributes.uv
     for (let i = 0; i < frontUv.count; i++) {
       const u = frontUv.getX(i)
-      frontUv.setX(i, 0.5 + u * 0.5)
-      backUv.setX(i, (1 - u) * 0.5)
+      frontUv.setX(i, leafTexU('front', u))
+      backUv.setX(i, leafTexU('back', u))
     }
-    this.turnOutline = this.leafOutline(turnGeo)
-    this.turnGroup.add(this.turnFront, this.turnBack, this.turnOutline)
-    this.turnGroup.visible = false
+    const front = this.makeLeaf(null, THREE.FrontSide, frontGeo)
+    const back = this.makeLeaf(null, THREE.BackSide, backGeo)
+    front.userData.page = this.pages[k - 1] ?? null
+    back.userData.page = this.pages[k] ?? null
+    const outline = this.makeOutline(leafOutlineTheta(0, 0))
+    front.add(outline)
+    this.stackGroup.add(front, back)
+    return { front, back, outline, rest, k, theta: 0, hingeZ: 0, fan: 0, sink: 0, curl: 0 }
+  }
+
+  private deformLeaf(leaf: LeafEntry) {
+    for (const geo of [leaf.front.geometry, leaf.back.geometry]) {
+      const pos = geo.attributes.position
+      const rest = leaf.rest
+      for (let i = 0; i < pos.count; i++) {
+        const [x, y, z] = leafPointTheta(
+          rest[i * 3], rest[i * 3 + 1], HALF_W,
+          leaf.theta, leaf.curl, leaf.fan, leaf.sink,
+        )
+        pos.setXYZ(i, x, y, z)
+      }
+      pos.needsUpdate = true
+      geo.computeVertexNormals()
+      geo.computeBoundingSphere()
+    }
+    leaf.outline.geometry.setPositions(packOutline(
+      leafOutlineTheta(leaf.theta, leaf.curl, leaf.fan, leaf.sink),
+    ))
+    leaf.front.position.z = leaf.hingeZ
+    leaf.back.position.z = leaf.hingeZ
   }
 
   // --- textures -----------------------------------------------------------
@@ -365,8 +418,8 @@ export class JournalScene {
   setMode(mode: 'stack' | 'overview') {
     this.pump.wake()
     this.mode = mode
-    this.endTurn()
-    this.hovered = null
+    this.turn.reset()
+    this.hoveredLeaf = this.hoveredCard = null
     this.vel = 0
     this.stackPos = this.cur
     this.camHome.set(
@@ -375,6 +428,8 @@ export class JournalScene {
       mode === 'stack' ? sheetCameraDistance(this.camera.aspect) : 4.6,
     )
     this.lookTarget.set(0, mode === 'stack' ? -0.2 : -0.15, 0)
+    this.stackGroup.visible = mode === 'stack'
+    this.rowGroup.visible = mode === 'overview'
     if (mode === 'overview') {
       // Center the row on the sheet the stack was showing.
       this.rowTarget = this.cur - (this.sheets.length - 1) / 2
@@ -383,7 +438,7 @@ export class JournalScene {
 
   setPage(idx: number) {
     this.pump.wake()
-    this.endTurn()
+    this.turn.reset()
     this.cur = Math.max(0, Math.min(this.pages.length - 1, idx))
     this.stackPos = this.cur
   }
@@ -397,112 +452,89 @@ export class JournalScene {
 
   setPages(pages: Page[]) {
     this.pump.wake()
-    this.endTurn()
+    this.turn.reset()
     this.pages = pages
     this.cur = Math.max(0, Math.min(pages.length - 1, this.cur))
     this.stackPos = Math.max(0, Math.min(pages.length - 1, this.stackPos))
-    // (Re)build the sheet stack to match the page list.
+
+    for (const leaf of this.leaves) {
+      this.stackGroup.remove(leaf.front, leaf.back)
+      leaf.front.geometry.dispose()
+      leaf.back.geometry.dispose()
+      leaf.front.material.dispose()
+      leaf.back.material.dispose()
+    }
+    this.leaves = []
+    // Leaf k is the hinge between spread k-1 (right half on its front) and
+    // spread k (left half on its back): N spreads need N+1 leaves.
+    for (let k = 0; k <= pages.length; k++) {
+      const leaf = this.buildLeaf(k)
+      leaf.theta = leafRestAngle(k, this.cur)
+      leaf.hingeZ = leafRestZ(k, this.cur)
+      leaf.fan = leafRestFan(k, this.cur)
+      leaf.sink = leafRestSink(k, this.cur)
+      this.deformLeaf(leaf)
+      this.leaves.push(leaf)
+    }
+
+    // (Re)build the overview card row to match the page list.
     for (const p of this.sheets) {
-      this.stackGroup.remove(p.mesh)
+      this.rowGroup.remove(p.mesh)
       p.mesh.traverse((o) => {
         if (o !== p.mesh && o instanceof THREE.Mesh) o.geometry.dispose()
       })
       p.mesh.geometry.dispose()
       p.mesh.material.forEach((m) => m.dispose())
     }
-    this.sheets = []
     this.sheets = pages.map((page, i) => {
       const mesh = this.makePage(null)
-      const pose = this.mode === 'stack' ? stackPose(i - this.cur) : rowPoseFocus(i, this.cur)
+      const outline = this.makeOutline(sheetOutline3D())
+      mesh.add(outline)
+      const pose = rowPoseFocus(i, this.cur)
       mesh.position.set(pose.x, pose.y, pose.z)
       mesh.rotation.set(0, pose.rotY, pose.rotZ)
       mesh.userData.i = i
-      this.stackGroup.add(mesh)
-      return { mesh, id: page.id, page }
+      this.rowGroup.add(mesh)
+      return { mesh, outline, id: page.id, page }
     })
-    this.stackGroup.position.y = this.mode === 'stack' ? stackRestY() : rowRestY()
-    this.stackGroup.rotation.x = this.mode === 'stack' ? STACK_LEAN : ROW_LEAN
     // Rasterizing N pages up front froze the journal-open animation, so
-    // meshes go up as blank paper and the texture queue inks them a slice
-    // per frame, starting from the sheet under the focus.
+    // faces go up as blank paper and the texture queue inks them a slice
+    // per frame, starting from the faces nearest the focus.
     const focus = this.mode === 'stack'
       ? this.stackPos
       : this.rowTarget + (pages.length - 1) / 2
-    this.texJobs = this.sheets
-      .slice()
-      .sort((a, b) => Math.abs(a.mesh.userData.i - focus) - Math.abs(b.mesh.userData.i - focus))
-      .map((e) => ({ mesh: e.mesh, page: e.page }))
-    this.hovered = null
+    const jobs: TexJob[] = []
+    for (const leaf of this.leaves) {
+      const fp = leaf.front.userData.page as Page | null
+      const bp = leaf.back.userData.page as Page | null
+      if (fp) jobs.push({ mat: leaf.front.material, page: fp, order: Math.abs(leaf.k - 1 - focus) })
+      if (bp) jobs.push({ mat: leaf.back.material, page: bp, order: Math.abs(leaf.k - focus) })
+    }
+    for (const e of this.sheets) {
+      jobs.push({
+        mat: e.mesh.material[4] as PaperMaterial,
+        page: e.page,
+        order: Math.abs(e.mesh.userData.i - focus) + 0.5,
+      })
+    }
+    this.texJobs = jobs.sort((a, b) => a.order - b.order)
+    this.hoveredLeaf = this.hoveredCard = null
     const lim = (pages.length - 1) / 2
     this.rowTarget = Math.max(-lim, Math.min(lim, this.rowTarget))
     this.rowPos = Math.max(-lim, Math.min(lim, this.rowPos))
   }
 
-  // Animated sheet turn. The leaf carries the source page on its front face;
-  // its back is blank paper — turned sheets lie face-down on the left pile.
+  // A page turn is one leaf rotating across the spine. Leaf max(src,dst):
+  // forward lifts the first upcoming leaf off the right pile, backward
+  // pulls the boundary leaf back off the left pile.
   flip(dir: 1 | -1): boolean {
-    if (this.turnState !== 'idle' || this.mode !== 'stack') return false
-    if (!this.beginFlip(dir)) return false
-    this.flipT = 0
-    this.turnState = 'run'
-    return true
-  }
-
-  // Texture/hide setup shared by button flips and finger-driven turns.
-  // Returns false when there is no sheet to turn in that direction.
-  private beginFlip(dir: 1 | -1): boolean {
+    if (this.mode !== 'stack' || !this.turn.flip(dir, this.cur, this.pages.length)) return false
     this.pump.wake()
-    const s = this.cur
-    if (!canTurnStack(dir, s, this.pages.length)) return false
-    const leafPage = dir > 0 ? this.pages[s] : this.pages[s - 1]
-    if (!leafPage) return false
-
-    const nextPage = dir > 0 ? this.pages[s + 1] : this.pages[s]
-    this.turnFront.material.map = this.texFor(leafPage, true) ?? this.placeholder()
-    this.turnBack.material.map = this.texFor(nextPage, true) ?? this.placeholder()
-    this.turnFront.userData.id = leafPage.id
-
-    // The leaf replaces its sheet mesh for the duration of the turn.
-    this.hideIdx = dir > 0 ? s : s - 1
-    this.revealIdx = this.hideIdx + 1
-    const left = this.sheets[this.hideIdx].mesh
-    const right = this.sheets[this.revealIdx].mesh
-    for (const [mesh, plane] of [[left, this.keepLeft], [right, this.keepRight]] as const) {
-      mesh.position.set(0, 0, 0)
-      mesh.rotation.set(0, 0, 0)
-      // Faces are unique; edge material is shared across sheets.
-      for (const material of mesh.material.slice(4)) {
-        material.clippingPlanes = [plane]
-        material.clipShadows = true
-      }
-    }
-    this.hovered = null
-
-    this.flipDir = dir
-    this.turnGroup.visible = true
     return true
-  }
-
-  private endTurn() {
-    this.turnState = 'idle'
-    this.turnGroup.visible = false
-    for (const idx of [this.hideIdx, this.revealIdx]) {
-      if (idx === null || !this.sheets[idx]) continue
-      // Snap to the pile/front pose the leaf just covered — easing in from
-      // the pre-turn rotation would flash the sheet face-up for a frame.
-      const m = this.sheets[idx].mesh
-      for (const material of m.material.slice(4)) material.clippingPlanes = null
-      const pose = this.poseFor(idx)
-      m.position.set(pose.x, pose.y, pose.z)
-      m.rotation.set(0, pose.rotY, pose.rotZ)
-      m.visible = true
-    }
-    this.hideIdx = null
-    this.revealIdx = null
   }
 
   get busy() {
-    return this.turnState !== 'idle'
+    return this.turn.busy
   }
 
   dispose() {
@@ -529,6 +561,8 @@ export class JournalScene {
       }
     })
     this.inkMat.dispose()
+    this.foldMat.dispose()
+    this.bump?.dispose()
     this.post.dispose()
     this.renderer.dispose()
   }
@@ -556,6 +590,7 @@ export class JournalScene {
     this.renderer.setSize(w, h, false)
     this.post.setSize(w, h)
     this.inkMat.resolution.set(w, h)
+    this.foldMat.resolution.set(w, h)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     if (this.mode === 'stack') this.camHome.z = sheetCameraDistance(this.camera.aspect)
@@ -595,7 +630,7 @@ export class JournalScene {
       if (Math.abs(dx) > 6) this.drag.moved = true
       if (this.drag.moved) {
         this.clickWasDrag = true
-        this.hovered = null
+        this.hoveredLeaf = this.hoveredCard = null
         this.canvas.style.cursor = 'grabbing'
         if (this.mode === 'overview') {
           const lim = (this.sheets.length - 1) / 2
@@ -610,20 +645,23 @@ export class JournalScene {
   }
 
   // Stack mode: once a decisively-horizontal drag is underway, grab the
-  // next/previous leaf and let it track the finger (turnState 'manual').
+  // next/previous leaf and let it track the finger (turn phase 'dragging').
   private dragTurn(e: PointerEvent, dx: number) {
     const drag = this.drag!
-    if (this.turnState === 'idle' && !drag.turnDir) {
+    if (!this.busy && !drag.turnDir) {
       const ady = Math.abs(e.clientY - drag.y0)
       if (Math.abs(dx) > 12 && Math.abs(dx) > ady * 1.3) {
         const dir = dx < 0 ? 1 : -1
-        drag.turnDir = this.beginFlip(dir) ? dir : 2 // 2 = tried, no leaf there
-        if (drag.turnDir !== 2) this.turnState = 'manual'
+        drag.turnDir = this.turn.begin(dir, this.cur, this.pages.length) ? dir : 2
       }
     }
-    if (this.turnState === 'manual') {
+    if (this.turn.phase === 'dragging') {
       const span = Math.max(140, this.canvas.getBoundingClientRect().width * 0.55)
-      this.flipT = Math.min(0.98, Math.max(0, (-dx * this.flipDir - 12) / span))
+      const signed = -Math.sign(dx) * Math.max(0, Math.abs(dx) - 12) / span
+      // Reversal under the finger swaps the live leaf inside the machine —
+      // the leaf loop then drives the other boundary leaf instead, and the
+      // released one simply eases back onto its pile.
+      this.turn.drag(signed)
     }
   }
 
@@ -639,10 +677,10 @@ export class JournalScene {
       this.vel = -flickVelocity(this.trail, e.timeStamp) * this.pxPerIndex
       this.rowTarget = Math.max(-lim, Math.min(lim, this.rowTarget))
     }
-    if (this.turnState === 'manual') {
+    if (this.turn.phase === 'dragging') {
       // Past half-way — or a fast enough flick — completes the turn.
-      const commit = flick && (this.flipT > 0.45 || (this.flipDir === 1 ? pv < -400 : pv > 400))
-      this.turnState = commit ? 'run' : 'cancel'
+      if (!flick) this.turn.cancel()
+      else this.turn.release(this.turn.progress >= 0.45 || pv * this.turn.dir < -400)
     }
     this.drag = null
     this.trail = []
@@ -659,7 +697,7 @@ export class JournalScene {
 
   private clearHover() {
     this.pump.wake()
-    this.hovered = null
+    this.hoveredLeaf = this.hoveredCard = null
     this.canvas.style.cursor = ''
   }
 
@@ -669,7 +707,9 @@ export class JournalScene {
       return
     }
     this.pick(e.offsetX, e.offsetY)
-    const id = this.hovered?.id
+    const id = this.mode === 'stack'
+      ? this.hoveredLeafPageId()
+      : this.hoveredCard?.id ?? null
     if (id) this.events.onPageClick?.(id)
   }
 
@@ -698,36 +738,63 @@ export class JournalScene {
     return new THREE.Vector2((x / r.width) * 2 - 1, -(y / r.height) * 2 + 1)
   }
 
+  private hoveredLeafPageId(): string | null {
+    if (!this.hoveredLeaf) return null
+    const hit = this.hoveredLeafHit
+    if (!hit) return null
+    const page = hit === 'front'
+      ? this.hoveredLeaf.front.userData.page as Page | null
+      : this.hoveredLeaf.back.userData.page as Page | null
+    return page?.id ?? null
+  }
+
   private pick(x: number, y: number) {
     if (this.busy) {
-      this.hovered = null
+      this.hoveredLeaf = this.hoveredCard = null
       return
     }
     this.raycaster.setFromCamera(this.ndc(x, y), this.camera)
+    if (this.mode === 'overview') {
+      const hit = this.raycaster
+        .intersectObjects(this.rowGroup.children, false)
+        .filter((h) => h.object.visible)[0]
+      this.hoveredCard = hit ? this.sheets[hit.object.userData.i] : null
+      this.hoveredLeaf = null
+      this.hoveredLeafHit = null
+      this.canvas.style.cursor = this.hoveredCard ? 'pointer' : ''
+      return
+    }
     const hit = this.raycaster
       .intersectObjects(this.stackGroup.children, false)
       .filter((h) => h.object.visible)[0]
-    const entry = hit ? this.sheets[hit.object.userData.i] : null
-    this.hovered = entry
-    this.canvas.style.cursor = entry ? 'pointer' : ''
-  }
-
-  // Effective stack focus: normally the damped front index; while a turn is
-  // in flight it slides with the leaf so the pile eases into place.
-  private effFocus(): number {
-    if (this.turnState === 'idle') return this.stackPos
-    const t = this.turnState === 'manual' ? this.flipT : easeInOut(this.flipT)
-    return this.cur + t * this.flipDir
-  }
-
-  private poseFor(i: number): Pose {
-    const entry = this.sheets[i]
-    if (this.mode === 'overview') {
-      const focus = this.rowPos + (this.sheets.length - 1) / 2
-      return entry === this.hovered ? rowHoverFocus(i, focus) : rowPoseFocus(i, focus)
+    this.hoveredCard = null
+    if (hit && hit.object instanceof THREE.Mesh) {
+      const leaf = this.leaves.find(
+        (l) => l.front === hit.object || l.back === hit.object,
+      )
+      this.hoveredLeaf = leaf ?? null
+      this.hoveredLeafHit = leaf
+        ? (hit.object === leaf.front ? 'front' : 'back')
+        : null
+    } else {
+      this.hoveredLeaf = null
+      this.hoveredLeafHit = null
     }
-    const d = i - this.effFocus()
-    return entry === this.hovered ? stackHoverPose(d) : stackPose(d)
+    this.canvas.style.cursor = this.hoveredLeafPageId() ? 'pointer' : ''
+  }
+
+  // Rest-pose focus for non-turning leaves: while a turn settles the piles
+  // pre-settle one depth toward the outcome; while dragging or idle they
+  // just track the (damped) front index.
+  private pileFocus(): number {
+    return this.turn.phase === 'settling'
+      ? (this.turn.settleTarget === 1 ? this.turn.dstIndex : this.turn.srcIndex)
+      : this.stackPos
+  }
+
+  private poseForCard(i: number): Pose {
+    const focus = this.rowPos + (this.sheets.length - 1) / 2
+    return rowPoseFocus(i, focus)
   }
 
   // Runs the scene one step and reports whether it is still moving — the
@@ -742,8 +809,8 @@ export class JournalScene {
       const t0 = performance.now()
       do {
         const job = this.texJobs.shift()!
-        const tex = this.texFor(job.page, true, true)
-        if (tex) (job.mesh.material[4] as PaperMaterial).map = tex
+        const tex = this.texFor(job.page, SHEET_SHADE.fold, SHEET_SHADE.edgeShade)
+        if (tex) job.mat.map = tex
       } while (this.texJobs.length && performance.now() - t0 < 8)
     }
     if (!this.readyDone && this.compiled && !this.texJobs.length) {
@@ -752,49 +819,72 @@ export class JournalScene {
     }
     if (!this.readyDone) moving = true
 
-    // Sheet-turn deformation. 'manual' tracks the finger raw; 'run' eases to
-    // completion; 'cancel' plays it back onto the pile it came from.
-    if (this.turnState !== 'idle') {
+    if (this.busy) {
       moving = true
-      if (this.turnState === 'run') this.flipT = Math.min(1, this.flipT + dt / FLIP_TIME)
-      else if (this.turnState === 'cancel') this.flipT = Math.max(0, this.flipT - dt / (FLIP_TIME * 0.65))
-      const t = this.turnState === 'manual' ? this.flipT : easeInOut(this.flipT)
-      const pos = this.turnFront.geometry.attributes.position
-      for (let i = 0; i < pos.count; i++) {
-        const bx = this.turnBase[i * 3]
-        const by = this.turnBase[i * 3 + 1]
-        const [px, py, pz] = curlPoint(bx, by, PAGE_W / 2, t, this.flipDir, LEAF_CURL)
-        pos.setXYZ(i, px, py, pz)
-        this.turnBack.geometry.attributes.position.setXYZ(i, px, py, pz)
-      }
-      pos.needsUpdate = true
-      this.turnFront.geometry.computeVertexNormals()
-      this.turnBack.geometry.attributes.position.needsUpdate = true
-      this.turnBack.geometry.computeVertexNormals()
-      // Fat lines bake endpoints into an instanced buffer — mirror the
-      // deformed ring so the leaf's ink border rides the curl.
-      const buf = (this.turnOutline.geometry.attributes.instanceStart as THREE.InterleavedBufferAttribute).data
-      const dst = buf.array as Float32Array
-      const src = pos.array as Float32Array
-      const ring = this.leafRing
-      for (let k = 0; k < ring.length; k++) {
-        const a = ring[k] * 3
-        const b = ring[(k + 1) % ring.length] * 3
-        dst[k * 6] = src[a]
-        dst[k * 6 + 1] = src[a + 1]
-        dst[k * 6 + 2] = src[a + 2]
-        dst[k * 6 + 3] = src[b]
-        dst[k * 6 + 4] = src[b + 1]
-        dst[k * 6 + 5] = src[b + 2]
-      }
-      buf.needsUpdate = true
-      if (this.turnState === 'run' && this.flipT >= 1) {
-        this.cur += this.flipDir
+      this.turn.tick(dt)
+      const result = this.turn.takeResult()
+      if (result) {
+        this.cur = result.index
         this.stackPos = this.cur
-        this.endTurn()
-        this.events.onFlipDone?.(this.flipDir)
-      } else if (this.turnState === 'cancel' && this.flipT <= 0) {
-        this.endTurn()
+        if (result.type === 'commit') this.events.onFlipDone?.(result.dir)
+      }
+    }
+
+    // Leaves: the turning leaf's angle is driven by turn progress; every
+    // other leaf eases toward its rest angle — there is no hidden state,
+    // the mesh the finger grabs is the mesh that lands.
+    if (this.mode === 'stack') {
+      const c = this.pileFocus()
+      const tl = this.busy ? Math.max(this.turn.srcIndex, this.turn.dstIndex) : -1
+      const k = damp(11, dt)
+      for (const leaf of this.leaves) {
+        let theta: number
+        let hingeZ: number
+        let fan: number
+        let sink: number
+        let curl: number
+        if (leaf.k === tl) {
+          const t = this.turn.progress
+          const a = leafRestAngle(leaf.k, this.turn.srcIndex)
+          const b = leafRestAngle(leaf.k, this.turn.dstIndex)
+          theta = a + (b - a) * t
+          const za = leafRestZ(leaf.k, this.turn.srcIndex)
+          const zb = leafRestZ(leaf.k, this.turn.dstIndex)
+          hingeZ = za + (zb - za) * t
+          const fa = leafRestFan(leaf.k, this.turn.srcIndex)
+          const fb = leafRestFan(leaf.k, this.turn.dstIndex)
+          fan = fa + (fb - fa) * t
+          const sa = leafRestSink(leaf.k, this.turn.srcIndex)
+          const sb = leafRestSink(leaf.k, this.turn.dstIndex)
+          sink = sa + (sb - sa) * t
+          curl = LEAF_CURL
+          leaf.theta = theta
+          leaf.hingeZ = hingeZ
+          leaf.fan = fan
+          leaf.sink = sink
+          leaf.curl = curl
+        } else {
+          theta = leafRestAngle(leaf.k, c)
+          hingeZ = leafRestZ(leaf.k, c)
+          fan = leafRestFan(leaf.k, c)
+          sink = leafRestSink(leaf.k, c)
+          const dTheta = theta - leaf.theta
+          const dZ = hingeZ - leaf.hingeZ
+          const dFan = fan - leaf.fan
+          const dSink = sink - leaf.sink
+          const dCurl = 0 - leaf.curl
+          leaf.theta += dTheta * k
+          leaf.hingeZ += dZ * k
+          leaf.fan += dFan * k
+          leaf.sink += dSink * k
+          leaf.curl += dCurl * k
+          if (
+            Math.abs(dTheta) + Math.abs(dZ) + Math.abs(dFan) +
+            Math.abs(dSink) + Math.abs(dCurl) < 1e-4
+          ) continue
+        }
+        this.deformLeaf(leaf)
+        moving = true
       }
     }
 
@@ -812,25 +902,26 @@ export class JournalScene {
     this.stackPos += (this.cur - this.stackPos) * damp(10, dt)
     if (Math.abs(this.cur - this.stackPos) > 1e-4) moving = true
 
-    // Sheet poses ease toward rest/hover targets.
-    const k = damp(11, dt)
-    for (let i = 0; i < n; i++) {
-      const entry = this.sheets[i]
-      const m = entry.mesh
-      if (!m.visible) continue
-      if (this.busy && (i === this.hideIdx || i === this.revealIdx)) continue
-      const pose = this.poseFor(i)
-      const d =
-        Math.abs(pose.x - m.position.x) + Math.abs(pose.y - m.position.y) +
-        Math.abs(pose.z - m.position.z) +
-        Math.abs(pose.rotY - m.rotation.y) +
-        Math.abs(pose.rotZ - m.rotation.z)
-      if (d > 1e-3) moving = true
-      m.position.x += (pose.x - m.position.x) * k
-      m.position.y += (pose.y - m.position.y) * k
-      m.position.z += (pose.z - m.position.z) * k
-      m.rotation.y += (pose.rotY - m.rotation.y) * k
-      m.rotation.z += (pose.rotZ - m.rotation.z) * k
+    // Card poses ease toward rest/hover targets.
+    if (this.mode === 'overview') {
+      const k = damp(11, dt)
+      for (let i = 0; i < n; i++) {
+        const entry = this.sheets[i]
+        const m = entry.mesh
+        if (!m.visible) continue
+        const pose = this.poseForCard(i)
+        const d =
+          Math.abs(pose.x - m.position.x) + Math.abs(pose.y - m.position.y) +
+          Math.abs(pose.z - m.position.z) +
+          Math.abs(pose.rotY - m.rotation.y) +
+          Math.abs(pose.rotZ - m.rotation.z)
+        if (d > 1e-3) moving = true
+        m.position.x += (pose.x - m.position.x) * k
+        m.position.y += (pose.y - m.position.y) * k
+        m.position.z += (pose.z - m.position.z) * k
+        m.rotation.y += (pose.rotY - m.rotation.y) * k
+        m.rotation.z += (pose.rotZ - m.rotation.z) * k
+      }
     }
 
     // Camera: fixed per mode, damped toward its home on mode switches —
@@ -846,21 +937,25 @@ export class JournalScene {
     this.lookPos.lerp(this.lookTarget, damp(6, dt))
     if (this.lookPos.distanceToSquared(this.lookTarget) > 1e-6) moving = true
     this.camera.lookAt(this.lookPos)
-    const groupLean = this.mode === 'stack' ? STACK_LEAN : ROW_LEAN
-    const groupRest = this.mode === 'stack' ? stackRestY() : rowRestY()
-    if (Math.abs(groupLean - this.stackGroup.rotation.x) > 1e-3) moving = true
-    this.stackGroup.rotation.x += (groupLean - this.stackGroup.rotation.x) * damp(8, dt)
-    if (Math.abs(groupRest - this.stackGroup.position.y) > 1e-3) moving = true
-    this.stackGroup.position.y += (groupRest - this.stackGroup.position.y) * damp(8, dt)
-    this.turnGroup.position.y = this.stackGroup.position.y
-    this.turnGroup.rotation.x = this.stackGroup.rotation.x
 
     // Emit hover + delete-button anchor.
-    const id = this.hovered?.id ?? null
+    const id = this.mode === 'stack'
+      ? this.hoveredLeafPageId()
+      : this.hoveredCard?.id ?? null
     let anchor: { x: number; y: number } | null = null
-    if (id && this.hovered) {
+    if (id && this.mode === 'overview' && this.hoveredCard) {
       const v = new THREE.Vector3(PAGE_W * 0.47, PAGE_H * 0.47, 0)
-      this.hovered.mesh.localToWorld(v)
+      this.hoveredCard.mesh.localToWorld(v)
+      v.project(this.camera)
+      const r = this.canvas.getBoundingClientRect()
+      anchor = { x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height }
+    } else if (id && this.hoveredLeaf) {
+      const p = leafPointTheta(
+        HALF_W, PAGE_H * 0.47, HALF_W,
+        this.hoveredLeaf.theta, this.hoveredLeaf.curl,
+        this.hoveredLeaf.fan, this.hoveredLeaf.sink,
+      )
+      const v = new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(this.hoveredLeaf.front.matrixWorld)
       v.project(this.camera)
       const r = this.canvas.getBoundingClientRect()
       anchor = { x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height }
@@ -885,11 +980,11 @@ export class JournalScene {
           list.push({ id: entry.id, x, y: ((1 - v.y) / 2) * r.height })
         }
       } else {
-        // Stack mode: only the front sheet is fully tappable.
-        const entry = this.sheets[Math.round(this.stackPos)]
-        if (entry && entry.mesh.visible) {
+        // Stack mode: only the open spread is tappable — anchor under it.
+        const entry = this.pages[Math.round(this.stackPos)]
+        if (entry) {
           const v = new THREE.Vector3(0, -PAGE_H * 0.56, 0)
-          entry.mesh.localToWorld(v)
+          this.stackGroup.localToWorld(v)
           v.project(this.camera)
           if (v.z < 1) {
             list.push({
