@@ -640,8 +640,8 @@ footer {
   padding: 20px 0 max(30px, env(safe-area-inset-bottom));
 }
 .round {
-  width: 42px;
-  height: 42px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   background: #191a18;
   color: #fff;

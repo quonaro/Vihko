@@ -530,7 +530,7 @@ footer {
   .flip.next { right: 8px; }
   footer {
     gap: 14px;
-    padding: 12px 0 max(14px, env(safe-area-inset-bottom));
+    padding: 12px 0 max(24px, env(safe-area-inset-bottom));
   }
 }
 </style>
