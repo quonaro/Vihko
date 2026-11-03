@@ -421,15 +421,7 @@ async function onCoverPicked(e: Event) {
     <MobileSlider v-model:open="settingsOn" :title="t('shelf.settings')" size="sm">
       <div class="set-row">
         <span class="set-label">{{ t('shelf.version') }}</span>
-        <span class="set-value">
-          v{{ appVersion }}
-          <button
-            v-if="update.status === 'available'"
-            class="new-ver"
-            @click="downloadUpdate"
-          >→ v{{ update.latest }}</button>
-          <span v-else-if="update.status === 'uptodate'" class="ver-ok">✓</span>
-        </span>
+        <span class="set-value">v{{ appVersion }}</span>
       </div>
       <div class="set-row">
         <span class="set-label">{{ t('shelf.theme') }}</span>
@@ -459,11 +451,14 @@ async function onCoverPicked(e: Event) {
         <span class="set-label">{{ t('shelf.updates') }}</span>
         <button
           class="set-action"
-          :disabled="update.busy"
-          @click="checkForUpdate"
+          :class="{ accent: update.status === 'available' }"
+          :disabled="update.busy || update.dl === 'downloading'"
+          @click="update.status === 'available' ? downloadUpdate() : checkForUpdate()"
         >{{ update.busy ? t('shelf.checking')
-          : update.status === 'error' ? t('shelf.checkFailed')
-          : t('shelf.checkUpdate') }}</button>
+          : update.status === 'available'
+            ? (update.dl === 'idle' ? t('shelf.updateNow', { v: update.latest }) : updateLabel)
+            : update.status === 'error' ? t('shelf.checkFailed')
+            : t('shelf.checkUpdate') }}</button>
       </div>
     </MobileSlider>
 
@@ -782,17 +777,11 @@ footer {
   font-size: 13px;
   font-weight: 650;
 }
-.set-action:disabled { opacity: .6; }
-.new-ver {
-  font: inherit;
-  color: #2a8097;
-  font-weight: 650;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
+.set-action.accent {
+  background: #2a8097;
+  color: #fff;
 }
-.ver-ok { color: #2a8097; }
+.set-action:disabled { opacity: .6; }
 .settings-btn { position: relative; }
 .update-dot {
   position: absolute;

@@ -129,8 +129,8 @@ describe('ShelfView', () => {
     btn.click()
     await flushPromises()
     const status = document.body.querySelector<HTMLElement>('.set-value')!
-    expect(status.textContent).toContain('99.0.0')
-    expect(status.querySelector('button.new-ver')?.textContent).toContain('99.0.0')
+    expect(status.textContent?.trim()).toMatch(/^v\d+\.\d+\.\d+$/)
+    expect(btn.textContent).toBe('Update v99.0.0')
     expect(w.find('.update-dot').exists()).toBe(true)
     const banner = w.find('button.update-banner')
     expect(banner.exists()).toBe(true)
