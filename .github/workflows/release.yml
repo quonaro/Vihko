@@ -53,12 +53,17 @@ jobs:
 
       - name: Build web bundle
         run: pnpm build
+        env:
+          VITE_APP_VERSION: ${{ github.ref_name }}
 
       - name: Sync Capacitor Android
         run: pnpm exec cap sync android
 
       - name: Build release APK
         run: cd android && ./gradlew assembleRelease --no-daemon
+        env:
+          VERSION_NAME: ${{ github.ref_name }}
+          VERSION_CODE: ${{ github.run_number }}
 
       - name: Rename APK
         run: |

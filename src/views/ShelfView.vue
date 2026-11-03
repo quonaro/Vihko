@@ -7,6 +7,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { setLocale } from '../i18n'
 import { setTheme, theme } from '../theme'
+import { appVersion, update, checkForUpdate } from '../update'
 import { morphTo, centeredRect } from '../anim'
 import { presetCovers } from '../covers'
 import { imageFileToPhoto } from '../ink/ops'
@@ -278,6 +279,7 @@ async function onCoverPicked(e: Event) {
             <circle cx="12" cy="12" r="4" />
             <path d="M10 2.8h4v2.6a7.4 7.4 0 0 1 1.6.7l1.8-1.3 2.8 2.8-1.3 1.8a7.4 7.4 0 0 1 .7 1.6h2.6v4h-2.6a7.4 7.4 0 0 1-.7 1.6l1.3 1.8-2.8 2.8-1.8-1.3a7.4 7.4 0 0 1-1.6.7v2.6h-4v-2.6a7.4 7.4 0 0 1-1.6-.7l-1.8 1.3-2.8-2.8 1.3-1.8a7.4 7.4 0 0 1-.7-1.6H1.8v-4h2.6a7.4 7.4 0 0 1 .7-1.6L3.8 7.6l2.8-2.8 1.8 1.3a7.4 7.4 0 0 1 1.6-.7Z" />
           </svg>
+          <span v-if="update.status === 'available'" class="update-dot" />
         </button>
       </div>
     </nav>
@@ -288,6 +290,14 @@ async function onCoverPicked(e: Event) {
         {{ selected ? t('journal.count', selected.pages.length) : t('shelf.count', store.journals.length) }}
       </p>
     </header>
+
+    <a
+      v-if="update.status === 'available'"
+      class="update-banner"
+      :href="update.url"
+      target="_blank"
+      rel="noopener"
+    >{{ t('shelf.updateAvailable', { v: update.latest }) }}</a>
 
     <div
       class="covers"
@@ -376,6 +386,20 @@ async function onCoverPicked(e: Event) {
 
     <MobileSlider v-model:open="settingsOn" :title="t('shelf.settings')" size="sm">
       <div class="set-row">
+        <span class="set-label">{{ t('shelf.version') }}</span>
+        <span class="set-value">
+          v{{ appVersion }}
+          <a
+            v-if="update.status === 'available'"
+            class="new-ver"
+            :href="update.url"
+            target="_blank"
+            rel="noopener"
+          >→ v{{ update.latest }}</a>
+          <span v-else-if="update.status === 'uptodate'" class="ver-ok">✓</span>
+        </span>
+      </div>
+      <div class="set-row">
         <span class="set-label">{{ t('shelf.theme') }}</span>
         <div class="seg">
           <button
@@ -398,6 +422,16 @@ async function onCoverPicked(e: Event) {
           <button class="seg-btn" :class="{ on: locale === 'en' }" @click="setLocale('en')">English</button>
           <button class="seg-btn" :class="{ on: locale === 'ru' }" @click="setLocale('ru')">Русский</button>
         </div>
+      </div>
+      <div class="set-row">
+        <span class="set-label">{{ t('shelf.updates') }}</span>
+        <button
+          class="set-action"
+          :disabled="update.busy"
+          @click="checkForUpdate"
+        >{{ update.busy ? t('shelf.checking')
+          : update.status === 'error' ? t('shelf.checkFailed')
+          : t('shelf.checkUpdate') }}</button>
       </div>
     </MobileSlider>
 
@@ -691,6 +725,44 @@ footer {
   font-weight: 650;
 }
 .seg-btn.on { background: #2a8097; color: #fff; }
+.set-value {
+  color: var(--chrome-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.set-action {
+  padding: 7px 16px;
+  border-radius: 8px;
+  background: var(--chrome-control-bg);
+  color: var(--chrome-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+.set-action:disabled { opacity: .6; }
+.new-ver { color: #2a8097; font-weight: 650; }
+.ver-ok { color: #2a8097; }
+.settings-btn { position: relative; }
+.update-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2a8097;
+}
+.update-banner {
+  display: block;
+  margin: 0 18px 8px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: var(--layer-active-bg);
+  border: 1px solid var(--layer-active-border);
+  color: var(--paper-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
 .cover-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

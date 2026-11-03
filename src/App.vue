@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { store } from './store'
+import { checkForUpdate } from './update'
 import ShelfView from './views/ShelfView.vue'
 import JournalView from './views/JournalView.vue'
 import CanvasView from './views/CanvasView.vue'
 import PromptDialog from './components/PromptDialog.vue'
+
+onMounted(() => void checkForUpdate())
 
 const comp = computed(() =>
   store.view === 'shelf' ? ShelfView

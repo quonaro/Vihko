@@ -6,6 +6,7 @@ import { usePrompt } from '../composables/usePrompt'
 import { i18n, setLocale } from '../i18n'
 import { store } from '../store'
 import { setTheme } from '../theme'
+import { update } from '../update'
 import type { Journal } from '../types'
 
 // The real shelf needs WebGL; the fake scene emits fixed anchors so the
@@ -59,10 +60,14 @@ beforeEach(() => {
   store.view = 'shelf'
   setLocale('en')
   setTheme('light')
+  update.status = 'idle'
+  update.busy = false
+  update.latest = ''
 })
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllGlobals()
   usePrompt().settle(null)
   setTheme('light')
   localStorage.removeItem('vihko:theme')
@@ -97,20 +102,41 @@ describe('ShelfView', () => {
     expect(store.journals).toHaveLength(3)
   })
 
-  it('shows only theme and language in the settings sheet', async () => {
+  it('shows theme, language, version and updates in the settings sheet', async () => {
     const w = mountShelf()
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
     // the settings sheet is teleported to <body>
     const rows = document.body.querySelectorAll<HTMLElement>('.set-row')
-    expect(rows).toHaveLength(2)
+    expect(rows).toHaveLength(4)
+    expect(rows[0].querySelector('.set-value')?.textContent?.trim()).toMatch(/^v\d+\.\d+\.\d+/)
+    expect(rows[3].querySelector<HTMLButtonElement>('.set-action')?.textContent).toBe('Check for updates')
     expect(document.body.textContent).not.toContain('2D')
+  })
+
+  it('checks for updates from the settings sheet', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ tag_name: 'v99.0.0', html_url: 'https://example.com/rel' }),
+    } as Response)))
+    const w = mountShelf()
+    await w.findAll('.top-actions .icon-btn')[1].trigger('click')
+    const btn = document.body.querySelector<HTMLButtonElement>('.set-action')!
+    btn.click()
+    await flushPromises()
+    const status = document.body.querySelector<HTMLElement>('.set-value')!
+    expect(status.textContent).toContain('99.0.0')
+    expect(status.querySelector('a')?.getAttribute('href')).toBe('https://example.com/rel')
+    expect(w.find('.update-dot').exists()).toBe(true)
+    expect(w.find('.update-banner').exists()).toBe(true)
+    vi.unstubAllGlobals()
   })
 
   it('switches the language from the settings sheet', async () => {
     const w = mountShelf()
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
     const rows = document.body.querySelectorAll<HTMLElement>('.set-row')
-    const seg = rows[rows.length - 1].querySelectorAll<HTMLElement>('.seg-btn')
+    const seg = rows[2].querySelectorAll<HTMLElement>('.seg-btn')
     expect(seg[0].textContent).toBe('English')
     expect(seg[1].textContent).toBe('Русский')
     expect(seg[0].classList.contains('on')).toBe(true)
@@ -127,7 +153,9 @@ describe('ShelfView', () => {
   it('switches and persists the appearance theme from settings', async () => {
     const w = mountShelf()
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
-    const buttons = document.body.querySelectorAll<HTMLButtonElement>('.set-row:first-child .seg-btn')
+    const buttons = document.body
+      .querySelectorAll<HTMLElement>('.set-row')[1]
+      .querySelectorAll<HTMLButtonElement>('.seg-btn')
 
     expect(buttons[0].getAttribute('aria-pressed')).toBe('true')
     buttons[1].click()
