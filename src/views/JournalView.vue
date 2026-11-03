@@ -251,7 +251,7 @@ async function goToPage() {
         {{ pageIdx + 1 }} / {{ journal.pages.length }}
       </p>
       <button
-        v-if="glOk && glHover && !coarse"
+        v-if="glOk && glHover && !coarse && journal.pages.length > 1"
         class="del gl-del"
         :style="{ left: `${glHover.x}px`, top: `${glHover.y}px` }"
         :aria-label="t('dlg.deletePageTitle')"
@@ -260,7 +260,7 @@ async function goToPage() {
       >
         ×
       </button>
-      <template v-if="glOk && coarse">
+      <template v-if="glOk && coarse && journal.pages.length > 1">
         <button
           v-for="d in glDels"
           :key="d.id"

@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   scenes: [] as {
     busy: boolean
     held: boolean
+    events: {
+      onFlipDone?: (dir: 1 | -1) => void
+      onHoverPage?: (id: string | null, anchor?: { x: number; y: number }) => void
+      onSheetAnchors?: (list: { id: string; x: number; y: number }[]) => void
+    }
     flip(dir: 1 | -1): boolean
     finish(): void
     cancel(): void
@@ -29,7 +34,11 @@ vi.mock('../three/journalScene', () => ({
     constructor(
       _canvas: HTMLCanvasElement,
       _ink: unknown,
-      private events: { onFlipDone?: (dir: 1 | -1) => void },
+      public events: {
+        onFlipDone?: (dir: 1 | -1) => void
+        onHoverPage?: (id: string | null, anchor?: { x: number; y: number }) => void
+        onSheetAnchors?: (list: { id: string; x: number; y: number }[]) => void
+      },
     ) {
       mocks.scenes.push(this)
     }
@@ -239,6 +248,33 @@ describe('JournalView', () => {
 
   // The scene is only constructed for a canvas attached to the document, so
   // these mount into the body to exercise the real busy/onFlipDone wiring.
+  describe('page delete button', () => {
+    const mountAttached = async () => {
+      const w = mount(JournalView, {
+        attachTo: document.body,
+        global: { plugins: [i18n] },
+      })
+      await flushPromises()
+      return w
+    }
+
+    it('is shown on hover when the journal has more than one page', async () => {
+      const w = await mountAttached()
+      mocks.scenes[0].events.onHoverPage?.('p1', { x: 10, y: 10 })
+      await w.vm.$nextTick()
+      expect(w.find('.del.gl-del').exists()).toBe(true)
+      w.unmount()
+    })
+
+    it('is hidden when the journal has a single page', async () => {
+      store.journals[0].pages.splice(1)
+      const w = await mountAttached()
+      mocks.scenes[0].events.onHoverPage?.('p1', { x: 10, y: 10 })
+      await w.vm.$nextTick()
+      expect(w.find('.del.gl-del').exists()).toBe(false)
+      w.unmount()
+    })
+  })
   describe('page counter while a scene turn is in flight', () => {
     const mountAttached = async () => {
       const w = mount(JournalView, {

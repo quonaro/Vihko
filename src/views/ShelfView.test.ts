@@ -95,7 +95,7 @@ describe('ShelfView', () => {
     expect(w.find('.count').text()).toContain('2')
   })
 
-  it('uses a gear icon for shelf settings', () => {
+  it('uses a sliders icon for shelf settings', () => {
     const w = mountShelf()
     const button = w.find('.settings-btn')
     expect(button.attributes('aria-label')).toBe('Settings')

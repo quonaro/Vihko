@@ -27,7 +27,14 @@ import {
   inHitBox,
   scrollLimit,
 } from './shelfLayout'
-import { rubberScroll, flickVelocity, momentumStep, MOMENTUM_MIN } from './gesture'
+import {
+  rubberScroll,
+  flickVelocity,
+  momentumStep,
+  MOMENTUM_MIN,
+  pinchZoom,
+  panLimit,
+} from './gesture'
 import { coverCanvas, paintCover, type CoverInput } from './coverTexture'
 import { onImageLoaded } from '../ink/ops'
 
@@ -96,14 +103,36 @@ export class ShelfScene {
   private scroll = 0
   private scrollTarget = 0
   private halfW = 1
+  private camDist = 1 // fit distance along camDir, picked per viewport
   private camDir = new THREE.Vector3(0, CAM_Y, CAM_Z).normalize()
   private worldPerPx = 0.01
   private cw = 2
   private ch = 2
-  private drag: { id: number; x0: number; v0: number; moved: boolean } | null = null
+  private drag: {
+    id: number
+    x0: number
+    y0: number
+    v0: number
+    pan0: number
+    moved: boolean
+  } | null = null
   private trail: { x: number; t: number }[] = []
   private vel = 0 // flick momentum, world units/s
   private clickWasDrag = false
+  // Pinch zoom: 1 = the fit distance; the camera dollies along camDir by
+  // 1/zoom. Horizontal travel stays on the row scroll (the pan limit is
+  // far smaller than a long shelf), so the camera only pans vertically —
+  // `panY` is a view-plane offset (world units, screen-up) applied to
+  // camera and look target together. Touches are tracked separately from
+  // `drag` so a second finger can turn a scroll into a pinch mid-gesture.
+  private zoom = 1
+  private panY = 0
+  private touches = new Map<number, { x: number; y: number }>()
+  private pinch: { d0: number; zoom0: number; mx: number; my: number } | null = null
+  private camUp = new THREE.Vector3()
+  private lookPos = new THREE.Vector3()
+  private camTarget = new THREE.Vector3()
+  private lookTarget = new THREE.Vector3()
   private v = new THREE.Vector3()
   private m1 = new THREE.Matrix4()
   private localRay = new THREE.Ray()
@@ -130,6 +159,12 @@ export class ShelfScene {
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 50)
     this.camera.position.set(0, CAM_Y, CAM_Z)
     this.camera.lookAt(0, 0, 0)
+    // View-plane up in world space: the camera looks almost straight
+    // down, so screen-up maps mostly to world -z. Screen-right is +x —
+    // the row scroll already owns that axis.
+    const dir = this.camDir.clone().negate()
+    const right = new THREE.Vector3().crossVectors(dir, this.camera.up).normalize()
+    this.camUp.crossVectors(right, dir).normalize()
     addStudioRig(this.renderer, this.scene, -0.015, q)
     this.post = createComposer(this.renderer, this.scene, this.camera, q)
     this.scene.add(this.row)
@@ -343,23 +378,85 @@ export class ShelfScene {
 
   // --- input ---------------------------------------------------------------
 
+  // Zoom shrinks the visible world width, so the row ends get more
+  // scroll travel and every book can still be centered while zoomed in.
+  private get scrollLim() {
+    return scrollLimit(this.halfW / this.zoom, this.books.length)
+  }
+
   private clampScroll(v: number) {
-    const l = scrollLimit(this.halfW, this.books.length)
-    return clamp(v, -l, l)
+    return clamp(v, -this.scrollLim, this.scrollLim)
+  }
+
+  // px → world at the zoomed distance — drag gain and pinch pan both
+  // use it, so it scales with 1/zoom.
+  private updateWorldPerPx() {
+    this.worldPerPx = (2 * this.halfW) / (this.cw * this.zoom)
+  }
+
+  // Vertical pan is clamped by the zoom-dependent limit — at fit zoom it
+  // is zero, so the shelf always recenters vertically on pinch-out.
+  private setPanY(y: number) {
+    this.panY = clamp(y, -panLimit(this.zoom), panLimit(this.zoom))
   }
 
   private onPointerDown = (e: PointerEvent) => {
     this.pump.wake()
-    if (this.drag) return // a second finger must not rebase the ongoing pan
-    this.drag = { id: e.pointerId, x0: e.clientX, v0: this.scrollTarget, moved: false }
+    this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    this.canvas.setPointerCapture(e.pointerId)
+    if (this.touches.size === 2) {
+      // A second finger converts any one-finger scroll into a pinch.
+      this.drag = null
+      this.trail = []
+      this.canvas.style.cursor = ''
+      const [a, b] = [...this.touches.values()]
+      this.pinch = {
+        d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+        zoom0: this.zoom,
+        mx: (a.x + b.x) / 2,
+        my: (a.y + b.y) / 2,
+      }
+      this.clickWasDrag = true
+      return
+    }
+    if (this.touches.size > 2 || this.pinch || this.drag) return
+    this.drag = {
+      id: e.pointerId,
+      x0: e.clientX,
+      y0: e.clientY,
+      v0: this.scrollTarget,
+      pan0: this.panY,
+      moved: false,
+    }
     this.trail = [{ x: e.clientX, t: e.timeStamp }]
     this.vel = 0
     this.clickWasDrag = false
-    this.canvas.setPointerCapture(e.pointerId)
   }
 
   private onPointerMove = (e: PointerEvent) => {
     this.pump.wake()
+    const touch = this.touches.get(e.pointerId)
+    if (touch) {
+      touch.x = e.clientX
+      touch.y = e.clientY
+    }
+    if (this.pinch && this.touches.size >= 2) {
+      const [a, b] = [...this.touches.values()]
+      this.zoom = pinchZoom(this.pinch.zoom0, this.pinch.d0, Math.hypot(a.x - b.x, a.y - b.y))
+      this.updateWorldPerPx()
+      // The midpoint's travel moves the view — horizontally it scrolls
+      // the row, vertically it pans the camera. Incremental, so it keeps
+      // tracking the fingers while the px→world gain changes.
+      const mx = (a.x + b.x) / 2
+      const my = (a.y + b.y) / 2
+      this.scrollTarget = this.clampScroll(
+        this.scrollTarget - (mx - this.pinch.mx) * this.worldPerPx,
+      )
+      this.setPanY(this.panY + (my - this.pinch.my) * this.worldPerPx)
+      this.pinch.mx = mx
+      this.pinch.my = my
+      return
+    }
     const r = this.canvas.getBoundingClientRect()
     const x = e.clientX - r.left
     const y = e.clientY - r.top
@@ -367,13 +464,17 @@ export class ShelfScene {
       this.trail.push({ x: e.clientX, t: e.timeStamp })
       if (this.trail.length > 16) this.trail.shift()
       const dx = e.clientX - this.drag.x0
-      if (Math.abs(dx) > 6) this.drag.moved = true
+      const dy = e.clientY - this.drag.y0
+      // While zoomed, a drag also pans vertically — horizontal motion
+      // keeps scrolling the row at any zoom.
+      const panning = this.zoom > 1.05
+      if (panning ? Math.hypot(dx, dy) > 6 : Math.abs(dx) > 6) this.drag.moved = true
       if (this.drag.moved) {
         this.clickWasDrag = true
-        const limit = scrollLimit(this.halfW, this.books.length)
-        this.scrollTarget = rubberScroll(this.drag.v0 - dx * this.worldPerPx, limit)
         this.hovered = null
         this.canvas.style.cursor = 'grabbing'
+        this.scrollTarget = rubberScroll(this.drag.v0 - dx * this.worldPerPx, this.scrollLim)
+        if (panning) this.setPanY(this.drag.pan0 + dy * this.worldPerPx)
         return
       }
     }
@@ -385,6 +486,33 @@ export class ShelfScene {
 
   private endDrag(e: PointerEvent, flick: boolean) {
     this.pump.wake()
+    this.touches.delete(e.pointerId)
+    if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId)
+    if (this.pinch) {
+      // Rebase on the remaining pair — or hand the last finger a drag,
+      // so the gesture continues as scroll/pan instead of ending.
+      this.pinch = null
+      if (this.touches.size >= 2) {
+        const [a, b] = [...this.touches.values()]
+        this.pinch = {
+          d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+          zoom0: this.zoom,
+          mx: (a.x + b.x) / 2,
+          my: (a.y + b.y) / 2,
+        }
+      } else if (this.touches.size === 1) {
+        const [id, t] = [...this.touches.entries()][0]
+        this.drag = {
+          id,
+          x0: t.x,
+          y0: t.y,
+          v0: this.scrollTarget,
+          pan0: this.panY,
+          moved: true,
+        }
+        this.trail = [{ x: t.x, t: e.timeStamp }]
+      }
+    }
     if (this.drag && e.pointerId !== this.drag.id) return // other finger lifted
     if (this.drag?.moved && flick) {
       this.vel = -flickVelocity(this.trail, e.timeStamp) * this.worldPerPx
@@ -392,7 +520,6 @@ export class ShelfScene {
     }
     this.drag = null
     this.trail = []
-    if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId)
     this.canvas.style.cursor = ''
   }
 
@@ -465,10 +592,15 @@ export class ShelfScene {
     const aspect = w / h
     const books = aspect < 1 ? 1 : Math.min(5, Math.max(2, Math.round(aspect * 3)))
     const halfW = (books * SHELF_STEP) / 2 + 0.15
-    const dist = halfW / (Math.tan((FOV * Math.PI) / 360) * aspect)
-    this.camera.position.copy(this.camDir).multiplyScalar(dist)
+    this.camDist = halfW / (Math.tan((FOV * Math.PI) / 360) * aspect)
     this.halfW = halfW
-    this.worldPerPx = (2 * halfW) / w
+    this.updateWorldPerPx()
+    this.camera.position
+      .copy(this.camDir)
+      .multiplyScalar(this.camDist / this.zoom)
+      .addScaledVector(this.camUp, this.panY)
+    this.lookPos.copy(this.camUp).multiplyScalar(this.panY)
+    this.camera.lookAt(this.lookPos)
     this.scrollTarget = this.clampScroll(this.scrollTarget)
     this.pump.wake()
   }
@@ -562,7 +694,7 @@ export class ShelfScene {
 
     if (Math.abs(this.vel) > MOMENTUM_MIN && !this.drag) {
       moving = true
-      const s = momentumStep(this.scrollTarget, this.vel, scrollLimit(this.halfW, n), dt)
+      const s = momentumStep(this.scrollTarget, this.vel, this.scrollLim, dt)
       this.scrollTarget = s.pos
       this.vel = s.vel
     } else if (this.drag) {
@@ -571,6 +703,27 @@ export class ShelfScene {
     this.scroll += (this.scrollTarget - this.scroll) * damp(9, dt)
     if (Math.abs(this.scrollTarget - this.scroll) > 1e-4) moving = true
     this.row.position.x = -this.scroll
+
+    // Camera: pinch zoom dollies along the look axis, vertical pan
+    // slides camera and look target together so the view shifts in
+    // parallel instead of tilting. Damped — tighter mid-pinch.
+    this.camTarget
+      .copy(this.camDir)
+      .multiplyScalar(this.camDist / this.zoom)
+      .addScaledVector(this.camUp, this.panY)
+    this.lookTarget.copy(this.camUp).multiplyScalar(this.panY)
+    const ck = damp(this.pinch ? 16 : 6, dt)
+    const cd =
+      Math.abs(this.camTarget.x - this.camera.position.x) +
+      Math.abs(this.camTarget.y - this.camera.position.y) +
+      Math.abs(this.camTarget.z - this.camera.position.z)
+    if (cd > 1e-3) moving = true
+    this.camera.position.x += (this.camTarget.x - this.camera.position.x) * ck
+    this.camera.position.y += (this.camTarget.y - this.camera.position.y) * ck
+    this.camera.position.z += (this.camTarget.z - this.camera.position.z) * ck
+    this.lookPos.lerp(this.lookTarget, ck)
+    if (this.lookPos.distanceToSquared(this.lookTarget) > 1e-6) moving = true
+    this.camera.lookAt(this.lookPos)
 
     this.emitAnchors()
     return moving

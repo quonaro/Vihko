@@ -333,8 +333,15 @@ async function onCoverPicked(e: Event) {
         </button>
         <button class="icon-btn settings-btn" @click="settingsOn = true" :title="t('shelf.settings')" :aria-label="t('shelf.settings')">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="4" />
-            <path d="M10 2.8h4v2.6a7.4 7.4 0 0 1 1.6.7l1.8-1.3 2.8 2.8-1.3 1.8a7.4 7.4 0 0 1 .7 1.6h2.6v4h-2.6a7.4 7.4 0 0 1-.7 1.6l1.3 1.8-2.8 2.8-1.8-1.3a7.4 7.4 0 0 1-1.6.7v2.6h-4v-2.6a7.4 7.4 0 0 1-1.6-.7l-1.8 1.3-2.8-2.8 1.3-1.8a7.4 7.4 0 0 1-.7-1.6H1.8v-4h2.6a7.4 7.4 0 0 1 .7-1.6L3.8 7.6l2.8-2.8 1.8 1.3a7.4 7.4 0 0 1 1.6-.7Z" />
+            <path d="M3 5h7" />
+            <path d="M14 5h7" />
+            <circle cx="12" cy="5" r="2" />
+            <path d="M3 12h3" />
+            <path d="M10 12h11" />
+            <circle cx="8" cy="12" r="2" />
+            <path d="M3 19h11" />
+            <path d="M18 19h3" />
+            <circle cx="16" cy="19" r="2" />
           </svg>
           <span v-if="update.status === 'available'" class="update-dot" />
         </button>
@@ -568,11 +575,15 @@ async function onCoverPicked(e: Event) {
   background: var(--paper-shell);
 }
 .topbar {
+  position: relative;
+  z-index: 10;
   display: flex;
   justify-content: flex-end;
   align-items: center;
   padding: 18px 26px 0;
+  pointer-events: none;
 }
+.topbar .icon-btn { pointer-events: auto; }
 .top-actions { display: flex; gap: 8px; }
 .icon-btn {
   width: 34px;
@@ -644,8 +655,11 @@ async function onCoverPicked(e: Event) {
 .hit-count { color: var(--chrome-muted); font-size: 12px; margin-top: 2px; }
 .search-none { padding: 18px 0 10px; }
 header {
+  position: relative;
+  z-index: 10;
   padding: 13px 0 8px;
   text-align: center;
+  pointer-events: none;
 }
 h1 {
   color: var(--paper-text);
@@ -658,10 +672,12 @@ h1 {
   font-size: 12px;
   margin-top: 4px;
 }
+/* The shelf stage is full-bleed: the canvas runs under the header/footer
+   chrome so a zoomed book is never clipped by a footer edge — same layout
+   contract as JournalView's .stage. */
 .covers {
-  flex: 1;
-  position: relative;
-  min-height: 0;
+  position: absolute;
+  inset: 0;
   overflow: hidden;
 }
 .shelf3d {
@@ -755,6 +771,11 @@ h1 {
   pointer-events: none;
 }
 footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -842,6 +863,8 @@ footer {
   background: #2a8097;
 }
 .update-banner {
+  position: relative;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: center;

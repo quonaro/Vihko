@@ -102,6 +102,20 @@ describe('scrollLimit', () => {
     expect(limit).toBeCloseTo(Math.max(0, ((n - 1) * SHELF_STEP) / 2 + BOOK_W / 2 + 0.3 - halfW))
   })
 
+  it('grows as pinch zoom shrinks the visible half width', () => {
+    // ShelfScene passes halfW/zoom: zooming in must widen the scroll
+    // range so end books can still be centered on screen.
+    const halfW = 2
+    const n = 12
+    const fit = scrollLimit(halfW, n)
+    const zoomed = scrollLimit(halfW / 3, n)
+    expect(fit).toBeGreaterThan(0)
+    expect(zoomed).toBeGreaterThan(fit)
+    // At zoom 3 the last book's center can reach the screen center.
+    const last = shelfPose(n - 1, n).x
+    expect(zoomed).toBeGreaterThanOrEqual(last)
+  })
+
   it('book height keeps the DOM cover aspect', () => {
     expect(BOOK_H / BOOK_W).toBeCloseTo(1 / 0.735)
   })
