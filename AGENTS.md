@@ -92,6 +92,13 @@ screens.
 
 - `appId`: `vihko.app`, `webDir`: `dist` (see `capacitor.config.ts`)
 - Native projects: `android/` (Gradle, needs Android SDK), `ios/` (needs Xcode)
+- Data retention on uninstall: `hasFragileUserData="true"` gives the
+  "keep app data" checkbox in the uninstall dialog, but
+  `allowBackup` MUST stay `false` — verified on Honor 50/MagicOS that an
+  existing backup dataset makes the installer run a restore
+  ("Unable to finalize restore" in logcat) which wipes the kept data.
+  `Filesystem.downloadFile` also ignores `recursive` on Android — parent
+  dirs must be `mkdir`'d first (see `src/update.ts`).
 - The wasm engine ships inside `dist/` → copied into native web assets by sync
 
 ## Layout
