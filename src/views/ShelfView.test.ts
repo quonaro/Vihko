@@ -63,6 +63,10 @@ beforeEach(() => {
   update.status = 'idle'
   update.busy = false
   update.latest = ''
+  update.apkUrl = ''
+  update.dl = 'idle'
+  update.progress = 0
+  update.apkPath = ''
 })
 
 afterEach(() => {
@@ -126,9 +130,11 @@ describe('ShelfView', () => {
     await flushPromises()
     const status = document.body.querySelector<HTMLElement>('.set-value')!
     expect(status.textContent).toContain('99.0.0')
-    expect(status.querySelector('a')?.getAttribute('href')).toBe('https://example.com/rel')
+    expect(status.querySelector('button.new-ver')?.textContent).toContain('99.0.0')
     expect(w.find('.update-dot').exists()).toBe(true)
-    expect(w.find('.update-banner').exists()).toBe(true)
+    const banner = w.find('button.update-banner')
+    expect(banner.exists()).toBe(true)
+    expect(banner.text()).toContain('99.0.0')
     vi.unstubAllGlobals()
   })
 

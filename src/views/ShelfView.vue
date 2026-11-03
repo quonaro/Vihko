@@ -7,7 +7,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { setLocale } from '../i18n'
 import { setTheme, theme } from '../theme'
-import { appVersion, update, checkForUpdate } from '../update'
+import { appVersion, update, checkForUpdate, downloadUpdate } from '../update'
 import { morphTo, centeredRect } from '../anim'
 import { presetCovers } from '../covers'
 import { imageFileToPhoto } from '../ink/ops'
@@ -28,6 +28,14 @@ const settingsOn = ref(false)
 const coverInput = ref<HTMLInputElement>()
 
 const selected = computed(() => store.journals.find((j) => j.id === selectedId.value) ?? null)
+const updateLabel = computed(() => {
+  switch (update.dl) {
+    case 'downloading': return t('shelf.downloading', { n: update.progress })
+    case 'ready': return t('shelf.installUpdate', { v: update.latest })
+    case 'error': return t('shelf.downloadFailed')
+    default: return t('shelf.updateAvailable', { v: update.latest })
+  }
+})
 const results = computed(() => {
   const q = query.value.trim().toLowerCase()
   return q ? store.journals.filter((j) => j.title.toLowerCase().includes(q)) : store.journals
@@ -291,13 +299,11 @@ async function onCoverPicked(e: Event) {
       </p>
     </header>
 
-    <a
+    <button
       v-if="update.status === 'available'"
       class="update-banner"
-      :href="update.url"
-      target="_blank"
-      rel="noopener"
-    >{{ t('shelf.updateAvailable', { v: update.latest }) }}</a>
+      @click="downloadUpdate"
+    >{{ updateLabel }}</button>
 
     <div
       class="covers"
@@ -389,13 +395,11 @@ async function onCoverPicked(e: Event) {
         <span class="set-label">{{ t('shelf.version') }}</span>
         <span class="set-value">
           v{{ appVersion }}
-          <a
+          <button
             v-if="update.status === 'available'"
             class="new-ver"
-            :href="update.url"
-            target="_blank"
-            rel="noopener"
-          >→ v{{ update.latest }}</a>
+            @click="downloadUpdate"
+          >→ v{{ update.latest }}</button>
           <span v-else-if="update.status === 'uptodate'" class="ver-ok">✓</span>
         </span>
       </div>
@@ -739,7 +743,15 @@ footer {
   font-weight: 650;
 }
 .set-action:disabled { opacity: .6; }
-.new-ver { color: #2a8097; font-weight: 650; }
+.new-ver {
+  font: inherit;
+  color: #2a8097;
+  font-weight: 650;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
 .ver-ok { color: #2a8097; }
 .settings-btn { position: relative; }
 .update-dot {
@@ -753,15 +765,18 @@ footer {
 }
 .update-banner {
   display: block;
+  width: calc(100% - 36px);
   margin: 0 18px 8px;
   padding: 9px 14px;
   border-radius: 10px;
   background: var(--layer-active-bg);
   border: 1px solid var(--layer-active-border);
   color: var(--paper-text);
+  font: inherit;
   font-size: 13px;
   font-weight: 600;
   text-align: center;
+  cursor: pointer;
 }
 .cover-grid {
   display: grid;
