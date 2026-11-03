@@ -36,6 +36,7 @@
   --layer-active-border: rgba(42, 128, 151, .65);
   --layer-accent-bg: #6dbbcf;
   --layer-accent-text: #16303a;
+  --warn-icon: #ca8a04;
 }
 
 :root[data-theme='dark'] {
@@ -69,6 +70,7 @@
   --layer-active-border: rgba(109, 187, 207, .7);
   --layer-accent-bg: #6dbbcf;
   --layer-accent-text: #0d1b20;
+  --warn-icon: #eab308;
 }
 
 html,

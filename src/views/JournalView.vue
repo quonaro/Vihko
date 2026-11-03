@@ -8,6 +8,7 @@ import { useI18n } from 'vue-i18n'
 import { initInk } from '../ink/engine'
 import { usePrompt } from '../composables/usePrompt'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import EmptyState from '../components/EmptyState.vue'
 import { saveFile } from '../saveFile'
 import type { JournalScene } from '../three/journalScene'
 import { canTurnStack } from '../three/layout'
@@ -257,7 +258,14 @@ async function goToPage() {
           ×
         </button>
       </template>
-      <p v-if="glFailed" class="webgl-error" role="status">{{ t('journal.webglError') }}</p>
+      <EmptyState v-if="glFailed" class="webgl-error" :title="t('journal.webglError')">
+        <template #icon>
+          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/>
+            <path d="M12 12 20 7.5M12 12 4 7.5M12 12v9"/>
+          </svg>
+        </template>
+      </EmptyState>
       <template v-if="mode === 'stack'">
         <button
           class="flip prev"
@@ -448,8 +456,8 @@ h1 {
   inset: 50% 24px auto;
   margin: 0;
   transform: translateY(-50%);
-  color: var(--paper-muted);
-  text-align: center;
+  color: var(--paper-text);
+  pointer-events: none;
 }
 .flip {
   position: absolute;

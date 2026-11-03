@@ -229,6 +229,16 @@ describe('ShelfView', () => {
     w.unmount()
   })
 
+  it('shows a centered empty state when there are no journals', async () => {
+    store.journals.splice(0)
+    const w = mountShelf()
+    await flushPromises()
+    const empty = w.find('.shelf-empty')
+    expect(empty.exists()).toBe(true)
+    expect(empty.find('.empty-icon svg').exists()).toBe(true)
+    expect(empty.text()).toContain('No journals yet')
+  })
+
   it('shows an empty state in the modal when nothing matches', async () => {
     const w = mountShelf()
     await w.find('.search-btn').trigger('click')

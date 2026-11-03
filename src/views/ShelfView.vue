@@ -13,6 +13,7 @@ import { presetCovers } from '../covers'
 import { imageFileToPhoto } from '../ink/ops'
 import MobileSlider from '../components/MobileSlider.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import EmptyState from '../components/EmptyState.vue'
 import { usePrompt } from '../composables/usePrompt'
 import { saveFile } from '../saveFile'
 import type { ShelfAnchor, ShelfJournal, ShelfScene } from '../three/shelfScene'
@@ -277,6 +278,19 @@ async function onCoverPicked(e: Event) {
 
 <template>
   <div class="shelf">
+    <button
+      v-if="update.status === 'available'"
+      class="update-banner"
+      @click="downloadUpdate"
+    >
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3 22 20H2Z" />
+        <path d="M12 9.5v4.5" />
+        <circle cx="12" cy="17" r="0.5" fill="currentColor" />
+      </svg>
+      {{ updateLabel }}
+    </button>
+
     <nav class="topbar">
       <div class="top-actions">
         <button class="icon-btn search-btn" :class="{ on: searchOn }" @click="openSearch" :title="t('shelf.search')">
@@ -298,12 +312,6 @@ async function onCoverPicked(e: Event) {
         {{ selected ? t('journal.count', selected.pages.length) : t('shelf.count', store.journals.length) }}
       </p>
     </header>
-
-    <button
-      v-if="update.status === 'available'"
-      class="update-banner"
-      @click="downloadUpdate"
-    >{{ updateLabel }}</button>
 
     <div
       class="covers"
@@ -346,8 +354,28 @@ async function onCoverPicked(e: Event) {
         @pointerleave="uiHold = false"
         @click="select(b.id, $event)"
       >⋯</button>
-      <p v-if="glFailed" class="webgl-error" role="status">{{ t('shelf.webglError') }}</p>
-      <p v-if="!store.journals.length" class="empty">{{ t('shelf.noMatch') }}</p>
+      <EmptyState v-if="glFailed" class="webgl-error" :title="t('shelf.webglError')">
+        <template #icon>
+          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/>
+            <path d="M12 12 20 7.5M12 12 4 7.5M12 12v9"/>
+          </svg>
+        </template>
+      </EmptyState>
+      <EmptyState
+        v-if="!store.journals.length"
+        class="shelf-empty"
+        :title="t('shelf.emptyTitle')"
+        :hint="t('shelf.emptyHint')"
+      >
+        <template #icon>
+          <svg viewBox="0 0 24 24" width="52" height="52" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6.5 3.8h9A2.5 2.5 0 0 1 18 6.3v11.4a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 4 17.7V6.3a2.5 2.5 0 0 1 2.5-2.5Z"/>
+            <path d="M8.5 3.8v16.4"/>
+            <path d="M11.5 8.5h4"/>
+          </svg>
+        </template>
+      </EmptyState>
     </div>
 
     <footer>
@@ -464,7 +492,14 @@ async function onCoverPicked(e: Event) {
             <span class="hit-count">{{ t('journal.count', j.pages.length) }}</span>
           </span>
         </button>
-        <p v-if="!results.length" class="hint search-none">{{ t('shelf.noMatch') }}</p>
+        <EmptyState v-if="!results.length" class="search-none" :title="t('shelf.noMatch')">
+          <template #icon>
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+              <circle cx="10.5" cy="10.5" r="6.5"/>
+              <path d="M15.5 15.5 20 20"/>
+            </svg>
+          </template>
+        </EmptyState>
       </div>
     </MobileSlider>
     <ConfirmDialog
@@ -563,7 +598,7 @@ async function onCoverPicked(e: Event) {
   white-space: nowrap;
 }
 .hit-count { color: var(--chrome-muted); font-size: 12px; margin-top: 2px; }
-.search-none { text-align: center; padding: 14px 0; }
+.search-none { padding: 18px 0 10px; }
 header {
   padding: 13px 0 8px;
   text-align: center;
@@ -661,14 +696,19 @@ h1 {
   transition: opacity 0.15s;
 }
 .sel.on { opacity: 1; background: #2a8097; color: #fff; }
-.empty { color: var(--paper-muted); margin: auto; }
+.shelf-empty {
+  position: absolute;
+  inset: 0;
+  color: var(--paper-text);
+  pointer-events: none;
+}
 .webgl-error {
   position: absolute;
   inset: 50% 24px auto;
   margin: 0;
   transform: translateY(-50%);
-  color: var(--paper-muted);
-  text-align: center;
+  color: var(--paper-text);
+  pointer-events: none;
 }
 footer {
   display: flex;
@@ -764,19 +804,26 @@ footer {
   background: #2a8097;
 }
 .update-banner {
-  display: block;
-  width: calc(100% - 36px);
-  margin: 0 18px 8px;
-  padding: 9px 14px;
-  border-radius: 10px;
-  background: var(--layer-active-bg);
-  border: 1px solid var(--layer-active-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: max(9px, env(safe-area-inset-top)) 14px 9px;
+  background: rgba(234, 179, 8, .1);
+  border-bottom: 1px solid rgba(234, 179, 8, .3);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   color: var(--paper-text);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
   text-align: center;
   cursor: pointer;
+}
+.update-banner svg { flex-shrink: 0; color: var(--warn-icon); }
+@media (hover: hover) {
+  .update-banner:hover { background: rgba(234, 179, 8, .18); }
 }
 .cover-grid {
   display: grid;
