@@ -1,8 +1,8 @@
-import type { PageOp, PhotoItem } from '../types'
+import type { InkEngine, PageOp, PhotoItem } from '../types'
 
 const PAPER = '#f6f1e6'
 
-function hexToRgb(hex: string): [number, number, number] {
+export function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
   const v =
     h.length === 3
@@ -25,6 +25,8 @@ export function floodFill(
   sy: number,
   color: string,
   tol = 42,
+  ink?: InkEngine | null,
+  invert = false,
 ) {
   const ix = Math.round(sx)
   const iy = Math.round(sy)
@@ -35,6 +37,20 @@ export function floodFill(
   const [pr, pg, pb] = hexToRgb(PAPER)
   const [tr, tg, tb] = hexToRgb(color)
 
+  // Inverse fill: paint everything outside the seed's matching region.
+  if (invert && ink?.inverseFill) {
+    if (ink.inverseFill(d, wDev, hDev, ix, iy, tr, tg, tb, tol, pr, pg, pb, 128) > 0)
+      ctx.putImageData(img, 0, 0)
+    return
+  }
+  if (invert) return // no kernel — leave the canvas untouched
+
+  // WASM/engine kernel when present — the per-pixel loop runs natively.
+  if (ink?.floodFill) {
+    const n = ink.floodFill(d, wDev, hDev, ix, iy, tr, tg, tb, tol, pr, pg, pb, 128)
+    if (n > 0) ctx.putImageData(img, 0, 0)
+    return
+  }
   const si = (iy * wDev + ix) * 4
   const sr = d[si + 3] < 128 ? pr : d[si]
   const sg = d[si + 3] < 128 ? pg : d[si + 1]
@@ -212,14 +228,57 @@ export function applyOp(
   scale: number,
   ox = 0,
   oy = 0,
+  ink?: InkEngine | null,
 ) {
   switch (op.kind) {
     case 'fill':
       ctx.save()
       ctx.setTransform(1, 0, 0, 1, 0, 0)
-      floodFill(ctx, canvas.width, canvas.height, op.x * scale + ox, op.y * scale + oy, op.color)
+      floodFill(
+        ctx,
+        canvas.width,
+        canvas.height,
+        op.x * scale + ox,
+        op.y * scale + oy,
+        op.color,
+        42,
+        ink,
+        op.invert,
+      )
       ctx.restore()
       break
+    case 'erase': {
+      if (!ink?.eraseColor || typeof ctx.getImageData !== 'function') break
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      if (!img?.data) break
+      const n = ink.eraseColor(
+        img.data,
+        canvas.width,
+        canvas.height,
+        Math.round(op.x * scale + ox),
+        Math.round(op.y * scale + oy),
+        48,
+      )
+      if (n > 0) ctx.putImageData(img, 0, 0)
+      break
+    }
+    case 'filter': {
+      if (!ink || typeof ctx.getImageData !== 'function') break
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      if (!img?.data) break
+      const d = img.data
+      if (op.filter === 'blur' && ink.boxBlur) {
+        ink.boxBlur(d, canvas.width, canvas.height, Math.max(1, Math.round(op.amount ?? 4)))
+      } else if (op.filter === 'sharpen' && ink.sharpen) {
+        ink.sharpen(d, canvas.width, canvas.height, op.amount ?? 1)
+      } else if (op.filter === 'adjust' && ink.adjust) {
+        ink.adjust(d, op.brightness ?? 0, op.contrast ?? 0, op.saturation ?? 0)
+      } else {
+        break
+      }
+      ctx.putImageData(img, 0, 0)
+      break
+    }
     case 'cut':
       ctx.save()
       ctx.setTransform(1, 0, 0, 1, 0, 0)
@@ -238,25 +297,58 @@ export function applyOp(
   }
 }
 
-// Downscale an imported image so the dataURL fits localStorage comfortably.
+// Downscale an imported image for storage. Two-stage halving keeps detail the
+// single-shot canvas downscale loses; images with alpha stay PNG so
+// transparency survives (JPEG would flatten it onto black).
 export function imageFileToPhoto(
   file: File,
-  maxDim = 1024,
+  maxDim = 2048,
 ): Promise<{ src: string; w: number; h: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.onload = () => {
       const k = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight))
-      const w = Math.round(img.naturalWidth * k)
-      const h = Math.round(img.naturalHeight * k)
+      const w = Math.max(1, Math.round(img.naturalWidth * k))
+      const h = Math.max(1, Math.round(img.naturalHeight * k))
       const c = document.createElement('canvas')
       c.width = w
       c.height = h
-      c.getContext('2d')!.drawImage(img, 0, 0, w, h)
+      const c2 = c.getContext('2d', { willReadFrequently: true })!
+      // Progressive halving: draw at <=2x the target first, then at target.
+      let src: CanvasImageSource = img
+      let sw = img.naturalWidth
+      let sh = img.naturalHeight
+      while (sw / 2 > w && sh / 2 > h) {
+        const t = document.createElement('canvas')
+        t.width = Math.max(1, sw >> 1)
+        t.height = Math.max(1, sh >> 1)
+        t.getContext('2d')!.drawImage(src, 0, 0, t.width, t.height)
+        src = t
+        sw = t.width
+        sh = t.height
+      }
+      c2.drawImage(src, 0, 0, w, h)
       URL.revokeObjectURL(img.src)
-      resolve({ src: c.toDataURL('image/jpeg', 0.88), w, h })
+      const { data } = c2.getImageData(0, 0, w, h)
+      let hasAlpha = false
+      for (let i = 3; i < data.length; i += 16) {
+        if (data[i] < 250) {
+          hasAlpha = true
+          break
+        }
+      }
+      resolve({ src: imageDataURL(c, hasAlpha), w, h })
     }
     img.onerror = reject
     img.src = URL.createObjectURL(file)
   })
+}
+
+// Smallest sensible raster serialization: WebP when the engine supports it
+// (lossy + alpha-capable), PNG for alpha, JPEG otherwise. `toDataURL`
+// silently falls back to PNG on unsupported types, so the header is checked.
+export function imageDataURL(c: HTMLCanvasElement, hasAlpha: boolean, quality = 0.92): string {
+  const webp = c.toDataURL('image/webp', quality)
+  if (webp.startsWith('data:image/webp')) return webp
+  return hasAlpha ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', quality)
 }

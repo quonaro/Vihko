@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { applyCut, floodFill } from './ops'
+import { applyCut, floodFill, imageDataURL } from './ops'
 
 // floodFill only needs ctx.getImageData/putImageData, so a plain pixel buffer
 // stands in for the canvas 2d backend that jsdom lacks.
@@ -148,5 +148,19 @@ describe('applyCut', () => {
       (ctx as unknown as { fillRect: ReturnType<typeof vi.fn> }).fillRect,
     ).not.toHaveBeenCalled()
     createElement.mockRestore()
+  })
+})
+
+describe('imageDataURL', () => {
+  it('prefers webp and falls back by alpha', () => {
+    const calls: string[] = []
+    const c = {
+      toDataURL(type: string) {
+        calls.push(type)
+        return type === 'image/webp' ? 'data:image/webp;base64,x' : 'data:other'
+      },
+    } as unknown as HTMLCanvasElement
+    expect(imageDataURL(c, true)).toBe('data:image/webp;base64,x')
+    expect(calls).toHaveLength(1)
   })
 })

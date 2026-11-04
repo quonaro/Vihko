@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PAGE_H, PAGE_W } from '../pageSpace'
 import type { InkEngine, Layer, Page } from '../types'
-import { clearLayerRasterCache, cutOpForLayer, paintLayers } from './layers'
+import { clearLayerRasterCache, cutOpForLayer, layerRasterCanvas, paintLayers } from './layers'
 
 describe('cutOpForLayer', () => {
   it('maps a world-space selection and drag into transformed layer coordinates', () => {
@@ -138,6 +138,221 @@ describe('cutOpForLayer', () => {
 
       expect(rasterCtx.clearRect).toHaveBeenCalledTimes(1)
       expect(compositeCtx.drawImage).toHaveBeenCalledTimes(2)
+    } finally {
+      clearLayerRasterCache(page.id)
+      createElement.mockRestore()
+    }
+  })
+})
+
+// Mock 2d contexts: every method stubbed, globalCompositeOperation changes
+// recorded into `rec` (shared across contexts so masked composites show up).
+function stubCtx(rec?: { gco?: string[]; blends?: string[] }) {
+  let gco = 'source-over'
+  const ctx = {
+    save: vi.fn(),
+    restore: vi.fn(),
+    setTransform: vi.fn(),
+    translate: vi.fn(),
+    rotate: vi.fn(),
+    scale: vi.fn(),
+    clearRect: vi.fn(),
+    clip: vi.fn(),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    closePath: vi.fn(),
+    arc: vi.fn(),
+    rect: vi.fn(),
+    fill: vi.fn(),
+    drawImage: vi.fn(function (this: { globalCompositeOperation: string }) {
+      rec?.blends?.push(this.globalCompositeOperation)
+    }),
+    globalAlpha: 1,
+    fillStyle: '',
+    get globalCompositeOperation() {
+      return gco
+    },
+    set globalCompositeOperation(v: string) {
+      gco = v
+      rec?.gco?.push(v)
+    },
+  }
+  return ctx as unknown as CanvasRenderingContext2D
+}
+
+const stubCanvas = (ctx: CanvasRenderingContext2D) =>
+  ({ width: 0, height: 0, getContext: () => ctx }) as unknown as HTMLCanvasElement
+
+const stubInk = (): InkEngine => ({
+  begin: () => 1,
+  addPoint: () => [{ x: 0, y: 0, w: 3, a: 1 }],
+  predict: () => [],
+  end: () => [{ x: 1, y: 1, w: 3, a: 1 }],
+})
+
+const stubLayer = (id: string, extra: Partial<Layer> = {}): Layer => ({
+  id,
+  name: id,
+  visible: true,
+  opacity: 1,
+  x: 0,
+  y: 0,
+  scale: 1,
+  rotation: 0,
+  ...extra,
+})
+
+describe('layer raster cache (fixed resolution)', () => {
+  it('reuses the same raster across zoom levels', () => {
+    const rasterCtx = stubCtx()
+    const compositeCtx = stubCtx()
+    const createElement = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation(() => stubCanvas(rasterCtx))
+    const page: Page = {
+      id: 'fixed-res',
+      strokes: [],
+      layers: [stubLayer('L')],
+      createdAt: 0,
+    }
+
+    clearLayerRasterCache(page.id)
+    try {
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, stubInk(), 1)
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, stubInk(), 8)
+
+      // One rasterization for both zoom levels, at the fixed raster width.
+      expect(rasterCtx.clearRect).toHaveBeenCalledTimes(1)
+      expect(createElement.mock.results[0].value.width).toBe(3072)
+      expect(compositeCtx.drawImage).toHaveBeenCalledTimes(2)
+    } finally {
+      clearLayerRasterCache(page.id)
+      createElement.mockRestore()
+    }
+  })
+
+  it('exposes the cached layer raster for thumbnails', () => {
+    const rasterCtx = stubCtx()
+    const createElement = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation(() => stubCanvas(rasterCtx))
+    const page: Page = {
+      id: 'thumb-page',
+      strokes: [],
+      layers: [stubLayer('L')],
+      createdAt: 0,
+    }
+
+    clearLayerRasterCache(page.id)
+    try {
+      const raster = layerRasterCanvas(page, stubInk(), 'L')
+      expect(raster).not.toBeNull()
+      expect(raster!.width).toBe(3072)
+      // A second call hits the same raster.
+      expect(layerRasterCanvas(page, stubInk(), 'L')).toBe(raster)
+      expect(rasterCtx.clearRect).toHaveBeenCalledTimes(1)
+    } finally {
+      clearLayerRasterCache(page.id)
+      createElement.mockRestore()
+    }
+  })
+})
+
+describe('layer compositing', () => {
+  const mockCanvases = (gco: string[], blends: string[]) => {
+    const compositeCtx = stubCtx({ gco, blends })
+    const createElement = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation(() => stubCanvas(stubCtx({ gco, blends })))
+    return { compositeCtx, createElement }
+  }
+
+  it('composites a layer with its blend mode', () => {
+    const gco: string[] = []
+    const blends: string[] = []
+    const { compositeCtx, createElement } = mockCanvases(gco, blends)
+    const page: Page = {
+      id: 'blend-page',
+      strokes: [],
+      layers: [stubLayer('L', { blend: 'multiply' })],
+      createdAt: 0,
+    }
+
+    clearLayerRasterCache(page.id)
+    try {
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, stubInk(), 1)
+      expect(blends).toContain('multiply')
+    } finally {
+      clearLayerRasterCache(page.id)
+      createElement.mockRestore()
+    }
+  })
+
+  it('paints alpha-locked strokes with source-atop, others normally', () => {
+    const gco: string[] = []
+    const { compositeCtx, createElement } = mockCanvases(gco, [])
+    const page: Page = {
+      id: 'lock-page',
+      strokes: [
+        { tool: 'write', color: '#111111', pts: [{ x: 0, y: 0, t: 0, p: 0.5 }], layerId: 'L' },
+        {
+          tool: 'write',
+          color: '#222222',
+          pts: [{ x: 0, y: 0, t: 0, p: 0.5 }],
+          layerId: 'L',
+          alphaLock: true,
+        },
+      ],
+      layers: [stubLayer('L')],
+      createdAt: 0,
+    }
+
+    clearLayerRasterCache(page.id)
+    try {
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, stubInk(), 1)
+      expect(gco.filter((v) => v === 'source-atop')).toHaveLength(1)
+    } finally {
+      clearLayerRasterCache(page.id)
+      createElement.mockRestore()
+    }
+  })
+
+  it('masks a clipped layer to the layer below via destination-in', () => {
+    const gco: string[] = []
+    const { compositeCtx, createElement } = mockCanvases(gco, [])
+    const page: Page = {
+      id: 'clip-page',
+      strokes: [],
+      layers: [stubLayer('base'), stubLayer('top', { clip: true })],
+      createdAt: 0,
+    }
+
+    clearLayerRasterCache(page.id)
+    try {
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, stubInk(), 1)
+      expect(gco).toContain('destination-in')
+    } finally {
+      clearLayerRasterCache(page.id)
+      createElement.mockRestore()
+    }
+  })
+
+  it('draws a clipped layer normally when no visible base exists', () => {
+    const gco: string[] = []
+    const { compositeCtx, createElement } = mockCanvases(gco, [])
+    const page: Page = {
+      id: 'clip-no-base',
+      strokes: [],
+      layers: [stubLayer('hidden', { visible: false }), stubLayer('top', { clip: true })],
+      createdAt: 0,
+    }
+
+    clearLayerRasterCache(page.id)
+    try {
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, stubInk(), 1)
+      expect(gco).not.toContain('destination-in')
+      expect(compositeCtx.drawImage).toHaveBeenCalled()
     } finally {
       clearLayerRasterCache(page.id)
       createElement.mockRestore()

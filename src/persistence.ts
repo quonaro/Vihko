@@ -37,6 +37,16 @@ async function openDatabase(): Promise<SQLiteDBConnection> {
       ? await connection.retrieveConnection(DATABASE_NAME, false)
       : await connection.createConnection(DATABASE_NAME, false, 'no-encryption', 1, false)
   await database.open()
+  // The whole journal model is one big app_state row rewritten on every
+  // save: WAL mode keeps writes cheap, checkpointing + VACUUM on open
+  // reclaim the file space left by superseded giant values.
+  try {
+    await database.query('PRAGMA journal_mode=WAL')
+    await database.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    await database.execute('VACUUM')
+  } catch {
+    // PRAGMA support varies across SQLite bindings — non-fatal.
+  }
   return database
 }
 

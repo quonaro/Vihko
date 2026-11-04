@@ -1,5 +1,6 @@
 // Preset cover art for the cover picker — small generative designs baked
 // to dataURLs once at startup (no external assets).
+import { imageDataURL } from './ink/ops'
 
 const W = 340
 const H = 480
@@ -12,7 +13,7 @@ function bake(draw: (c: CanvasRenderingContext2D) => void): string {
   const ctx = el.getContext('2d')
   if (!ctx) return FALLBACK_COVER // no canvas backend (e.g. jsdom tests)
   draw(ctx)
-  return el.toDataURL('image/jpeg', 0.85)
+  return imageDataURL(el, false, 0.85)
 }
 
 const mulberry32 = (seed: number) => () => {

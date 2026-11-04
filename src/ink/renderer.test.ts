@@ -20,12 +20,26 @@ function makeCtx(): CanvasRenderingContext2D & MockCtx {
       this.stops.push([o, c])
     },
   }
+  const stack: [string, number][] = []
   const ctx: MockCtx & Record<string, unknown> = {
     ops: [],
     fillStyle: '#000',
     globalAlpha: 1,
     globalCompositeOperation: 'source-over',
     grad,
+    save() {
+      stack.push([ctx.globalCompositeOperation, ctx.globalAlpha])
+    },
+    restore() {
+      const st = stack.pop()
+      if (st) {
+        ctx.globalCompositeOperation = st[0]
+        ctx.globalAlpha = st[1]
+      }
+    },
+    drawImage() {
+      ctx.ops.push({ name: 'drawImage', args: [] })
+    },
     beginPath() {
       ctx.ops.push({ name: 'beginPath', args: [] })
     },
@@ -63,22 +77,22 @@ describe('renderSamples', () => {
     expect(ctx.ops).toEqual([])
   })
 
-  it('solid painter: round cap + quads between samples', () => {
+  it('solid painter: one outline polygon + round caps', () => {
     const ctx = makeCtx()
     renderSamples(ctx, 'draw', '#22221f', stroke(0, 5, 10))
-    expect(ctx.fillStyle).toBe('rgba(34,34,31,1)')
-    // 1 cap joint + 2 quads + 2 joints
-    expect(ops(ctx, 'arc')).toHaveLength(3)
-    expect(ops(ctx, 'moveTo')).toHaveLength(2)
-    expect(ops(ctx, 'lineTo')).toHaveLength(6)
-    expect(ops(ctx, 'fill').length).toBeGreaterThanOrEqual(5)
+    expect(ctx.fillStyle).toBe('rgb(34,34,31)')
+    // one polygon (3 left + 2 right points) + 2 cap joints
+    expect(ops(ctx, 'arc')).toHaveLength(2)
+    expect(ops(ctx, 'moveTo')).toHaveLength(1)
+    expect(ops(ctx, 'lineTo')).toHaveLength(5)
+    expect(ops(ctx, 'fill')).toHaveLength(3)
   })
 
   it('single sample draws only the round cap', () => {
     const ctx = makeCtx()
     renderSamples(ctx, 'write', '#000000', stroke(0))
     expect(ops(ctx, 'arc')).toHaveLength(1)
-    expect(ops(ctx, 'moveTo')).toHaveLength(0)
+    expect(ops(ctx, 'moveTo')).toHaveLength(1) // degenerate outline, no fill area
   })
 
   it('scales brush sample widths without changing the stored geometry', () => {
@@ -99,7 +113,7 @@ describe('renderSamples', () => {
     for (const tool of ['draw', 'write', 'outline'] as ToolId[]) {
       const ctx = makeCtx()
       renderSamples(ctx, tool, '#123456', stroke(0, 5))
-      expect(ctx.fillStyle).toBe('rgba(18,52,86,1)')
+      expect(ctx.fillStyle).toBe('rgb(18,52,86)')
     }
   })
 
@@ -146,6 +160,35 @@ describe('renderSamples', () => {
   it('accepts 3-digit hex colors', () => {
     const ctx = makeCtx()
     renderSamples(ctx, 'draw', '#fff', stroke(0))
-    expect(ctx.fillStyle).toBe('rgba(255,255,255,1)')
+    expect(ctx.fillStyle).toBe('rgb(255,255,255)')
+  })
+})
+
+describe('brush options', () => {
+  it('opacity scales sample alpha and restores it', () => {
+    const ctx = makeCtx()
+    renderSamples(ctx, 'draw', '#22221f', stroke(0), 1, 1, { opacity: 0.5 })
+    expect(ctx.globalCompositeOperation).toBe('source-over')
+    // globalAlpha is restored to 1 after painting
+    expect(ctx.globalAlpha).toBe(1)
+  })
+
+  it('blend applies the stroke composite operation', () => {
+    const ctx = makeCtx()
+    renderSamples(ctx, 'draw', '#22221f', stroke(0), 1, 1, { blend: 'multiply' })
+    expect(ctx.globalCompositeOperation).toBe('source-over') // restored
+  })
+
+  it('texture tip falls back to the solid painter without a canvas backend', () => {
+    const ctx = makeCtx()
+    renderSamples(ctx, 'draw', '#22221f', stroke(0, 5), 1, 1, { tip: 'airbrush' })
+    // jsdom has no 2d backend -> stampSprite returns null -> solid outline
+    expect(ops(ctx, 'lineTo').length).toBeGreaterThan(0)
+  })
+
+  it('eraser with a texture tip stays on destination-out fallback', () => {
+    const ctx = makeCtx()
+    renderSamples(ctx, 'eraser', '#fff', stroke(0, 5), 1, 1, { tip: 'noise' })
+    expect(ops(ctx, 'fill').length).toBeGreaterThan(0)
   })
 })
