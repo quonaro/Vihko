@@ -7,6 +7,7 @@ import { i18n, setLocale } from '../i18n'
 import { store } from '../store'
 import { setTheme } from '../theme'
 import { update } from '../update'
+import { setGlQuality, setCoverQuality } from '../quality'
 import type { Journal } from '../types'
 
 const shelfSceneMock = vi.hoisted(() => ({
@@ -83,6 +84,10 @@ afterEach(() => {
   usePrompt().settle(null)
   setTheme('light')
   localStorage.removeItem('vihko:theme')
+  setGlQuality('medium')
+  setCoverQuality('medium')
+  localStorage.removeItem('vihko:gl-quality')
+  localStorage.removeItem('vihko:cover-quality')
   document.querySelectorAll('.morph').forEach((el) => {
     el.remove()
   })
@@ -123,9 +128,9 @@ describe('ShelfView', () => {
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
     // the settings sheet is teleported to <body>
     const rows = document.body.querySelectorAll<HTMLElement>('.set-row')
-    expect(rows).toHaveLength(4)
+    expect(rows).toHaveLength(6)
     expect(rows[0].querySelector('.set-value')?.textContent?.trim()).toMatch(/^v\d+\.\d+\.\d+/)
-    expect(rows[3].querySelector<HTMLButtonElement>('.set-action')?.textContent).toBe(
+    expect(rows[5].querySelector<HTMLButtonElement>('.set-action')?.textContent).toBe(
       'Check for updates',
     )
     expect(document.body.textContent).not.toContain('2D')
@@ -190,6 +195,28 @@ describe('ShelfView', () => {
     expect(buttons[1].getAttribute('aria-pressed')).toBe('true')
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(localStorage.getItem('vihko:theme')).toBe('dark')
+  })
+
+  it('switches and persists render and cover quality from settings', async () => {
+    const w = mountShelf()
+    await w.findAll('.top-actions .icon-btn')[1].trigger('click')
+    const rows = document.body.querySelectorAll<HTMLElement>('.set-row')
+    const renderSeg = rows[3].querySelectorAll<HTMLButtonElement>('.seg-btn')
+    const coverSeg = rows[4].querySelectorAll<HTMLButtonElement>('.seg-btn')
+    expect(renderSeg).toHaveLength(4)
+    expect(coverSeg).toHaveLength(4)
+
+    expect(renderSeg[1].classList.contains('on')).toBe(true) // medium default
+    expect(coverSeg[1].classList.contains('on')).toBe(true)
+
+    renderSeg[3].click() // ultra
+    coverSeg[0].click() // low
+    await nextTick()
+
+    expect(localStorage.getItem('vihko:gl-quality')).toBe('ultra')
+    expect(localStorage.getItem('vihko:cover-quality')).toBe('low')
+    expect(renderSeg[3].classList.contains('on')).toBe(true)
+    expect(coverSeg[0].classList.contains('on')).toBe(true)
   })
 
   it('opens a search modal listing all journals', async () => {

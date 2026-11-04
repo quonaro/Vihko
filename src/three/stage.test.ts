@@ -7,22 +7,22 @@ describe('3D quality profile', () => {
     vi.restoreAllMocks()
   })
 
-  it('uses the low profile regardless of pointer type', () => {
+  it('uses the medium profile regardless of pointer type', () => {
     vi.spyOn(window, 'matchMedia').mockReturnValue({
       matches: false,
     } as MediaQueryList)
-    expect(detectQuality()).toBe('low')
+    expect(detectQuality()).toBe('medium')
     expect(window.matchMedia).not.toHaveBeenCalled()
   })
 
   it('allows an explicit quality override', () => {
-    localStorage.setItem('vihko:gl-quality', 'high')
-    expect(detectQuality()).toBe('high')
+    localStorage.setItem('vihko:gl-quality', 'ultra')
+    expect(detectQuality()).toBe('ultra')
   })
 
-  it('ignores invalid overrides and falls back to the low profile', () => {
+  it('ignores invalid overrides and falls back to the medium profile', () => {
     localStorage.setItem('vihko:gl-quality', 'potato')
-    expect(detectQuality()).toBe('low')
+    expect(detectQuality()).toBe('medium')
   })
 })
 

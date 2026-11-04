@@ -13,6 +13,7 @@ import {
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { update, downloadUpdate } from '../update'
+import { glQuality, coverQuality } from '../quality'
 import { morphTo, centeredRect } from '../anim'
 import JournalMenuDialog from '../components/JournalMenuDialog.vue'
 import CoverTexturePicker from '../components/CoverTexturePicker.vue'
@@ -192,6 +193,12 @@ onMounted(startScene)
 onBeforeUnmount(stopScene)
 
 watch(journalSig, () => scene?.setJournals(sceneJournals()))
+// Quality toggles can't patch a live scene — the renderer pipeline and the
+// cover texture sizes are fixed at construction — so rebuild it instead.
+watch([glQuality, coverQuality], () => {
+  stopScene()
+  void startScene()
+})
 function openJournalMenu(id: string) {
   menuJournalId.value = id
   menuOn.value = true

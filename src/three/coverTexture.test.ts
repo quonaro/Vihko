@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { coverCanvas, paintCover, dominantColorFromPixels } from './coverTexture'
+import { coverCanvas, coverWidth, paintCover, dominantColorFromPixels } from './coverTexture'
 
 describe('dominantColorFromPixels', () => {
   it('returns the most common opaque color', () => {
@@ -18,6 +18,19 @@ describe('dominantColorFromPixels', () => {
 describe('coverCanvas', () => {
   it('returns null where no 2D context exists (jsdom)', () => {
     expect(coverCanvas({ color: '#333' })).toBeNull()
+  })
+})
+
+describe('coverWidth', () => {
+  it('follows the cover-quality setting, defaulting to medium', () => {
+    expect(coverWidth()).toBe(768)
+    localStorage.setItem('vihko:cover-quality', 'low')
+    expect(coverWidth()).toBe(384)
+    localStorage.setItem('vihko:cover-quality', 'high')
+    expect(coverWidth()).toBe(1024)
+    localStorage.setItem('vihko:cover-quality', 'ultra')
+    expect(coverWidth()).toBe(1536)
+    localStorage.removeItem('vihko:cover-quality')
   })
 })
 

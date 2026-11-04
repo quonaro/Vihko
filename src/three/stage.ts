@@ -8,12 +8,14 @@ import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
+import { GL_QUALITY_KEY, readQuality } from '../quality'
+import type { Quality } from '../quality'
 
 // Shared "studio" setup for the 3D views: a filmic renderer plus a
 // three-point lighting rig, IBL env map and a shadow-catching floor, so
 // the journal spread and the shelf share the same look.
 
-export type Quality = 'low' | 'high'
+export type { Quality }
 
 // Ink border width in CSS px. WebGL ignores `linewidth` on plain lines —
 // they always rasterize 1 device px — so the outline uses the fat-line
@@ -67,15 +69,24 @@ export function gridEdgeLoop(segX: number, segY: number): number[] {
   return idx
 }
 
-// One render path for every device — a desktop shows what a phone shows:
-// straight to the canvas with plain PCF shadows and a lower pixel ratio.
-// The HDR MSAA composer + VSM blur stay available as 'high' via the
-// localStorage override for testing: vihko:gl-quality = low|high.
+// Render profile per tier: pixel-ratio ceiling, whether the HDR composer
+// runs (vs drawing straight to the canvas), canvas MSAA, shadow-map size
+// and VSM blur params. 'medium' is the default — the two upper tiers add
+// the composer pipeline, 'low' is the battery saver.
+const TIER: Record<
+  Quality,
+  { pr: number; msaa: boolean; composer: boolean; shadow: number; radius: number; blur: number }
+> = {
+  low: { pr: 1, msaa: false, composer: false, shadow: 512, radius: 3, blur: 4 },
+  medium: { pr: 2, msaa: true, composer: false, shadow: 1024, radius: 3, blur: 4 },
+  high: { pr: 2, msaa: false, composer: true, shadow: 2048, radius: 12, blur: 25 },
+  ultra: { pr: 3, msaa: false, composer: true, shadow: 2048, radius: 16, blur: 32 },
+}
+
+// Switchable in the settings sheet; the same localStorage key works as an
+// override for testing.
 export function detectQuality(): Quality {
-  const forced =
-    typeof localStorage !== 'undefined' ? localStorage.getItem('vihko:gl-quality') : null
-  if (forced === 'low' || forced === 'high') return forced
-  return 'low'
+  return readQuality(GL_QUALITY_KEY, 'medium')
 }
 
 // Render-on-demand scheduler: wake() guarantees a frame; the loop keeps
@@ -105,27 +116,23 @@ export class FramePump {
 }
 
 export function createRenderer(canvas: HTMLCanvasElement, q: Quality = detectQuality()) {
-  // On the low tier this canvas is the final output — antialias here is its
-  // only MSAA. On high it would just burn resolve bandwidth: the composer
-  // renders into its own multisampled target and blits a fullscreen quad.
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: q === 'low', alpha: true })
+  const t = TIER[q]
+  // Canvas MSAA is only worth paying for on tiers without the composer —
+  // there it's the only AA. On composer tiers it would just burn resolve
+  // bandwidth: the composer renders into its own multisampled target and
+  // blits a fullscreen quad.
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: t.msaa, alpha: true })
   // Floor of 1.5 gives DPR-1 displays real supersampling — the worst case
-  // for stair-stepping on the near-horizontal page/cover edges. Cap at 2:
-  // the composer targets an MSAA×4 HalfFloat buffer, so each extra step of
-  // pixel ratio multiplies framebuffer memory quadratically. The low tier
-  // caps harder: mid-range GPUs are fill-rate bound and a phone panel
-  // gains little past ~1.5.
-  renderer.setPixelRatio(
-    q === 'low'
-      ? Math.min(window.devicePixelRatio || 1, 1.5)
-      : Math.min(Math.max(window.devicePixelRatio, 1.5), 2),
-  )
+  // for stair-stepping on the near-horizontal page/cover edges. The cap is
+  // per tier: rendering below native DPR is what makes cover art look soft
+  // on phones, while each extra step multiplies framebuffer memory.
+  renderer.setPixelRatio(Math.min(Math.max(window.devicePixelRatio || 1, 1.5), t.pr))
   renderer.shadowMap.enabled = true
   // VSM: the only soft-shadow path left — `shadow.radius` + `blurSamples`
-  // blur the variance map edges (PCFSoft was removed in r186). The low
-  // tier falls back to plain PCF: a float map plus two 2048² blur passes
-  // per frame is exactly what a mid-range phone can't afford.
-  renderer.shadowMap.type = q === 'low' ? THREE.PCFShadowMap : THREE.VSMShadowMap
+  // blur the variance map edges (PCFSoft was removed in r186). Non-composer
+  // tiers fall back to plain PCF: a float map plus two blur passes per
+  // frame is exactly what a mid-range phone can't afford.
+  renderer.shadowMap.type = t.composer ? THREE.VSMShadowMap : THREE.PCFShadowMap
   // Filmic rolloff keeps the paper bright without clipping to flat white.
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.toneMappingExposure = 1.05
@@ -135,15 +142,15 @@ export function createRenderer(canvas: HTMLCanvasElement, q: Quality = detectQua
 // Post pipeline shared by both scenes: the scene renders into a
 // multisampled (MSAA ×4) HDR target, OutputPass applies tone mapping +
 // sRGB, and FXAA cleans up the remaining edge jaggies the MSAA misses.
-// The low tier skips it entirely — tone mapping + sRGB then run in the
-// material shaders as the renderer draws to the canvas directly.
+// Non-composer tiers skip it entirely — tone mapping + sRGB then run in
+// the material shaders as the renderer draws to the canvas directly.
 export function createComposer(
   renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
   camera: THREE.Camera,
   q: Quality = detectQuality(),
 ) {
-  if (q === 'low') {
+  if (!TIER[q].composer) {
     return {
       render: () => renderer.render(scene, camera),
       setSize: () => {},
@@ -193,15 +200,14 @@ export function addStudioRig(
   const key = new THREE.DirectionalLight(0xfff0dc, 1.7)
   key.position.set(-3.2, 1.7, -1.4)
   key.castShadow = true
-  // The VSM blur below only exists on the high tier; low gets a small
-  // PCF map instead, so the blur params are kept minimal there.
-  key.shadow.mapSize.setScalar(q === 'low' ? 1024 : 2048)
+  const t = TIER[q]
+  key.shadow.mapSize.setScalar(t.shadow)
   key.shadow.camera.left = -4
   key.shadow.camera.right = 4
   key.shadow.camera.top = 4
   key.shadow.camera.bottom = -4
-  key.shadow.radius = q === 'low' ? 3 : 12
-  key.shadow.blurSamples = q === 'low' ? 4 : 25
+  key.shadow.radius = t.radius
+  key.shadow.blurSamples = t.blur
   key.shadow.bias = -0.0002
   key.shadow.normalBias = 0.02
   scene.add(key)

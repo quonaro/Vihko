@@ -1,12 +1,27 @@
 import { getPhoto } from '../ink/ops'
+import { COVER_QUALITY_KEY, readQuality } from '../quality'
+import type { Quality } from '../quality'
 import type { CoverTexture } from '../types'
 
 // Rasterize a journal cover into a canvas texture: cover color or photo.
 // The title is not part of the texture — the shelf shows it as a DOM label
 // under each book.
 
-export const COVER_W = 384
+// Texture width per cover-quality tier; 'medium' is the default, 'ultra'
+// keeps covers sharp even deep into the shelf zoom at the cost of ~13MB
+// of texture memory per book.
+const COVER_W_BY_QUALITY: Record<Quality, number> = {
+  low: 384,
+  medium: 768,
+  high: 1024,
+  ultra: 1536,
+}
+export const COVER_W = COVER_W_BY_QUALITY.medium
 export const COVER_H = Math.round(COVER_W / 0.735) // matches shelfLayout aspect
+
+export function coverWidth(): number {
+  return COVER_W_BY_QUALITY[readQuality(COVER_QUALITY_KEY, 'medium')]
+}
 
 const GRAIN_SIZE = 96
 let grainTile: HTMLCanvasElement | null | undefined
@@ -142,7 +157,7 @@ export function paintCover(
 }
 
 // Offscreen canvas snapshot of a cover; null when 2D is unavailable (jsdom).
-export function coverCanvas(input: CoverInput, width = COVER_W): HTMLCanvasElement | null {
+export function coverCanvas(input: CoverInput, width = coverWidth()): HTMLCanvasElement | null {
   const c = document.createElement('canvas')
   c.width = width
   c.height = Math.round(width / 0.735)

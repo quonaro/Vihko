@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import MobileSlider from './MobileSlider.vue'
 import { setLocale } from '../i18n'
 import { setTheme, theme } from '../theme'
+import { QUALITY_LEVELS, glQuality, coverQuality, setGlQuality, setCoverQuality } from '../quality'
 import {
   appVersion,
   update,
@@ -94,6 +95,32 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
         <button class="seg-btn" :class="{ on: locale === 'ru' }" @click="setLocale('ru')">Русский</button>
       </div>
     </div>
+    <div class="set-row set-col">
+      <span class="set-label">{{ t('shelf.renderQuality') }}</span>
+      <div class="seg">
+        <button
+          v-for="q in QUALITY_LEVELS"
+          :key="q"
+          class="seg-btn"
+          :class="{ on: glQuality === q }"
+          :aria-pressed="glQuality === q"
+          @click="setGlQuality(q)"
+        >{{ t(`shelf.quality.${q}`) }}</button>
+      </div>
+    </div>
+    <div class="set-row set-col">
+      <span class="set-label">{{ t('shelf.coverQuality') }}</span>
+      <div class="seg">
+        <button
+          v-for="q in QUALITY_LEVELS"
+          :key="q"
+          class="seg-btn"
+          :class="{ on: coverQuality === q }"
+          :aria-pressed="coverQuality === q"
+          @click="setCoverQuality(q)"
+        >{{ t(`shelf.quality.${q}`) }}</button>
+      </div>
+    </div>
     <div class="set-row">
       <span class="set-label">{{ t('shelf.updates') }}</span>
       <button
@@ -132,6 +159,13 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
   gap: 14px;
 }
 .set-row + .set-row { margin-top: 14px; }
+/* 4-button segments don't fit next to their label — stack and stretch. */
+.set-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.set-col .seg-btn { flex: 1; padding: 7px 0; }
 .set-label { color: var(--chrome-text); font-size: 14px; }
 .seg {
   display: flex;
