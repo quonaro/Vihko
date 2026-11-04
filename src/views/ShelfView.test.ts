@@ -8,25 +8,35 @@ import { store } from '../store'
 import { setTheme } from '../theme'
 import { update } from '../update'
 import { setGlQuality, setCoverQuality } from '../quality'
+import { setEnterAnim } from '../enterAnim'
 import type { Journal } from '../types'
 
 const shelfSceneMock = vi.hoisted(() => ({
-  events: null as { onLongPress?: (id: string) => void } | null,
+  events: null as {
+    onPick?: (id: string) => void
+    onLongPress?: (id: string) => void
+  } | null,
+  lastEnter: null as { id: string; kind: string; cb: () => void } | null,
 }))
 
 // The real shelf needs WebGL; the fake scene emits fixed anchors and exposes
-// its long-press callback so the management sheet can be tested.
+// its pick/long-press callbacks plus the enter-transition entry point.
 vi.mock('../three/shelfScene', () => ({
   ShelfScene: class {
     private journals: { id: string }[] = []
     constructor(
       _canvas: HTMLCanvasElement,
       private events: {
+        onPick?: (id: string) => void
         onOverlay?: (anchors: unknown[]) => void
         onLongPress?: (id: string) => void
       },
     ) {
       shelfSceneMock.events = this.events
+    }
+    beginEnter(id: string, kind: string, cb: () => void) {
+      shelfSceneMock.lastEnter = { id, kind, cb }
+      return true
     }
     setJournals(list: { id: string }[]) {
       this.journals = list
@@ -63,6 +73,8 @@ const journal = (id: string, title: string): Journal => ({
 
 beforeEach(() => {
   shelfSceneMock.events = null
+  shelfSceneMock.lastEnter = null
+  setEnterAnim('dive')
   store.journals.splice(0, store.journals.length, journal('a', 'Alpha'), journal('b', 'Beta'))
   store.journalId = null
   store.pageId = null
@@ -123,16 +135,15 @@ describe('ShelfView', () => {
     expect(store.journals).toHaveLength(3)
   })
 
-  it('shows theme, language, version and updates in the settings sheet', async () => {
+  it('shows appearance, graphics and updates sections in the settings sheet', async () => {
     const w = mountShelf()
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
     // the settings sheet is teleported to <body>
-    const rows = document.body.querySelectorAll<HTMLElement>('.set-row')
-    expect(rows).toHaveLength(6)
-    expect(rows[0].querySelector('.set-value')?.textContent?.trim()).toMatch(/^v\d+\.\d+\.\d+/)
-    expect(rows[5].querySelector<HTMLButtonElement>('.set-action')?.textContent).toBe(
-      'Check for updates',
-    )
+    const menu = document.body.querySelectorAll<HTMLElement>('.set-menu-btn')
+    expect(menu).toHaveLength(3)
+    expect(menu[0].textContent).toContain('Appearance')
+    expect(menu[1].textContent).toContain('Graphics')
+    expect(menu[2].textContent).toContain('Updates')
     expect(document.body.textContent).not.toContain('2D')
   })
 
@@ -150,11 +161,14 @@ describe('ShelfView', () => {
     )
     const w = mountShelf()
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
-    const btn = document.body.querySelector<HTMLButtonElement>('.set-action')!
+    document.body.querySelectorAll<HTMLElement>('.set-menu-btn')[2].click()
+    await nextTick()
+    const rows = document.body.querySelectorAll<HTMLElement>('.set-row')
+    const status = rows[0].querySelector<HTMLElement>('.set-value')!
+    expect(status.textContent?.trim()).toMatch(/^v\d+\.\d+\.\d+$/)
+    const btn = rows[1].querySelector<HTMLButtonElement>('.set-action')!
     btn.click()
     await flushPromises()
-    const status = document.body.querySelector<HTMLElement>('.set-value')!
-    expect(status.textContent?.trim()).toMatch(/^v\d+\.\d+\.\d+$/)
     expect(btn.textContent).toBe('Update v99.0.0')
     expect(w.find('.update-dot').exists()).toBe(true)
     const banner = w.find('button.update-banner')
@@ -166,8 +180,10 @@ describe('ShelfView', () => {
   it('switches the language from the settings sheet', async () => {
     const w = mountShelf()
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
+    document.body.querySelectorAll<HTMLElement>('.set-menu-btn')[0].click()
+    await nextTick()
     const rows = document.body.querySelectorAll<HTMLElement>('.set-row')
-    const seg = rows[2].querySelectorAll<HTMLElement>('.seg-btn')
+    const seg = rows[1].querySelectorAll<HTMLElement>('.seg-btn')
     expect(seg[0].textContent).toBe('English')
     expect(seg[1].textContent).toBe('Русский')
     expect(seg[0].classList.contains('on')).toBe(true)
@@ -184,8 +200,10 @@ describe('ShelfView', () => {
   it('switches and persists the appearance theme from settings', async () => {
     const w = mountShelf()
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
+    document.body.querySelectorAll<HTMLElement>('.set-menu-btn')[0].click()
+    await nextTick()
     const buttons = document.body
-      .querySelectorAll<HTMLElement>('.set-row')[1]
+      .querySelectorAll<HTMLElement>('.set-row')[0]
       .querySelectorAll<HTMLButtonElement>('.seg-btn')
 
     expect(buttons[0].getAttribute('aria-pressed')).toBe('true')
@@ -200,9 +218,11 @@ describe('ShelfView', () => {
   it('switches and persists render and cover quality from settings', async () => {
     const w = mountShelf()
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
+    document.body.querySelectorAll<HTMLElement>('.set-menu-btn')[1].click()
+    await nextTick()
     const rows = document.body.querySelectorAll<HTMLElement>('.set-row')
-    const renderSeg = rows[3].querySelectorAll<HTMLButtonElement>('.seg-btn')
-    const coverSeg = rows[4].querySelectorAll<HTMLButtonElement>('.seg-btn')
+    const renderSeg = rows[0].querySelectorAll<HTMLButtonElement>('.seg-btn')
+    const coverSeg = rows[1].querySelectorAll<HTMLButtonElement>('.seg-btn')
     expect(renderSeg).toHaveLength(4)
     expect(coverSeg).toHaveLength(4)
 
@@ -227,6 +247,50 @@ describe('ShelfView', () => {
     expect(hits).toHaveLength(2)
     expect(hits[0].textContent).toContain('Alpha')
     expect(hits[1].textContent).toContain('Beta')
+  })
+
+  it('dives into the tapped journal, then hands off to the journal view', async () => {
+    const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
+    await flushPromises()
+    shelfSceneMock.events?.onPick?.('a')
+    // the scene owns the 3D move; the view stays on the shelf until cb
+    expect(shelfSceneMock.lastEnter).toMatchObject({ id: 'a', kind: 'dive' })
+    await nextTick()
+    expect(w.classes()).toContain('is-entering')
+    expect(store.view).toBe('shelf')
+    shelfSceneMock.lastEnter?.cb()
+    await nextTick()
+    expect(store.journalId).toBe('a')
+    expect(store.view).toBe('journal')
+    // a fullscreen cover card fades over the freshly mounted journal
+    expect(document.querySelector('.morph')).not.toBeNull()
+    w.unmount()
+  })
+
+  it('opens the cover via the scene when the setting is open', async () => {
+    setEnterAnim('open')
+    const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
+    await flushPromises()
+    shelfSceneMock.events?.onPick?.('b')
+    expect(shelfSceneMock.lastEnter).toMatchObject({ id: 'b', kind: 'open' })
+    shelfSceneMock.lastEnter?.cb()
+    await nextTick()
+    expect(store.journalId).toBe('b')
+    expect(store.view).toBe('journal')
+    w.unmount()
+  })
+
+  it('keeps the flat morph when the setting is morph', async () => {
+    vi.useFakeTimers()
+    setEnterAnim('morph')
+    const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
+    await flushPromises()
+    shelfSceneMock.events?.onPick?.('a')
+    expect(shelfSceneMock.lastEnter).toBeNull()
+    vi.advanceTimersByTime(150)
+    expect(store.journalId).toBe('a')
+    expect(store.view).toBe('journal')
+    w.unmount()
   })
 
   it('filters results by the query and opens the picked journal', async () => {

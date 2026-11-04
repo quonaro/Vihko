@@ -14,7 +14,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { update, downloadUpdate } from '../update'
 import { glQuality, coverQuality } from '../quality'
-import { morphTo, centeredRect } from '../anim'
+import { morphTo, centeredRect, fullRect, type Rect } from '../anim'
 import JournalMenuDialog from '../components/JournalMenuDialog.vue'
 import CoverTexturePicker from '../components/CoverTexturePicker.vue'
 import CoverPicker from '../components/CoverPicker.vue'
@@ -24,7 +24,8 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { usePrompt } from '../composables/usePrompt'
 import { saveFile } from '../saveFile'
-import type { CoverTexture } from '../types'
+import { enterAnim } from '../enterAnim'
+import type { CoverTexture, Journal } from '../types'
 import type { ShelfAnchor, ShelfJournal, ShelfScene } from '../three/shelfScene'
 
 const { t } = useI18n()
@@ -64,6 +65,7 @@ function openFromSearch(id: string) {
 const glCanvas = ref<HTMLCanvasElement>()
 const glOk = ref(false)
 const glFailed = ref(false)
+const entering = ref(false)
 const showGlLabels = ref(false)
 const anchors = ref<ShelfAnchor[]>([])
 let scene: ShelfScene | null = null
@@ -122,27 +124,70 @@ function onOverlay(list: ShelfAnchor[]) {
   }
 }
 
+// A fixed div dressed up as the journal cover — morph source and the
+// fullscreen hand-off card share the same look.
+function coverDiv(j: Journal, rect?: Rect) {
+  const src = document.createElement('div')
+  Object.assign(src.style, {
+    position: 'fixed',
+    left: rect ? `${rect.left}px` : '0',
+    top: rect ? `${rect.top}px` : '0',
+    width: rect ? `${rect.width}px` : '100%',
+    height: rect ? `${rect.height}px` : '100%',
+    backgroundColor: covers[j.cover % covers.length],
+  })
+  if (rect) src.style.borderRadius = '4.5%'
+  if (j.coverImg) {
+    src.style.backgroundImage = `url(${j.coverImg})`
+    src.style.backgroundSize = 'cover'
+    src.style.backgroundPosition = 'center'
+  }
+  return src
+}
+
+// The 3D transition ended with the cover (dive) or the opened paper block
+// (open) filling the view — hold a matching fullscreen card over the
+// freshly mounted journal while it loads its scene underneath.
+function enterDone(id: string, kind: 'dive' | 'open') {
+  const j = store.journals.find((x) => x.id === id)
+  if (!j) {
+    openJournal(id)
+    return
+  }
+  const src = coverDiv(j)
+  if (kind === 'open') {
+    src.style.backgroundImage = ''
+    src.style.backgroundColor = '#ffffff' // match the neutral-white page block
+  }
+  document.body.appendChild(src)
+  morphTo(fullRect(), src, { delay: 140 })
+  src.remove()
+  openJournal(id)
+}
+
 function openFromScene(id: string) {
   const j = store.journals.find((x) => x.id === id)
-  const r = scene?.screenRect(id)
+  if (!j || !scene) {
+    openJournal(id)
+    return
+  }
+  const kind = enterAnim.value
+  if (kind !== 'morph' && scene.beginEnter(id, kind, () => enterDone(id, kind))) {
+    entering.value = true
+    return
+  }
+  // Flat morph — the chosen 'morph' style and the fallback when the scene
+  // can't run the 3D move (book gone or a transition already running).
+  const r = scene.screenRect(id)
   const cr = glCanvas.value?.getBoundingClientRect()
-  if (j && r && cr) {
+  if (r && cr) {
     // morphTo needs a laid-out element: pin an invisible div over the book.
-    const src = document.createElement('div')
-    Object.assign(src.style, {
-      position: 'fixed',
-      left: `${cr.left + r.left}px`,
-      top: `${cr.top + r.top}px`,
-      width: `${r.width}px`,
-      height: `${r.height}px`,
-      borderRadius: '4.5%',
-      backgroundColor: covers[j.cover % covers.length],
+    const src = coverDiv(j, {
+      left: cr.left + r.left,
+      top: cr.top + r.top,
+      width: r.width,
+      height: r.height,
     })
-    if (j.coverImg) {
-      src.style.backgroundImage = `url(${j.coverImg})`
-      src.style.backgroundSize = 'cover'
-      src.style.backgroundPosition = 'center'
-    }
     document.body.appendChild(src)
     morphTo(centeredRect(), src)
     src.remove()
@@ -259,7 +304,7 @@ function applyCover(src: string | null) {
 </script>
 
 <template>
-  <div class="shelf">
+  <div class="shelf" :class="{ 'is-entering': entering }">
     <button
       v-if="update.status === 'available'"
       class="update-banner"
@@ -449,12 +494,18 @@ h1 {
   inset: 0;
   overflow: hidden;
 }
+.shelf.is-entering .covers {
+  z-index: 20;
+}
 .shelf3d {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   touch-action: none;
+}
+.shelf.is-entering .shelf3d {
+  pointer-events: none;
 }
 .gl-label {
   position: absolute;

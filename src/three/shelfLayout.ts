@@ -16,6 +16,8 @@ export const EDGE_PAD = 0.3 // world-unit margin kept at row ends while panning
 // z-fight on mediump mobile depth buffers.
 export const BOARD_T = BOOK_D * 0.19 // one cover board's thickness
 export const PAGES_D = BOOK_D * 0.6 // paper block, clear of the board inners
+// The front cover pivots on its inner face, just above the paper block.
+export const COVER_HINGE_Z = BOOK_D / 2 - BOARD_T
 
 // Paper-block footprint. Corners carry the same share of rounding as the
 // journal sheets (SHEET_CORNER_R in layout.ts) so the closed book's page
@@ -24,6 +26,9 @@ export const PAGES_D = BOOK_D * 0.6 // paper block, clear of the board inners
 // arcs instead of a sharp slab over rounded pages.
 export const PAGES_W = BOOK_W * 0.955
 export const PAGES_H = BOOK_H * 0.96
+// Align the bound edge of the page block with the cover's spine hinge.
+// Keeping the block centered leaves an obvious gap when the cover swings open.
+export const PAGES_X = -BOOK_W / 2 + PAGES_W / 2
 export const PAGES_CORNER_R = PAGES_H * 0.045
 export const BOARD_CORNER_R = BOOK_H * 0.045
 
@@ -116,6 +121,22 @@ export function inHitBox(px: number, py: number): boolean {
 // Half of the world width visible at z = 0 for a camera `dist` away.
 export function viewHalfWidth(fovDeg: number, dist: number, aspect: number): number {
   return Math.tan((fovDeg * Math.PI) / 360) * dist * aspect
+}
+
+// Camera zoom that makes an object cover the viewport in both axes. The
+// narrower fit distance determines how far the camera must dolly in.
+export function fillZoom(
+  cameraDistance: number,
+  fovDeg: number,
+  aspect: number,
+  width: number,
+  height: number,
+  bleed = 1,
+): number {
+  const tan = Math.tan((fovDeg * Math.PI) / 360)
+  const fitHeight = height / (2 * tan)
+  const fitWidth = width / (2 * tan * aspect)
+  return (cameraDistance / Math.min(fitHeight, fitWidth)) * bleed
 }
 
 // Max |pan offset| of the row. 0 means every book fits and the row stays

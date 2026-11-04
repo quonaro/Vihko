@@ -8,9 +8,11 @@ import {
   HIT_MARGIN,
   LIE_PITCH,
   BOARD_T,
+  COVER_HINGE_Z,
   PAGES_D,
   PAGES_W,
   PAGES_H,
+  PAGES_X,
   PAGES_CORNER_R,
   BOARD_CORNER_R,
   pagesOutline,
@@ -19,6 +21,7 @@ import {
   shelfEntrance,
   inHitBox,
   viewHalfWidth,
+  fillZoom,
   scrollLimit,
 } from './shelfLayout'
 
@@ -104,6 +107,21 @@ describe('viewHalfWidth', () => {
   })
 })
 
+describe('fillZoom', () => {
+  it('scales a sheet to cover both viewport axes with the requested bleed', () => {
+    const distance = 5
+    const fov = 36
+    const aspect = 0.45
+    const width = 1.03
+    const height = 1.41
+    const bleed = 1.12
+    const zoom = fillZoom(distance, fov, aspect, width, height, bleed)
+    const tan = Math.tan((fov * Math.PI) / 360)
+    expect((width * zoom) / (2 * tan * aspect * distance) + 1e-9).toBeGreaterThanOrEqual(bleed)
+    expect((height * zoom) / (2 * tan * distance) + 1e-9).toBeGreaterThanOrEqual(bleed)
+  })
+})
+
 describe('scrollLimit', () => {
   it('is 0 while every book fits the viewport', () => {
     expect(scrollLimit(10, 3)).toBe(0)
@@ -157,6 +175,16 @@ describe('cover sandwich', () => {
     // With the spine board removed, the paper block must nearly reach the
     // book's left/right edges, so the open bound edge shows paper.
     expect(BOOK_W - PAGES_W).toBeLessThan(BOOK_W * 0.1)
+  })
+
+  it('aligns the page block bound edge with the cover hinge', () => {
+    expect(PAGES_X - PAGES_W / 2).toBeCloseTo(-BOOK_W / 2)
+  })
+
+  it('places the hinge on the inner face of the front cover', () => {
+    expect(COVER_HINGE_Z).toBeCloseTo(BOOK_D / 2 - BOARD_T)
+    expect(COVER_HINGE_Z - PAGES_D / 2).toBeGreaterThan(0)
+    expect(COVER_HINGE_Z - PAGES_D / 2).toBeLessThan(0.005)
   })
 })
 

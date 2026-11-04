@@ -15,6 +15,9 @@ export function morphTo(
   opts: {
     fade?: boolean
     extraTransform?: string
+    // ms to hold the clone at its start state before it moves/fades —
+    // lets a fullscreen hand-off cover the incoming view a bit longer.
+    delay?: number
   } = {},
 ) {
   const r = source.getBoundingClientRect()
@@ -49,11 +52,12 @@ export function morphTo(
           (opts.extraTransform ? ` ${opts.extraTransform}` : ''),
         borderRadius: '4px',
         opacity: opts.fade === false ? '1' : '0',
+        transitionDelay: opts.delay ? `${opts.delay}ms` : '',
       })
     })
   })
 
-  setTimeout(() => clone.remove(), 400)
+  setTimeout(() => clone.remove(), 400 + (opts.delay ?? 0))
 }
 
 export function centeredRect(scale = 0.86): Rect {

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MobileSlider from './MobileSlider.vue'
 import { setLocale } from '../i18n'
 import { setTheme, theme } from '../theme'
 import { QUALITY_LEVELS, glQuality, coverQuality, setGlQuality, setCoverQuality } from '../quality'
+import { ENTER_ANIMS, enterAnim, setEnterAnim } from '../enterAnim'
 import {
   appVersion,
   update,
@@ -23,6 +24,14 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
 const { t, locale } = useI18n()
 
+type Section = 'appearance' | 'graphics' | 'updates'
+const section = ref<Section | ''>('')
+
+function openSection(s: Section) {
+  emit('update:open', false)
+  section.value = s
+}
+
 const updateLabel = computed(() => {
   switch (update.dl) {
     case 'downloading':
@@ -40,13 +49,13 @@ const updateLabel = computed(() => {
 
 const showPerms = permsRelevant()
 
-// Re-read states when the sheet opens and when the user returns from a system
+// Re-read states when a sheet opens and when the user returns from a system
 // settings screen (e.g. after toggling "install unknown apps").
 function onVisible() {
   if (!document.hidden) void refreshPermissions()
 }
 watch(
-  () => props.open,
+  () => props.open || section.value !== '',
   (on) => {
     if (!showPerms) return
     if (on) {
@@ -67,10 +76,33 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
     size="sm"
     @update:open="emit('update:open', $event)"
   >
-    <div class="set-row">
-      <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V4h9l8.6 8.6a2 2 0 0 1 0 .8Z"/><path d="M7.5 7.5h.01"/></svg>{{ t('shelf.version') }}</span>
-      <span class="set-value">v{{ appVersion }}</span>
+    <div class="set-menu">
+      <button class="set-menu-btn" @click="openSection('appearance')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/></svg>
+        {{ t('shelf.appearance') }}
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+      </button>
+      <button class="set-menu-btn" @click="openSection('graphics')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 16.5a8.5 8.5 0 1 1 15 0"/><path d="M12 14l4-5"/><circle cx="12" cy="14" r="1.2" fill="currentColor" stroke="none"/></svg>
+        {{ t('shelf.graphics') }}
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+      </button>
+      <button class="set-menu-btn" @click="openSection('updates')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 3v5h-5"/></svg>
+        {{ t('shelf.updates') }}
+        <span v-if="update.status === 'available'" class="menu-dot" />
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+      </button>
     </div>
+  </MobileSlider>
+
+  <MobileSlider
+    :open="section === 'appearance'"
+    :title="t('shelf.appearance')"
+    size="sm"
+    :z-index="70"
+    @update:open="section = ''"
+  >
     <div class="set-row">
       <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/></svg>{{ t('shelf.theme') }}</span>
       <div class="seg">
@@ -96,6 +128,28 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
       </div>
     </div>
     <div class="set-row set-col">
+      <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 4.5h9A2.5 2.5 0 0 1 18 7v10a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 4 17V7a2.5 2.5 0 0 1 2.5-2.5Z"/><path d="M8.5 4.5v15"/><path d="m13 9 3 3-3 3"/></svg>{{ t('shelf.enterAnim') }}</span>
+      <div class="seg">
+        <button
+          v-for="a in ENTER_ANIMS"
+          :key="a"
+          class="seg-btn"
+          :class="{ on: enterAnim === a }"
+          :aria-pressed="enterAnim === a"
+          @click="setEnterAnim(a)"
+        >{{ t(`shelf.anim.${a}`) }}</button>
+      </div>
+    </div>
+  </MobileSlider>
+
+  <MobileSlider
+    :open="section === 'graphics'"
+    :title="t('shelf.graphics')"
+    size="sm"
+    :z-index="70"
+    @update:open="section = ''"
+  >
+    <div class="set-row set-col">
       <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 16.5a8.5 8.5 0 1 1 15 0"/><path d="M12 14l4-5"/><circle cx="12" cy="14" r="1.2" fill="currentColor" stroke="none"/></svg>{{ t('shelf.renderQuality') }}</span>
       <div class="seg">
         <button
@@ -120,6 +174,19 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
           @click="setCoverQuality(q)"
         >{{ t(`shelf.quality.${q}`) }}</button>
       </div>
+    </div>
+  </MobileSlider>
+
+  <MobileSlider
+    :open="section === 'updates'"
+    :title="t('shelf.updates')"
+    size="sm"
+    :z-index="70"
+    @update:open="section = ''"
+  >
+    <div class="set-row">
+      <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V4h9l8.6 8.6a2 2 0 0 1 0 .8Z"/><path d="M7.5 7.5h.01"/></svg>{{ t('shelf.version') }}</span>
+      <span class="set-value">v{{ appVersion }}</span>
     </div>
     <div class="set-row">
       <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 3v5h-5"/></svg>{{ t('shelf.updates') }}</span>
@@ -152,6 +219,45 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
 </template>
 
 <style scoped>
+.set-menu { display: grid; gap: 8px; }
+.set-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 16px;
+  border-radius: 12px;
+  background: var(--chrome-control-bg);
+  color: var(--chrome-text);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+}
+.set-menu-btn svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.set-menu-btn .chev {
+  width: 15px;
+  height: 15px;
+  flex-basis: 15px;
+  margin-left: auto;
+  color: var(--chrome-muted);
+}
+.menu-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2a8097;
+  margin-left: auto;
+}
+.menu-dot + .chev { margin-left: 0; }
 .set-row {
   display: flex;
   align-items: center;

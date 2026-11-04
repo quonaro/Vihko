@@ -14,9 +14,14 @@ import {
   SHELF_STEP,
   TILT_LIFT,
   BOARD_T,
+  COVER_HINGE_Z,
   PAGES_D,
+  PAGES_H,
+  PAGES_X,
+  PAGES_W,
   pagesOutline,
   boardOutline,
+  fillZoom as zoomToFill,
   shelfEntrance,
   shelfPose,
   inHitBox,
@@ -60,6 +65,13 @@ const CAM_Y = 4.85
 const CAM_Z = 0.6
 const ENTER_TIME = 0.38
 const ENTER_STAGGER = 0.04
+// Journal-open transitions (beginEnter): 'dive' flies the camera into the
+// cover, 'open' lifts the book and hinges the front board over the spine.
+const DIVE_TIME = 0.55
+const OPEN_TIME = 0.85
+const FILL_BLEED = 1.15 // dive overshoot past a full-screen cover
+const OPEN_ANGLE = -Math.PI // fully flat, with the inside cover meeting the paper block
+const OPEN_LIFT = 0.28 // raises the book a touch without levitating it
 
 const damp = (rate: number, dt: number) => 1 - Math.exp(-rate * dt)
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
@@ -100,6 +112,7 @@ interface BookEntry {
   sig: string
   order: number
   group: THREE.Group
+  hinge: THREE.Group // front board pivots here for the 'open' transition
   fadeMats: THREE.Material[]
   canvas: HTMLCanvasElement | null
   ctx: CanvasRenderingContext2D | null
@@ -146,6 +159,21 @@ export class ShelfScene {
   // `drag` so a second finger can turn a scroll into a pinch mid-gesture.
   private zoom = 1
   private panY = 0
+  // Open transition toward a book. While set, all input is ignored and the
+  // DOM labels are hidden — the eased targets below drive scroll/zoom/panY
+  // (and the front-board hinge for 'open') directly each tick.
+  private enter: {
+    kind: 'dive' | 'open'
+    e: BookEntry
+    t: number
+    scroll0: number
+    zoom0: number
+    panY0: number
+    scroll1: number
+    zoom1: number
+    done: boolean
+    cb: () => void
+  } | null = null
   private touches = new Map<number, { x: number; y: number }>()
   private pinch: { d0: number; zoom0: number; mx: number; my: number } | null = null
   private camUp = new THREE.Vector3()
@@ -213,7 +241,7 @@ export class ShelfScene {
     group.rotation.order = 'ZYX'
     const coverC = new THREE.Color(j.coverImg ? '#33333a' : j.color)
     const paper = new THREE.MeshStandardMaterial({
-      color: 0xf2ecdd,
+      color: 0xffffff,
       roughness: 0.95,
       envMapIntensity: 0.25,
     })
@@ -240,15 +268,23 @@ export class ShelfScene {
 
     const bz = BOOK_D / 2 - BOARD_T / 2
     const pages = new THREE.Mesh(this.pagesGeo, paper)
-    pages.position.set(BOOK_W * 0.02, 0, 0)
+    pages.position.set(PAGES_X, 0, 0)
+    // The front board hangs on a hinge at the spine (local -x edge) so the
+    // 'open' transition can swing it around instead of faking it in DOM.
+    // Pivot on the cover's inner face, not the book's mid-plane: then the
+    // cover edge stays attached to the page block throughout the swing.
+    const hinge = new THREE.Group()
+    hinge.position.set(-BOOK_W / 2, 0, COVER_HINGE_Z)
     const front = new THREE.Mesh(this.boardGeo, [face, board])
-    front.position.z = bz
+    front.position.set(BOOK_W / 2, 0, BOARD_T / 2)
+    hinge.add(front)
+    group.add(hinge)
     const back = new THREE.Mesh(this.boardGeo, board)
     back.position.z = -bz
     for (const m of [pages, front, back]) {
       m.castShadow = true
       m.receiveShadow = true
-      group.add(m)
+      if (m !== front) group.add(m)
     }
     this.row.add(group)
 
@@ -257,6 +293,7 @@ export class ShelfScene {
       sig,
       order: 0,
       group,
+      hinge,
       fadeMats: [paper, board, face],
       canvas: cnv,
       ctx,
@@ -318,6 +355,43 @@ export class ShelfScene {
     this.books = next
     this.scrollTarget = this.clampScroll(this.scrollTarget)
     if (this.hovered && !next.includes(this.hovered)) this.hovered = null
+  }
+
+  // Zoom at which the cover covers the viewport — the tighter of the two
+  // axis fits, pushed FILL_BLEED past so the edges bleed off-screen.
+  private fillZoom(width = BOOK_W, height = BOOK_H): number {
+    return zoomToFill(this.camDist, FOV, this.cw / this.ch, width, height, FILL_BLEED)
+  }
+
+  // Start the journal-open transition: 'dive' dives the camera into the
+  // cover until it fills the screen, 'open' lifts the book and swings its
+  // front board over the spine. cb fires once the move completes — the
+  // caller hands off to a DOM overlay and switches the view. Returns false
+  // when the book is gone or a transition is already running.
+  beginEnter(id: string, kind: 'dive' | 'open', cb: () => void): boolean {
+    const e = this.books.find((b) => b.id === id)
+    if (!e || this.enter) return false
+    this.hovered = null
+    this.vel = 0
+    this.drag = null
+    this.pinch = null
+    this.touches.clear()
+    this.cancelHold()
+    this.canvas.style.cursor = ''
+    this.enter = {
+      kind,
+      e,
+      t: 0,
+      scroll0: this.scroll,
+      zoom0: this.zoom,
+      panY0: this.panY,
+      scroll1: shelfPose(e.order, this.books.length).x + (kind === 'open' ? PAGES_X : 0),
+      zoom1: kind === 'dive' ? this.fillZoom() : this.fillZoom(PAGES_W, PAGES_H),
+      done: false,
+      cb,
+    }
+    this.pump.wake()
+    return true
   }
 
   // Bounding rect of a book's front face in canvas px (morph source).
@@ -408,6 +482,7 @@ export class ShelfScene {
 
   private onPointerDown = (e: PointerEvent) => {
     this.pump.wake()
+    if (this.enter) return
     this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
     this.canvas.setPointerCapture(e.pointerId)
     if (this.touches.size === 2) {
@@ -457,6 +532,7 @@ export class ShelfScene {
 
   private onPointerMove = (e: PointerEvent) => {
     this.pump.wake()
+    if (this.enter) return
     const touch = this.touches.get(e.pointerId)
     if (touch) {
       touch.x = e.clientX
@@ -557,6 +633,7 @@ export class ShelfScene {
   }
 
   private onClick = (e: MouseEvent) => {
+    if (this.enter) return
     if (this.clickWasDrag) {
       this.clickWasDrag = false
       return
@@ -573,6 +650,7 @@ export class ShelfScene {
 
   private onWheel = (e: WheelEvent) => {
     this.pump.wake()
+    if (this.enter) return
     e.preventDefault()
     this.vel = 0
     const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
@@ -657,6 +735,12 @@ export class ShelfScene {
   private emitAnchors() {
     const out: ShelfAnchor[] = []
     for (const e of this.books) {
+      if (this.enter) {
+        // Labels are DOM text — they can't scale with the dive, so hide
+        // them for the duration of the open transition.
+        out.push({ id: e.id, onScreen: false, label: null, title: null })
+        continue
+      }
       e.group.updateWorldMatrix(true, false)
       const label = this.project(e, 0, BOOK_H / 2 + 0.18, 0)
       const title = this.project(e, 0, -BOOK_H / 2 - 0.04, 0)
@@ -676,6 +760,29 @@ export class ShelfScene {
     let moving = false
     const n = this.books.length
     const k = damp(12, dt)
+    // The open transition drives scroll/zoom/panY straight to their eased
+    // values — the damped momentum/camera code below just follows along.
+    const en = this.enter
+    let openLift = 0
+    if (en) {
+      en.t = Math.min(1, en.t + dt / (en.kind === 'dive' ? DIVE_TIME : OPEN_TIME))
+      const t = en.t
+      const p = t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2
+      this.vel = 0
+      this.scroll = en.scroll0 + (en.scroll1 - en.scroll0) * p
+      this.scrollTarget = this.scroll
+      this.zoom = en.zoom0 + (en.zoom1 - en.zoom0) * p
+      this.panY = en.panY0 * (1 - p)
+      if (en.kind === 'open') {
+        en.e.hinge.rotation.y = OPEN_ANGLE * p
+        openLift = OPEN_LIFT * p
+      }
+      moving = true
+      if (en.t >= 1 && !en.done) {
+        en.done = true
+        en.cb()
+      }
+    }
     for (const e of this.books) {
       e.enterT = Math.min(1, e.enterT + dt / ENTER_TIME)
       if (e.enterT < 1) moving = true
@@ -689,6 +796,7 @@ export class ShelfScene {
       if (e === this.hovered) {
         ty += TILT_LIFT
       }
+      if (en?.kind === 'open' && e === en.e) ty += openLift
       // New books fade in and settle subtly; keep their cover orientation fixed.
       const entrance = shelfEntrance(e.enterT)
       ty += entrance.lift
@@ -736,7 +844,7 @@ export class ShelfScene {
       .multiplyScalar(this.camDist / this.zoom)
       .addScaledVector(this.camUp, this.panY)
     this.lookTarget.copy(this.camUp).multiplyScalar(this.panY)
-    const ck = damp(this.pinch ? 16 : 6, dt)
+    const ck = damp(this.enter ? 18 : this.pinch ? 16 : 6, dt)
     const cd =
       Math.abs(this.camTarget.x - this.camera.position.x) +
       Math.abs(this.camTarget.y - this.camera.position.y) +

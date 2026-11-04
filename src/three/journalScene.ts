@@ -331,7 +331,7 @@ export class JournalScene {
   // Paper stays matte — the flat look has no lacquer layer to shade.
   private pageMaterial(map: THREE.Texture | null, side: THREE.Side): PaperMaterial {
     const m = new THREE.MeshStandardMaterial({
-      color: map ? 0xffffff : 0xfdf9ef,
+      color: 0xffffff,
       roughness: 0.92,
       metalness: 0,
       bumpScale: 0.004,
