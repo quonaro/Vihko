@@ -4,6 +4,10 @@ import {
   store,
   currentPage,
   currentJournal,
+  brushOf,
+  brushSnapshot,
+  snapToGuide,
+  mirroredPtSets,
   pushStroke,
   pushOp,
   undoStroke,
@@ -22,14 +26,32 @@ import {
 } from '../store'
 import { initInk } from '../ink/engine'
 import { renderSamples } from '../ink/renderer'
-import { clearLayerRasterCache, layerContentBounds, paintLayers } from '../ink/layers'
-import { extractRegion, onImageLoaded, imageFileToPhoto } from '../ink/ops'
+import {
+  clearLayerRasterCache,
+  layerContentBounds,
+  layerRasterCanvas,
+  paintLayers,
+} from '../ink/layers'
+import { extractRegion, onImageLoaded, imageFileToPhoto, imageDataURL } from '../ink/ops'
 import { rdp } from '../ink/path'
 import { shapePoints } from '../ink/shapes'
-import { PAGE_W, PAGE_H, coverViewport, clampOffset } from '../pageSpace'
+import { PAGE_W, PAGE_H, pageSize, coverViewport, clampOffset } from '../pageSpace'
 import ToolTray from '../components/ToolTray.vue'
 import MobileSlider from '../components/MobileSlider.vue'
-import type { InkEngine, Layer, Page, Pt, ShapeKind, Stroke } from '../types'
+import { BLEND_MODES } from '../types'
+import type {
+  BlendMode,
+  GuideMode,
+  InkEngine,
+  Layer,
+  Page,
+  Pt,
+  Sample,
+  ShapeKind,
+  Stroke,
+  SymmetryMode,
+  ToolId,
+} from '../types'
 import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
@@ -38,6 +60,8 @@ const PAPER = '#f6f1e6'
 const BACKDROP = '#2a2a2c'
 const EDGE = 34 // px edge zone for page-swipe nav
 const TRAY_HEIGHT = 86
+// Tools that lay ink — they get the stabilizer setting and stroke previews.
+const INK_TOOLS: ToolId[] = ['eraser', 'draw', 'sketch', 'outline', 'write', 'color']
 type LayerBounds = { left: number; top: number; right: number; bottom: number }
 type LayerPoint = { x: number; y: number }
 type TransformHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'rotate' | 'move'
@@ -66,7 +90,7 @@ let ctx: CanvasRenderingContext2D | null = null
 let ink: InkEngine | null = null
 let dpr = 1
 
-// --- viewport: the screen is a window onto a fixed PAGE_W x PAGE_H sheet ---
+// --- viewport: the screen is a window onto a fixed page-unit sheet ---
 // Cover fit keeps the sheet filling the canvas at zoom 1; on aspect-mismatched
 // screens it overflows one axis. The move tool pans, the +/- buttons zoom
 // around the viewport center, and each page remembers its own view.
@@ -85,6 +109,50 @@ const displayLayers = computed(() => [...layers.value].reverse())
 const selectedLayer = computed(() => activeLayer())
 const layerList = ref<HTMLElement>()
 const draggingLayerId = ref<string | null>(null)
+
+// Layer thumbnails in the panel: dataURLs of each layer's cached raster
+// cropped to its content bounds (full-page thumbs lose thin strokes at
+// this size), rebuilt whenever page content changes (thumbRev bumps in
+// the watchers).
+const THUMB_W = 56
+const THUMB_H = 36
+const thumbRev = ref(0)
+const thumbCache = new Map<string, string>()
+
+function layerThumb(id: string): string {
+  const key = `${thumbRev.value}|${id}`
+  const hit = thumbCache.get(key)
+  if (hit !== undefined) return hit
+  const url = buildThumb(id) ?? ''
+  thumbCache.set(key, url)
+  if (thumbCache.size > 48) thumbCache.clear()
+  return url
+}
+
+function buildThumb(id: string): string | null {
+  const p = currentPage()
+  if (!p || !ink) return null
+  const bounds = layerContentBounds(p, ink, id, BOUNDS_SCALE)
+  if (!bounds) return null
+  const raster = layerRasterCanvas(p, ink, id)
+  if (!raster) return null
+  const c = document.createElement('canvas')
+  c.width = THUMB_W
+  c.height = THUMB_H
+  const tc = c.getContext('2d')
+  if (!tc || typeof c.toDataURL !== 'function') return null
+  const rs = raster.width / pw()
+  const pad = 4 / BOUNDS_SCALE
+  const sw = Math.max(1, bounds.right - bounds.left + pad * 2)
+  const sh = Math.max(1, bounds.bottom - bounds.top + pad * 2)
+  const sx = (bounds.left - pad) * rs
+  const sy = (bounds.top - pad) * rs
+  const k = Math.min(THUMB_W / (sw * rs), THUMB_H / (sh * rs))
+  const dw = sw * rs * k
+  const dh = sh * rs * k
+  tc.drawImage(raster, sx, sy, sw * rs, sh * rs, (THUMB_W - dw) / 2, (THUMB_H - dh) / 2, dw, dh)
+  return imageDataURL(c, true)
+}
 const layerDropIndex = ref<number | null>(null)
 let layerDragPointerId: number | null = null
 const layerPreview = ref<{
@@ -94,12 +162,15 @@ const layerPreview = ref<{
   scale: number
   rotation: number
 } | null>(null)
-const brushSize = computed(() => store.toolSizes[store.tool] ?? 1)
+const brushSize = computed(() => brushOf(store.tool).size)
 const brushProgress = computed(() => Math.min(1, Math.max(0, (brushSize.value - 0.25) / 3.75)))
 const brushMarkWidth = computed(() => `${Math.min(20, 7 + brushSize.value * 3)}px`)
 
 const toPageX = (x: number) => (x - view.ox) / view.s
 const toPageY = (y: number) => (y - view.oy) / view.s
+// Current page's size in page units (custom sizes come from page.w/h).
+const pw = () => pageSize(currentPage()).w
+const ph = () => pageSize(currentPage()).h
 function toLayerPt(pt: Pt, layerId: string): Pt {
   const pagePt = { ...pt, x: toPageX(pt.x), y: toPageY(pt.y) }
   const layer = pageLayers().find((item) => item.id === layerId)
@@ -107,12 +178,12 @@ function toLayerPt(pt: Pt, layerId: string): Pt {
 
   // Strokes are stored in layer-local coordinates and transformed when painted.
   const angle = (layer.rotation * Math.PI) / 180
-  const dx = pagePt.x - PAGE_W / 2 - layer.x
-  const dy = pagePt.y - PAGE_H / 2 - layer.y
+  const dx = pagePt.x - pw() / 2 - layer.x
+  const dy = pagePt.y - ph() / 2 - layer.y
   return {
     ...pagePt,
-    x: PAGE_W / 2 + (dx * Math.cos(angle) + dy * Math.sin(angle)) / layer.scale,
-    y: PAGE_H / 2 + (-dx * Math.sin(angle) + dy * Math.cos(angle)) / layer.scale,
+    x: pw() / 2 + (dx * Math.cos(angle) + dy * Math.sin(angle)) / layer.scale,
+    y: ph() / 2 + (-dx * Math.sin(angle) + dy * Math.cos(angle)) / layer.scale,
   }
 }
 
@@ -125,15 +196,16 @@ const unfrac = (f: number, css: number, sheet: number) =>
 function applyViewport() {
   const { w, h } = canvasSize()
   viewSize.value = { w, h }
-  const cover = coverViewport(w, h)
+  const cover = coverViewport(w, h, pageSize(currentPage()))
   const saved = views.get(store.pageId ?? '')
   view.s = cover.s * (saved?.zoom ?? 1)
   const c = clampOffset(
-    saved ? unfrac(saved.fx, w, PAGE_W * view.s) : cover.ox,
-    saved ? unfrac(saved.fy, h, PAGE_H * view.s) : cover.oy,
+    saved ? unfrac(saved.fx, w, pw() * view.s) : cover.ox,
+    saved ? unfrac(saved.fy, h, ph() * view.s) : cover.oy,
     view.s,
     w,
     h,
+    pageSize(currentPage()),
   )
   view.ox = c.ox
   view.oy = c.oy
@@ -142,7 +214,7 @@ function applyViewport() {
 
 function syncViewUI() {
   const { w, h } = canvasSize()
-  const cover = coverViewport(w, h)
+  const cover = coverViewport(w, h, pageSize(currentPage()))
   zoom.value = cover.s ? view.s / cover.s : 1
   isFit.value =
     Math.abs(view.s - cover.s) < 1e-4 &&
@@ -154,21 +226,28 @@ function saveView() {
   const { w, h } = canvasSize()
   views.set(store.pageId ?? '', {
     zoom: zoom.value,
-    fx: frac(view.ox, w, PAGE_W * view.s),
-    fy: frac(view.oy, h, PAGE_H * view.s),
+    fx: frac(view.ox, w, pw() * view.s),
+    fy: frac(view.oy, h, ph() * view.s),
   })
 }
 
 function zoomBy(f: number) {
   const { w, h } = canvasSize()
   if (!w || !h) return
-  const cover = coverViewport(w, h)
-  const minS = Math.min(w / PAGE_W, h / PAGE_H) * ZOOM_MARGIN
+  const cover = coverViewport(w, h, pageSize(currentPage()))
+  const minS = Math.min(w / pw(), h / ph()) * ZOOM_MARGIN
   const s = Math.min(cover.s * ZOOM_MAX, Math.max(minS, view.s * f))
   if (s === view.s) return
   const k = s / view.s
   // keep the page point under the viewport center fixed
-  const c = clampOffset(w / 2 - (w / 2 - view.ox) * k, h / 2 - (h / 2 - view.oy) * k, s, w, h)
+  const c = clampOffset(
+    w / 2 - (w / 2 - view.ox) * k,
+    h / 2 - (h / 2 - view.oy) * k,
+    s,
+    w,
+    h,
+    pageSize(currentPage()),
+  )
   view.s = s
   view.ox = c.ox
   view.oy = c.oy
@@ -186,8 +265,8 @@ function resetView() {
 const minZoom = computed(() => {
   const { w, h } = viewSize.value
   if (!w || !h) return 0
-  const cover = coverViewport(w, h)
-  return (Math.min(w / PAGE_W, h / PAGE_H) * ZOOM_MARGIN) / cover.s
+  const cover = coverViewport(w, h, pageSize(currentPage()))
+  return (Math.min(w / pw(), h / ph()) * ZOOM_MARGIN) / cover.s
 })
 const canZoomIn = computed(() => zoom.value < ZOOM_MAX - 0.01)
 const canZoomOut = computed(() => zoom.value > minZoom.value + 0.01)
@@ -197,7 +276,7 @@ function setPageTransform(c: CanvasRenderingContext2D) {
 }
 
 // Raster resolution for the alpha-scan in layerContentBounds (~300px wide).
-const BOUNDS_SCALE = 300 / PAGE_W
+const BOUNDS_SCALE = 300 / pw()
 
 function getLayerBounds(layerId: string): LayerBounds | null {
   const p = currentPage()
@@ -229,7 +308,7 @@ function getLayerBounds(layerId: string): LayerBounds | null {
     if (op.layerId !== '*' && (op.layerId ?? defaultId) !== layerId) continue
     if (op.kind === 'fill') {
       include(0, 0)
-      include(PAGE_W, PAGE_H)
+      include(pw(), ph())
     } else if (op.kind === 'photo') {
       include(op.photo.x, op.photo.y)
       include(op.photo.x + op.photo.w, op.photo.y + op.photo.h)
@@ -257,11 +336,11 @@ function layerPoint(
   point: LayerPoint,
 ): LayerPoint {
   const angle = (layer.rotation * Math.PI) / 180
-  const dx = (point.x - PAGE_W / 2) * layer.scale
-  const dy = (point.y - PAGE_H / 2) * layer.scale
+  const dx = (point.x - pw() / 2) * layer.scale
+  const dy = (point.y - ph() / 2) * layer.scale
   return {
-    x: PAGE_W / 2 + layer.x + dx * Math.cos(angle) - dy * Math.sin(angle),
-    y: PAGE_H / 2 + layer.y + dx * Math.sin(angle) + dy * Math.cos(angle),
+    x: pw() / 2 + layer.x + dx * Math.cos(angle) - dy * Math.sin(angle),
+    y: ph() / 2 + layer.y + dx * Math.sin(angle) + dy * Math.cos(angle),
   }
 }
 
@@ -509,9 +588,13 @@ const pointers = new Map<number, { x: number; y: number; t: number; type: string
 let drawing = false
 let strokeId = -1
 let curPts: Pt[] = []
+let curSamples: Sample[] = [] // emitted so far, for repaints
+let predRect: { x: number; y: number; w: number; h: number } | null = null // page units
+let liveStroke: { tool: ToolId; color: string } | null = null
 let seed = 1
 let penActive = false
 let curStrokeSize = 1
+let curStab = -1
 let curLayerId = ''
 let shapeDrag: {
   start: { x: number; y: number }
@@ -622,8 +705,52 @@ function paintPaper(c: CanvasRenderingContext2D) {
   c.fillStyle = BACKDROP
   c.fillRect(0, 0, w, h)
   c.fillStyle = PAPER
-  c.fillRect(view.ox, view.oy, PAGE_W * view.s, PAGE_H * view.s)
+  c.fillRect(view.ox, view.oy, pw() * view.s, ph() * view.s)
   c.restore()
+}
+
+// Scratch canvases for live alpha-lock clipping, sized to the view canvas.
+let lockMask: { c: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null
+let lockPaint: { c: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null
+
+function lockCanvas(kind: 'mask' | 'paint') {
+  let slot = kind === 'mask' ? lockMask : lockPaint
+  if (!slot) {
+    const c = document.createElement('canvas')
+    const c2 = c.getContext('2d', { willReadFrequently: true })
+    if (!c2) return null
+    slot = { c, ctx: c2 }
+    if (kind === 'mask') lockMask = slot
+    else lockPaint = slot
+  }
+  const el = canvas.value!
+  if (slot.c.width !== el.width || slot.c.height !== el.height) {
+    slot.c.width = el.width
+    slot.c.height = el.height
+  }
+  return slot
+}
+
+// The layer's existing alpha in device px — the destination-in mask that
+// confines a live locked stroke to already-painted pixels.
+function alphaLockMask(layer: Layer): HTMLCanvasElement | null {
+  const p = currentPage()
+  if (!p || !ink) return null
+  const raster = layerRasterCanvas(p, ink, layer.id)
+  const slot = lockCanvas('mask')
+  if (!raster || !slot) return null
+  const { c, ctx: mc } = slot
+  mc.save()
+  mc.setTransform(1, 0, 0, 1, 0, 0)
+  mc.clearRect(0, 0, c.width, c.height)
+  setPageTransform(mc)
+  mc.translate(pw() / 2 + layer.x, ph() / 2 + layer.y)
+  mc.rotate((layer.rotation * Math.PI) / 180)
+  mc.scale(layer.scale, layer.scale)
+  mc.translate(-pw() / 2, -ph() / 2)
+  mc.drawImage(raster, 0, 0, pw(), ph())
+  mc.restore()
+  return c
 }
 
 function drawSamples(
@@ -635,17 +762,39 @@ function drawSamples(
 ) {
   if (!ctx || !ink) return
   const layer = pageLayers().find((item) => item.id === layerId)
-  ctx.save()
-  setPageTransform(ctx)
-  if (layer) {
-    ctx.globalAlpha *= layer.opacity
-    ctx.translate(PAGE_W / 2 + layer.x, PAGE_H / 2 + layer.y)
-    ctx.rotate((layer.rotation * Math.PI) / 180)
-    ctx.scale(layer.scale, layer.scale)
-    ctx.translate(-PAGE_W / 2, -PAGE_H / 2)
+  const paintInto = (c: CanvasRenderingContext2D) => {
+    c.save()
+    setPageTransform(c)
+    if (layer) {
+      c.globalAlpha *= layer.opacity
+      c.translate(pw() / 2 + layer.x, ph() / 2 + layer.y)
+      c.rotate((layer.rotation * Math.PI) / 180)
+      c.scale(layer.scale, layer.scale)
+      c.translate(-pw() / 2, -ph() / 2)
+    }
+    renderSamples(c, stroke.tool, stroke.color, samples, s, size, stroke)
+    const mirrored = mirroredSampleSets(samples)
+    if (mirrored.length) renderSamples(c, stroke.tool, stroke.color, mirrored, s, size, stroke)
+    c.restore()
   }
-  renderSamples(ctx, stroke.tool, stroke.color, samples, s, size)
-  ctx.restore()
+  const locked = !!layer?.alphaLock && stroke.tool !== 'eraser'
+  const mask = locked ? alphaLockMask(layer) : null
+  const scratch = mask ? lockCanvas('paint') : null
+  if (!scratch) {
+    paintInto(ctx)
+    return
+  }
+  scratch.ctx.save()
+  scratch.ctx.setTransform(1, 0, 0, 1, 0, 0)
+  scratch.ctx.clearRect(0, 0, scratch.c.width, scratch.c.height)
+  scratch.ctx.restore()
+  paintInto(scratch.ctx)
+  scratch.ctx.save()
+  scratch.ctx.setTransform(1, 0, 0, 1, 0, 0)
+  scratch.ctx.globalCompositeOperation = 'destination-in'
+  scratch.ctx.drawImage(mask!, 0, 0)
+  scratch.ctx.restore()
+  ctx.drawImage(scratch.c, 0, 0)
 }
 
 function paintShapeDrag(
@@ -662,7 +811,7 @@ function paintShapeDrag(
   }
 
   const pts = shapePoints(drag.shape, startPoint, endPoint)
-  const id = ink.begin('shapes')
+  const id = ink.begin('shapes', drag.size, -1)
   const samples = pts.flatMap((point) => ink!.addPoint(id, point.x, point.y, point.t, point.p))
   samples.push(...ink.end(id))
   const stroke: Stroke = {
@@ -671,6 +820,7 @@ function paintShapeDrag(
     pts,
     size: drag.size,
     layerId: drag.layerId,
+    alphaLock: pageLayers().find((item) => item.id === drag.layerId)?.alphaLock || undefined,
   }
   reRender()
   drawSamples(stroke, samples, seed, drag.layerId, drag.size)
@@ -709,7 +859,7 @@ let snapDirty = true
 
 function ensureSnap() {
   if (!ink) return
-  const maxScale = SNAP_MAX_W / PAGE_W
+  const maxScale = SNAP_MAX_W / pw()
   const want = Math.min(view.s * dpr * SNAP_HEADROOM, maxScale)
   if (!snap) {
     const c = document.createElement('canvas')
@@ -720,8 +870,8 @@ function ensureSnap() {
   if (!snapDirty && snapScale >= want * 0.999) return
   snapScale = Math.min(Math.max(want, snapScale), maxScale)
   const { c, ctx: sc } = snap
-  c.width = Math.round(PAGE_W * snapScale)
-  c.height = Math.round(PAGE_H * snapScale)
+  c.width = Math.round(pw() * snapScale)
+  c.height = Math.round(ph() * snapScale)
   sc.setTransform(1, 0, 0, 1, 0, 0)
   sc.fillStyle = PAPER
   sc.fillRect(0, 0, c.width, c.height)
@@ -760,12 +910,32 @@ function reRender() {
   if (snap) {
     ctx.save()
     setPageTransform(ctx)
-    ctx.drawImage(snap.c, 0, 0, PAGE_W, PAGE_H)
+    ctx.drawImage(snap.c, 0, 0, pw(), ph())
     ctx.restore()
   } else {
     replayPageInto(el, ctx, dpr * view.s, dpr * view.ox, dpr * view.oy)
   }
+  // Sheet center marker — a subtle cross in page space (pans/zooms with it).
+  ctx.save()
+  setPageTransform(ctx)
+  ctx.strokeStyle = 'rgba(60,60,60,0.28)'
+  ctx.lineWidth = 1 / view.s
+  ctx.beginPath()
+  const cs = 6 // page units half-length of the cross arms
+  ctx.moveTo(pw() / 2 - cs, ph() / 2)
+  ctx.lineTo(pw() / 2 + cs, ph() / 2)
+  ctx.moveTo(pw() / 2, ph() / 2 - cs)
+  ctx.lineTo(pw() / 2, ph() / 2 + cs)
+  ctx.stroke()
+  ctx.restore()
+  // A full repaint wipes the in-progress stroke (and any predicted paint) —
+  // put the committed samples back.
+  predRect = null
+  if (drawing && liveStroke && curSamples.length) {
+    drawSamples({ tool: liveStroke.tool, color: liveStroke.color, pts: curPts }, curSamples, seed)
+  }
   drawTransformControls()
+  drawGuide()
 }
 
 // Content changed: force a snapshot rebuild on the next paint.
@@ -800,41 +970,76 @@ function drawCutSegment(a: { x: number; y: number }, b: { x: number; y: number }
   ctx.restore()
 }
 
+// Pointer pt -> layer-local pt, snapped onto the drawing guide (line/arc)
+// when one is active. Guides snap ink strokes only.
+function toLayerSnapped(pt: Pt, layerId: string): Pt {
+  if (store.guide === 'off' || !INK_TOOLS.includes(store.tool)) return toLayerPt(pt, layerId)
+  const pg = snapToGuide({ x: toPageX(pt.x), y: toPageY(pt.y) })
+  return toLayerPt({ ...pt, x: pg.x * view.s + view.ox, y: pg.y * view.s + view.oy }, layerId)
+}
+
+// Mirrored variants of live samples under the current symmetry mode.
+function mirroredSampleSets(samples: Sample[]): Sample[] {
+  const sets: Sample[][] = []
+  const mv = (s: Sample) => ({ ...s, x: pw() - s.x })
+  const mh = (s: Sample) => ({ ...s, y: ph() - s.y })
+  if (store.symmetry === 'v' || store.symmetry === 'xy') sets.push(samples.map(mv))
+  if (store.symmetry === 'h' || store.symmetry === 'xy') sets.push(samples.map(mh))
+  if (store.symmetry === 'xy') sets.push(samples.map((s) => mh(mv(s))))
+  return sets.flat()
+}
+
 function beginStroke(pt: Pt) {
   if (!ink) return
   const layer = activeLayer()
   if (!layer) return
   curLayerId = layer.id
-  curStrokeSize = store.toolSizes[store.tool] ?? 1
-  strokeId = ink.begin(store.tool)
-  const q = toLayerPt(pt, curLayerId)
+  curStrokeSize = brushOf(store.tool).size
+  curStab = INK_TOOLS.includes(store.tool) ? brushOf(store.tool).stab : -1
+  strokeId = ink.begin(store.tool, curStrokeSize, curStab)
+  const q = toLayerSnapped(pt, curLayerId)
   curPts = [q]
+  curSamples = []
+  predRect = null
+  liveStroke = { tool: store.tool, color: store.color }
   drawing = true
   const s = ink.addPoint(strokeId, q.x, q.y, q.t, q.p)
+  curSamples.push(...s)
   drawSamples({ tool: store.tool, color: store.color, pts: curPts }, s, seed)
 }
 
 function addStrokePoint(pt: Pt) {
   if (!ink || !drawing) return
-  const q = toLayerPt(pt, curLayerId)
+  const q = toLayerSnapped(pt, curLayerId)
   curPts.push(q)
   const s = ink.addPoint(strokeId, q.x, q.y, q.t, q.p)
+  curSamples.push(...s)
   drawSamples({ tool: store.tool, color: store.color, pts: curPts }, s, seed)
 }
 
 function finishStroke(commit: boolean) {
   if (!ink || !drawing) return
+  predRect = null
   const tail = ink.end(strokeId)
+  curSamples.push(...tail)
+  const strokeLayer = pageLayers().find((item) => item.id === curLayerId)
+  const toMask = store.maskEdit && !!strokeLayer?.mask && INK_TOOLS.includes(store.tool)
   const stroke: Stroke = {
     tool: store.tool,
     color: store.color,
     pts: curPts,
     size: curStrokeSize,
+    stab: curStab >= 0 ? curStab : undefined,
     layerId: curLayerId,
+    mask: toMask || undefined,
+    alphaLock: !toMask && strokeLayer?.alphaLock && store.tool !== 'eraser' ? true : undefined,
+    ...(INK_TOOLS.includes(store.tool) ? brushSnapshot(store.tool) : null),
   }
   drawSamples(stroke, tail, seed)
   if (commit && curPts.length) {
     pushStroke(stroke) // strokes watcher -> refresh() rebuilds the snapshot
+    for (const pts of mirroredPtSets(curPts, pageSize(currentPage())))
+      pushStroke({ ...stroke, pts })
     seed++
   } else {
     reRender()
@@ -842,7 +1047,116 @@ function finishStroke(commit: boolean) {
   drawing = false
   strokeId = -1
   curPts = []
+  curSamples = []
+  liveStroke = null
   curLayerId = ''
+}
+
+// Predicted pointer events are painted ahead of the real input to hide the
+// last ~16ms of latency. Their paint is speculative: before the next batch
+// the predicted region is re-blit from the snapshot and the committed live
+// stroke is repainted inside it.
+function sampleBounds(samples: Sample[]) {
+  let left = Infinity,
+    top = Infinity,
+    right = -Infinity,
+    bottom = -Infinity
+  for (const s of samples) {
+    const r = s.w + 1.5
+    if (s.x - r < left) left = s.x - r
+    if (s.x + r > right) right = s.x + r
+    if (s.y - r < top) top = s.y - r
+    if (s.y + r > bottom) bottom = s.y + r
+  }
+  return { x: left, y: top, w: right - left, h: bottom - top }
+}
+
+// Layer-local rect -> page-space rect (bbox of the transformed corners).
+function layerRectToPage(layerId: string, r: { x: number; y: number; w: number; h: number }) {
+  const layer = pageLayers().find((item) => item.id === layerId)
+  if (!layer) return r
+  const angle = (layer.rotation * Math.PI) / 180
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  let left = Infinity,
+    top = Infinity,
+    right = -Infinity,
+    bottom = -Infinity
+  for (const [px, py] of [
+    [r.x, r.y],
+    [r.x + r.w, r.y],
+    [r.x, r.y + r.h],
+    [r.x + r.w, r.y + r.h],
+  ]) {
+    const dx = px - pw() / 2
+    const dy = py - ph() / 2
+    const x = pw() / 2 + layer.x + (dx * cos - dy * sin) * layer.scale
+    const y = ph() / 2 + layer.y + (dx * sin + dy * cos) * layer.scale
+    if (x < left) left = x
+    if (x > right) right = x
+    if (y < top) top = y
+    if (y > bottom) bottom = y
+  }
+  return { x: left, y: top, w: right - left, h: bottom - top }
+}
+
+function erasePredicted() {
+  if (!predRect) return
+  const r = predRect
+  predRect = null
+  if (!ctx || !snap) {
+    reRender()
+    return
+  }
+  ctx.save()
+  setPageTransform(ctx)
+  // Restore the clean committed content under the predicted paint.
+  ctx.drawImage(
+    snap.c,
+    r.x * snapScale,
+    r.y * snapScale,
+    r.w * snapScale,
+    r.h * snapScale,
+    r.x,
+    r.y,
+    r.w,
+    r.h,
+  )
+  // Repaint the live stroke inside the restored region only.
+  ctx.beginPath()
+  ctx.rect(r.x, r.y, r.w, r.h)
+  ctx.clip()
+  if (liveStroke && curSamples.length) {
+    drawSamples({ tool: liveStroke.tool, color: liveStroke.color, pts: curPts }, curSamples, seed)
+  }
+  ctx.restore()
+}
+
+function paintPredicted(e: PointerEvent) {
+  if (!ink || !drawing || typeof e.getPredictedEvents !== 'function') return
+  const { left, top } = canvas.value!.getBoundingClientRect()
+  const predicted = e.getPredictedEvents()
+  if (!predicted.length) return
+  let acc: { x: number; y: number; w: number; h: number } | null = null
+  for (const ev of predicted) {
+    const q = toLayerPt(
+      { x: ev.clientX - left, y: ev.clientY - top, t: ev.timeStamp, p: ev.pressure || 0.5 },
+      curLayerId,
+    )
+    const s = ink.predict(strokeId, q.x, q.y, q.t, q.p)
+    if (!s.length) continue
+    drawSamples({ tool: store.tool, color: store.color, pts: curPts }, s, seed)
+    const b = layerRectToPage(curLayerId, sampleBounds(s))
+    acc = acc
+      ? {
+          x: Math.min(acc.x, b.x),
+          y: Math.min(acc.y, b.y),
+          w: Math.max(acc.x + acc.w, b.x + b.w) - Math.min(acc.x, b.x),
+          h: Math.max(acc.y + acc.h, b.y + b.h) - Math.min(acc.y, b.y),
+        }
+      : b
+  }
+  predRect = acc
 }
 
 // ---- gestures ----
@@ -931,6 +1245,11 @@ function onPointerDown(e: PointerEvent) {
     edgeBuf = [{ x, y, t: e.timeStamp, p: e.pressure || 0.5 }]
     return
   }
+  const gHit = guideHit({ x: toPageX(x), y: toPageY(y) })
+  if (gHit) {
+    guideDrag = gHit
+    return
+  }
   if (store.tool === 'fill') {
     fillStart = { x, y }
     return
@@ -948,12 +1267,94 @@ function onPointerDown(e: PointerEvent) {
         shape: store.shape,
         layerId: layer.id,
         color: store.color,
-        size: store.toolSizes.shapes ?? 1,
+        size: brushOf('shapes').size,
       }
     }
     return
   }
+  if (store.tool === 'filter') return // filter only commits ops via its panel
   beginStroke({ x, y, t: e.timeStamp, p: e.pressure || 0.5 })
+}
+
+// --- drawing guides (ruler / french curve) ---------------------------------
+// The guide overlay draws in page space; its handles drag in canvas px.
+const GUIDE_HANDLE_U = 60 // page-unit hit radius for guide handles
+let guideDrag: 'move' | 'rotate' | 'radius' | null = null
+
+function guideHandlePt(): { x: number; y: number } {
+  const d = store.guide === 'line' ? pw() * 0.4 : store.guideR
+  return {
+    x: store.guideX + Math.cos(store.guideAngle) * d,
+    y: store.guideY + Math.sin(store.guideAngle) * d,
+  }
+}
+
+// Returns a drag mode when a page-space point hits a guide handle.
+function guideHit(p: { x: number; y: number }): typeof guideDrag {
+  if (store.guide === 'off') return null
+  const h = guideHandlePt()
+  if (Math.hypot(p.x - h.x, p.y - h.y) <= GUIDE_HANDLE_U)
+    return store.guide === 'line' ? 'rotate' : 'radius'
+  if (Math.hypot(p.x - store.guideX, p.y - store.guideY) <= GUIDE_HANDLE_U) return 'move'
+  return null
+}
+
+function drawGuide() {
+  const c = ctx
+  if (!c || store.guide === 'off') return
+  c.save()
+  setPageTransform(c)
+  c.strokeStyle = 'rgba(42,128,151,0.75)'
+  c.fillStyle = 'rgba(42,128,151,0.9)'
+  c.lineWidth = 1.5 / view.s
+  const handle = guideHandlePt()
+  if (store.guide === 'line') {
+    c.save()
+    c.translate(store.guideX, store.guideY)
+    c.rotate(store.guideAngle)
+    // straightedge bar + edge line
+    c.fillStyle = 'rgba(42,128,151,0.12)'
+    c.fillRect(-pw(), -14 / view.s, pw() * 2, 28 / view.s)
+    c.strokeRect(-pw(), -14 / view.s, pw() * 2, 28 / view.s)
+    c.beginPath()
+    c.moveTo(-pw(), 0)
+    c.lineTo(pw() * 2, 0)
+    c.stroke()
+    c.restore()
+  } else {
+    c.setLineDash([8 / view.s, 6 / view.s])
+    c.beginPath()
+    c.arc(store.guideX, store.guideY, store.guideR, 0, Math.PI * 2)
+    c.stroke()
+    c.setLineDash([])
+  }
+  const dot = (x: number, y: number, r: number) => {
+    c.beginPath()
+    c.arc(x, y, r / view.s, 0, Math.PI * 2)
+    c.fill()
+    c.stroke()
+  }
+  dot(store.guideX, store.guideY, 9)
+  dot(handle.x, handle.y, 9)
+  c.restore()
+}
+
+function cycleSymmetry() {
+  const order: SymmetryMode[] = ['none', 'v', 'h', 'xy']
+  store.symmetry = order[(order.indexOf(store.symmetry) + 1) % order.length]
+}
+
+function cycleGuide() {
+  const order: GuideMode[] = ['off', 'line', 'arc']
+  store.guide = order[(order.indexOf(store.guide) + 1) % order.length]
+  reRender()
+}
+
+function toggleLayerMask(on: boolean) {
+  const layer = selectedLayer.value
+  if (!layer) return
+  updateLayer(layer.id, { mask: on || undefined })
+  store.maskEdit = on
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -969,12 +1370,27 @@ function onPointerMove(e: PointerEvent) {
   rec.y = y
   rec.t = e.timeStamp
 
+  if (guideDrag) {
+    const px = toPageX(x)
+    const py = toPageY(y)
+    if (guideDrag === 'move') {
+      store.guideX = px
+      store.guideY = py
+    } else if (guideDrag === 'rotate') {
+      store.guideAngle = Math.atan2(py - store.guideY, px - store.guideX)
+    } else {
+      store.guideR = Math.max(20, Math.hypot(px - store.guideX, py - store.guideY))
+    }
+    reRender()
+    return
+  }
+
   if (gestureActive && pointers.size === 2) {
     const m = gestureMetrics()
     if (!m) return
     const { w, h } = canvasSize()
-    const cover = coverViewport(w, h)
-    const minS = Math.min(w / PAGE_W, h / PAGE_H) * ZOOM_MARGIN
+    const cover = coverViewport(w, h, pageSize(currentPage()))
+    const minS = Math.min(w / pw(), h / ph()) * ZOOM_MARGIN
     const nextS = Math.min(
       cover.s * ZOOM_MAX,
       Math.max(minS, (view.s * m.dist) / Math.max(gDist0, 1)),
@@ -986,6 +1402,7 @@ function onPointerMove(e: PointerEvent) {
       nextS,
       w,
       h,
+      pageSize(currentPage()),
     )
     view.s = nextS
     view.ox = c.ox
@@ -1015,11 +1432,11 @@ function onPointerMove(e: PointerEvent) {
             shape: store.shape,
             layerId: layer.id,
             color: store.color,
-            size: store.toolSizes.shapes ?? 1,
+            size: brushOf('shapes').size,
           }
           paintShapeDrag(shapeDrag, { x, y }, false)
         }
-      } else if (store.tool !== 'fill') {
+      } else if (store.tool !== 'fill' && store.tool !== 'filter') {
         beginStroke(edgeBuf[0])
         for (const pt of edgeBuf.slice(1)) addStrokePoint(pt)
       }
@@ -1030,7 +1447,14 @@ function onPointerMove(e: PointerEvent) {
 
   if (panStart) {
     const { w, h } = canvasSize()
-    const c = clampOffset(view.ox + (x - panStart.x), view.oy + (y - panStart.y), view.s, w, h)
+    const c = clampOffset(
+      view.ox + (x - panStart.x),
+      view.oy + (y - panStart.y),
+      view.s,
+      w,
+      h,
+      pageSize(currentPage()),
+    )
     if (c.ox !== view.ox || c.oy !== view.oy) {
       view.ox = c.ox
       view.oy = c.oy
@@ -1068,6 +1492,7 @@ function onPointerMove(e: PointerEvent) {
   }
 
   if (!drawing) return
+  erasePredicted()
   // getCoalescedEvents() is empty for synthetic events — fall back to [e]
   const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : null
   const events = coalesced?.length ? coalesced : [e]
@@ -1076,6 +1501,7 @@ function onPointerMove(e: PointerEvent) {
     const cy = ev.clientY - top
     addStrokePoint({ x: cx, y: cy, t: ev.timeStamp, p: ev.pressure || 0.5 })
   }
+  paintPredicted(e)
 }
 
 function finishCutSelection() {
@@ -1174,17 +1600,28 @@ function finishCutSelection() {
 function commitFill(x: number, y: number) {
   const p = currentPage()
   if (!p) return
-  pushOp({
-    kind: 'fill',
-    x: toPageX(x),
-    y: toPageY(y),
-    color: store.color,
-    after: p.strokes.length,
-  })
+  const after = p.strokes.length
+  const alphaLock = activeLayer()?.alphaLock || undefined
+  // 'erase' mode is the magic-wand background removal; 'invert' is the
+  // inverse/background fill — both run on the layer raster like 'fill'.
+  if (store.fillMode === 'erase') {
+    pushOp({ kind: 'erase', x: toPageX(x), y: toPageY(y), after, alphaLock })
+  } else {
+    pushOp({
+      kind: 'fill',
+      x: toPageX(x),
+      y: toPageY(y),
+      color: store.color,
+      after,
+      alphaLock,
+      invert: store.fillMode === 'invert' || undefined,
+    })
+  }
   reRender()
 }
 
 function onPointerUp(e: PointerEvent) {
+  guideDrag = null
   const rec = pointers.get(e.pointerId)
   pointers.delete(e.pointerId)
   if (e.pointerType === 'pen') penActive = false
@@ -1249,7 +1686,12 @@ function onPointerUp(e: PointerEvent) {
         finishCutSelection()
       } else if (store.tool === 'shapes') {
         reRender()
-      } else if (store.tool !== 'fill' && store.tool !== 'cut' && edgeBuf.length) {
+      } else if (
+        store.tool !== 'fill' &&
+        store.tool !== 'cut' &&
+        store.tool !== 'filter' &&
+        edgeBuf.length
+      ) {
         // slow/short tap in edge zone — treat as drawing
         beginStroke(edgeBuf[0])
         for (const pt of edgeBuf.slice(1)) addStrokePoint(pt)
@@ -1357,15 +1799,16 @@ const redoOk = computed(() => canRedo())
 
 async function importPhoto(file: File) {
   const img = await imageFileToPhoto(file)
-  const scale = Math.min(1, (PAGE_W * 0.6) / img.w, (PAGE_H * 0.6) / img.h)
-  const pw = img.w * scale
-  const ph = img.h * scale
+  const scale = Math.min(1, (pw() * 0.6) / img.w, (ph() * 0.6) / img.h)
+  const photoW = img.w * scale
+  const photoH = img.h * scale
   const p = currentPage()
   if (!p) return
   pushOp({
     kind: 'photo',
-    photo: { src: img.src, x: (PAGE_W - pw) / 2, y: (PAGE_H - ph) / 2, w: pw, h: ph },
+    photo: { src: img.src, x: (pw() - photoW) / 2, y: (ph() - photoH) / 2, w: photoW, h: photoH },
     after: p.strokes.length,
+    alphaLock: activeLayer()?.alphaLock || undefined,
   })
   reRender()
 }
@@ -1387,6 +1830,7 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeyDown)
   offImageLoad = onImageLoaded(() => {
     transformBoundsCache = null
+    thumbRev.value++
     clearLayerRasterCache(store.pageId ?? undefined)
     refresh()
   })
@@ -1398,6 +1842,7 @@ watch(
   () => currentPage()?.strokes?.length,
   () => {
     transformBoundsCache = null
+    thumbRev.value++
     snapDirty = true
     reRender()
   },
@@ -1407,6 +1852,7 @@ watch(
   () => currentPage()?.ops?.length,
   () => {
     transformBoundsCache = null
+    thumbRev.value++
     snapDirty = true
     reRender()
   },
@@ -1417,11 +1863,12 @@ watch(
     currentPage()
       ?.layers?.map(
         (layer) =>
-          `${layer.id}:${layer.visible}:${layer.opacity}:${layer.x}:${layer.y}:${layer.scale}:${layer.rotation}`,
+          `${layer.id}:${layer.visible}:${layer.opacity}:${layer.x}:${layer.y}:${layer.scale}:${layer.rotation}:${layer.blend}:${layer.alphaLock}:${layer.clip}`,
       )
       .join('|'),
   () => {
     transformBoundsCache = null
+    thumbRev.value++
     snapDirty = true
     reRender()
   },
@@ -1447,6 +1894,8 @@ watch(
     layerTransformDrag = null
     layerPreview.value = null
     transformBoundsCache = null
+    thumbCache.clear()
+    thumbRev.value++
     snapDirty = true
     applyViewport()
     reRender()
@@ -1465,7 +1914,11 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="canvas-view" :style="{ '--tray-height': `${TRAY_HEIGHT}px` }">
-    <aside v-if="!['fill', 'cut', 'move', 'transform'].includes(store.tool)" class="brush-rail">
+    <aside
+      v-if="!['fill', 'cut', 'move', 'transform'].includes(store.tool)"
+      class="brush-rail"
+      :class="{ expanded: INK_TOOLS.includes(store.tool) }"
+    >
       <span class="brush-value">{{ Math.round(brushSize * 100) }}%</span>
       <div class="brush-control" :style="{ '--brush-mark-width': brushMarkWidth }">
         <div class="brush-mark" />
@@ -1481,10 +1934,28 @@ onBeforeUnmount(() => {
           step="0.05"
           :value="brushSize"
           :aria-label="t('canvas.size')"
-          @input="store.toolSizes[store.tool] = Number(($event.target as HTMLInputElement).value)"
+          @input="brushOf(store.tool).size = Number(($event.target as HTMLInputElement).value)"
           @pointerdown.stop
         />
       </div>
+      <template v-if="INK_TOOLS.includes(store.tool)">
+        <span class="brush-value stab">{{ Math.round(brushOf(store.tool).stab * 100) }}%</span>
+        <div class="stab-control">
+          <div class="stab-track" />
+          <span class="stab-thumb" :style="{ top: `${(1 - brushOf(store.tool).stab) * 100}%` }" />
+          <input
+            class="brush-slider"
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            :value="brushOf(store.tool).stab"
+            :aria-label="t('canvas.stabilize')"
+            @input="brushOf(store.tool).stab = Number(($event.target as HTMLInputElement).value)"
+            @pointerdown.stop
+          />
+        </div>
+      </template>
     </aside>
 
     <canvas
@@ -1516,6 +1987,12 @@ onBeforeUnmount(() => {
       <button class="round-btn" :class="{ selected: layerPanelOpen }" @click="layerPanelOpen = !layerPanelOpen" :title="t('layers.title')">
         <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg>
       </button>
+      <button class="round-btn" :class="{ selected: store.symmetry !== 'none' }" @click="cycleSymmetry" :title="t('canvas.symmetry')">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M8 5 4 8l4 3V5ZM8 13l-4 3 4 3v-6ZM16 5l4 3-4 3V5ZM16 13l4 3-4 3v-6Z"/><path v-if="store.symmetry === 'h' || store.symmetry === 'xy'" d="M4 12h16" stroke-dasharray="2 2"/><path v-if="store.symmetry === 'v' || store.symmetry === 'xy'" d="M12 4v16" stroke-dasharray="2 2"/></svg>
+      </button>
+      <button class="round-btn" :class="{ selected: store.guide !== 'off' }" @click="cycleGuide" :title="t('canvas.guide')">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path v-if="store.guide === 'arc'" d="M4 18a8 8 0 0 1 16 0"/><path v-else d="M4 18 20 6"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg>
+      </button>
     </div>
 
     <MobileSlider
@@ -1545,6 +2022,13 @@ onBeforeUnmount(() => {
           <button class="layer-eye" @click.stop="updateLayer(layer.id, { visible: !layer.visible })" :title="layer.visible ? t('layers.hide') : t('layers.show')">
             {{ layer.visible ? '◉' : '○' }}
           </button>
+          <img
+            v-if="layerThumb(layer.id)"
+            class="layer-thumb"
+            :src="layerThumb(layer.id)"
+            :alt="layer.name"
+          />
+          <div v-else class="layer-thumb" />
           <input
             v-model="layer.name"
             class="layer-name"
@@ -1572,6 +2056,45 @@ onBeforeUnmount(() => {
           type="range" min="0" max="1" step="0.01" :value="selectedLayer.opacity"
           @input="updateLayer(selectedLayer.id, { opacity: Number(($event.target as HTMLInputElement).value) })"
         />
+        <label>{{ t('layers.blend') }}</label>
+        <select
+          class="layer-blend"
+          :value="selectedLayer.blend ?? 'source-over'"
+          :aria-label="t('layers.blend')"
+          @change="updateLayer(selectedLayer.id, { blend: ($event.target as HTMLSelectElement).value as BlendMode })"
+        >
+          <option v-for="mode in BLEND_MODES" :key="mode" :value="mode">
+            {{ t(`layers.blends.${mode}`) }}
+          </option>
+        </select>
+        <label class="layer-flag">
+          <input
+            type="checkbox"
+            :checked="!!selectedLayer.alphaLock"
+            @change="updateLayer(selectedLayer.id, { alphaLock: ($event.target as HTMLInputElement).checked })"
+          />
+          {{ t('layers.alphaLock') }}
+        </label>
+        <label class="layer-flag">
+          <input
+            type="checkbox"
+            :checked="!!selectedLayer.clip"
+            @change="updateLayer(selectedLayer.id, { clip: ($event.target as HTMLInputElement).checked })"
+          />
+          {{ t('layers.clip') }}
+        </label>
+        <label class="layer-flag">
+          <input
+            type="checkbox"
+            :checked="!!selectedLayer.mask"
+            @change="toggleLayerMask(($event.target as HTMLInputElement).checked)"
+          />
+          {{ t('layers.mask') }}
+        </label>
+        <label v-if="selectedLayer.mask" class="layer-flag">
+          <input type="checkbox" v-model="store.maskEdit" />
+          {{ t('layers.maskEdit') }}
+        </label>
       </div>
     </MobileSlider>
 
@@ -1617,6 +2140,10 @@ onBeforeUnmount(() => {
   box-shadow: 0 6px 22px var(--brush-panel-shadow);
   backdrop-filter: blur(12px);
 }
+/* Touch-first devices: the rail overlaps the page on small screens. */
+@media (pointer: coarse) {
+  .brush-rail { display: none; }
+}
 .brush-value { font: 600 10px/1 ui-monospace, monospace; color: var(--brush-value); }
 .brush-control {
   position: relative;
@@ -1653,6 +2180,37 @@ onBeforeUnmount(() => {
   writing-mode: vertical-lr;
   direction: rtl;
   touch-action: none;
+}
+.brush-rail.expanded {
+  height: 306px;
+}
+.brush-value.stab {
+  opacity: 0.65;
+}
+.stab-control {
+  position: relative;
+  width: 24px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+}
+.stab-track {
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--brush-mark);
+}
+.stab-thumb {
+  position: absolute;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--brush-thumb-border);
+  border-radius: 50%;
+  background: var(--brush-thumb);
+  box-shadow: 0 1px 3px var(--brush-thumb-shadow);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 canvas {
   display: block;
@@ -1735,6 +2293,16 @@ canvas.grab { cursor: grab; }
 .layer-row.dragging { opacity: .38; }
 .layer-row.drop-target { outline: 2px solid var(--layer-accent-bg); outline-offset: 1px; }
 .layer-eye { width: 28px; height: 30px; font-size: 14px; }
+.layer-thumb {
+  width: 46px;
+  height: 30px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  border-radius: 5px;
+  border: 1px solid var(--chrome-border);
+  background:
+    repeating-conic-gradient(rgba(128,128,128,.28) 0% 25%, rgba(255,255,255,.28) 0% 50%) 0 0 / 8px 8px;
+}
 .layer-name {
   min-width: 30px;
   flex: 1;
@@ -1775,6 +2343,24 @@ canvas.grab { cursor: grab; }
 }
 .layer-properties label span { color: var(--layer-accent); font-variant-numeric: tabular-nums; }
 .layer-properties input[type="range"] { width: 100%; margin: 0; accent-color: var(--layer-accent); }
+.layer-blend {
+  width: 100%;
+  height: 30px;
+  color: var(--chrome-text);
+  background: var(--chrome-control-bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.layer-properties label.layer-flag {
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+  color: var(--chrome-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.layer-flag input { accent-color: var(--layer-accent); margin: 0; }
 .zoom-actions {
   position: absolute;
   right: 18px;

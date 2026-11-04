@@ -604,6 +604,43 @@ describe('CanvasView', () => {
     w.unmount()
   })
 
+  it('marks strokes drawn on an alpha-locked layer, except the eraser', async () => {
+    const w = await mountCanvas()
+    updateLayer(pageLayers()[0].id, { alphaLock: true })
+    tap(w.find('canvas').element, 200, 400)
+    store.tool = 'eraser'
+    tap(w.find('canvas').element, 300, 400)
+    const strokes = currentPage()!.strokes
+    expect(strokes[0].alphaLock).toBe(true)
+    expect(strokes[1].alphaLock).toBeUndefined()
+    w.unmount()
+  })
+
+  it('shows blend mode, alpha lock, clipping controls and thumbnails in the layer panel', async () => {
+    const w = await mountCanvas()
+    await w.findAll('.top-actions button')[2].trigger('click')
+    const modal = document.body.querySelector('.mslider-backdrop')!
+    expect(modal.querySelector('.layer-thumb')).not.toBeNull()
+    const blend = modal.querySelector<HTMLSelectElement>('.layer-blend')!
+    expect(blend).not.toBeNull()
+    expect(blend.value).toBe('source-over')
+    const flags = [...modal.querySelectorAll<HTMLInputElement>('.layer-flag input')]
+    expect(flags).toHaveLength(3)
+
+    blend.value = 'multiply'
+    blend.dispatchEvent(new Event('change'))
+    flags[0].click()
+    flags[1].click()
+    flags[2].click()
+    expect(pageLayers()[0]).toMatchObject({
+      blend: 'multiply',
+      alphaLock: true,
+      clip: true,
+      mask: true,
+    })
+    w.unmount()
+  })
+
   it('Ctrl+Z undoes, Ctrl+Shift+Z redoes', async () => {
     const w = await mountCanvas()
     const canvas = w.find('canvas').element

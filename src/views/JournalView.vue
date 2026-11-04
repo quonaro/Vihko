@@ -15,6 +15,7 @@ import { useI18n } from 'vue-i18n'
 import { initInk } from '../ink/engine'
 import { usePrompt } from '../composables/usePrompt'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import { PAGE_SIZE_PRESETS } from '../pageSpace'
 import EmptyState from '../components/EmptyState.vue'
 import { saveFile } from '../saveFile'
 import type { JournalScene } from '../three/journalScene'
@@ -300,6 +301,16 @@ async function goToPage() {
     </div>
 
     <footer>
+      <select
+        v-model="store.pageSize"
+        class="page-size"
+        :title="t('journal.pageSize')"
+        :aria-label="t('journal.pageSize')"
+      >
+        <option v-for="s in PAGE_SIZE_PRESETS" :key="s.id" :value="s.id">
+          {{ t(`journal.size.${s.id}`) }}
+        </option>
+      </select>
       <button class="round" @click="addPage" :title="t('journal.newPage')">
         <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 5 L12 19 M5 12 L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
@@ -516,6 +527,16 @@ footer {
   justify-content: center;
   gap: 18px;
   padding: 20px 0 max(30px, env(safe-area-inset-bottom));
+}
+.page-size {
+  height: 32px;
+  border: none;
+  border-radius: 16px;
+  padding: 0 12px;
+  background: rgba(25,26,24,.82);
+  color: #fff;
+  font-size: 12px;
+  backdrop-filter: blur(6px);
 }
 .round {
   width: 48px;

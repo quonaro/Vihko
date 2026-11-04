@@ -1,7 +1,21 @@
 import { reactive, toRaw, watch } from 'vue'
-import type { Journal, Layer, Page, PageOp, ShapeKind, Stroke, ToolId } from './types'
+import type {
+  BrushParams,
+  BrushPreset,
+  GuideMode,
+  Journal,
+  Layer,
+  Page,
+  PageOp,
+  Pt,
+  ShapeKind,
+  Stroke,
+  SymmetryMode,
+  ToolId,
+} from './types'
 import { i18n } from './i18n'
-import { PAGE_W, PAGE_H } from './pageSpace'
+import { PAGE_W, PAGE_H, pageSizePreset } from './pageSpace'
+import type { PageSizeId } from './pageSpace'
 import { loadOrCreateNativeJournals, saveJournalSnapshot, usesNativeSqlite } from './persistence'
 
 const t = (key: string, named?: Record<string, unknown>) => i18n.global.t(key, named ?? {})
@@ -18,8 +32,18 @@ interface StoreState {
   journalPageIdx: number
   journalOverviewIdx: number
   tool: ToolId
-  toolSizes: Record<ToolId, number>
+  brush: Record<ToolId, BrushParams> // per-tool brush settings (see the panel)
+  brushPresets: BrushPreset[]
   shape: ShapeKind
+  fillMode: 'normal' | 'invert' | 'erase' // fill tool: bucket / inverse / bg-removal
+  pageSize: PageSizeId // size preset applied to newly created pages
+  symmetry: SymmetryMode // mirror drawn strokes across the page-center axes
+  guide: GuideMode // 'line' straightedge | 'arc' french curve; strokes snap to it
+  guideX: number // guide anchor in page units
+  guideY: number
+  guideAngle: number // line: angle; arc: arc start angle (radians)
+  guideR: number // arc radius (page units)
+  maskEdit: boolean // paint into the active layer's alpha mask
   color: string
   trayOpen: boolean
 }
@@ -86,11 +110,13 @@ function touchPage(p: Page) {
   pageRevs.set(raw, pageRev(raw) + 1)
 }
 
-function newPage(): Page {
+function newPage(size?: { w: number; h: number }): Page {
   const id = uid()
   const layerId = uid()
   return {
     id,
+    // Non-default sizes travel on the page; the spread keeps fields absent.
+    ...(size && (size.w !== PAGE_W || size.h !== PAGE_H) ? { w: size.w, h: size.h } : null),
     strokes: [],
     createdAt: Date.now(),
     activeLayerId: layerId,
@@ -161,22 +187,168 @@ export const store = reactive<StoreState>({
   journalOverviewIdx: 0,
   tool: 'draw',
   shape: 'rectangle',
-  toolSizes: {
-    eraser: 1,
-    draw: 1,
-    sketch: 1,
-    outline: 1,
-    write: 1,
-    color: 1,
-    shapes: 1,
-    fill: 1,
-    cut: 1,
-    move: 1,
-    transform: 1,
+  brush: {
+    eraser: { size: 1, opacity: 1, stab: 0.5 },
+    draw: { size: 1, opacity: 1, stab: 0.5 },
+    sketch: { size: 1, opacity: 1, stab: 0.5 },
+    outline: { size: 1, opacity: 1, stab: 0.5 },
+    write: { size: 1, opacity: 1, stab: 0.5 },
+    color: { size: 1, opacity: 1, stab: 0.5 },
+    shapes: { size: 1, opacity: 1, stab: -1 },
+    fill: { size: 1, opacity: 1, stab: -1 },
+    cut: { size: 1, opacity: 1, stab: -1 },
+    filter: { size: 1, opacity: 1, stab: -1 },
+    move: { size: 1, opacity: 1, stab: -1 },
+    transform: { size: 1, opacity: 1, stab: -1 },
   },
+  brushPresets: loadPresets(),
+  fillMode: 'normal',
+  pageSize: 'spread',
+  symmetry: 'none',
+  guide: 'off',
+  guideX: PAGE_W / 2,
+  guideY: PAGE_H / 2,
+  guideAngle: 0,
+  guideR: PAGE_W / 4,
+  maskEdit: false,
   color: '#22221f',
   trayOpen: true,
 })
+
+const PRESETS_KEY = 'vihko:brushes'
+
+function defaultPresets(): BrushPreset[] {
+  const p = (
+    id: string,
+    name: string,
+    tool: ToolId,
+    params: Partial<BrushParams>,
+  ): BrushPreset => ({
+    id,
+    name,
+    tool,
+    params: { size: 1, opacity: 1, stab: 0.5, ...params },
+  })
+  return [
+    p('pencil', 'brushes.pencil', 'sketch', { tip: 'noise', spacing: 0.25, jitter: 0.4 }),
+    p('round', 'brushes.round', 'draw', { tip: 'round' }),
+    p('marker', 'brushes.marker', 'outline', { tip: 'marker', spacing: 0.45, opacity: 0.9 }),
+    p('airbrush', 'brushes.airbrush', 'draw', { tip: 'airbrush', spacing: 0.3, opacity: 0.55 }),
+    p('watercolor', 'brushes.watercolor', 'color', { wet: 0.65 }),
+  ]
+}
+
+function loadPresets(): BrushPreset[] {
+  try {
+    const raw = localStorage.getItem(PRESETS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as BrushPreset[]
+      if (Array.isArray(parsed) && parsed.length) return parsed
+    }
+  } catch {
+    /* corrupted -> reseed */
+  }
+  return defaultPresets()
+}
+
+// Brush params for the active tool — always returns a live store record.
+export function brushOf(id: ToolId): BrushParams {
+  if (!store.brush[id]) store.brush[id] = { size: 1, opacity: 1, stab: -1 }
+  return store.brush[id]
+}
+
+// Fields snapshotted onto a stroke at draw time for deterministic replay.
+export function brushSnapshot(id: ToolId): Partial<BrushParams> {
+  const b = brushOf(id)
+  return {
+    opacity: b.opacity < 1 ? b.opacity : undefined,
+    blend: b.blend && b.blend !== 'source-over' ? b.blend : undefined,
+    tip: b.tip && b.tip !== 'round' ? b.tip : undefined,
+    spacing: b.spacing,
+    jitter: b.jitter,
+    scatter: b.scatter,
+    angle: b.angle,
+    wet: id === 'color' ? (b.wet ?? 0) : undefined,
+  }
+}
+
+export function applyBrushPreset(preset: BrushPreset) {
+  store.tool = preset.tool
+  Object.assign(brushOf(preset.tool), preset.params)
+}
+
+export function saveBrushPreset() {
+  const b = brushOf(store.tool)
+  const preset: BrushPreset = {
+    id: uid(),
+    name: `Brush ${store.brushPresets.length + 1}`,
+    tool: store.tool,
+    params: { ...b },
+  }
+  store.brushPresets.push(preset)
+  return preset
+}
+
+// --- symmetry & guides ------------------------------------------------------
+// Mirror a page-space point across the page-center axes per store.symmetry.
+export function mirrorX(x: number, w = PAGE_W) {
+  return w - x
+}
+export function mirrorY(y: number, h = PAGE_H) {
+  return h - y
+}
+
+// The extra mirrored point sets for a stroke under the current symmetry mode
+// (the original points are always drawn; these are the copies).
+export function mirroredPtSets(
+  pts: Pt[],
+  size: { w: number; h: number } = { w: PAGE_W, h: PAGE_H },
+): Pt[][] {
+  const mv = (p: Pt): Pt => ({ ...p, x: mirrorX(p.x, size.w) })
+  const mh = (p: Pt): Pt => ({ ...p, y: mirrorY(p.y, size.h) })
+  switch (store.symmetry) {
+    case 'v':
+      return [pts.map(mv)]
+    case 'h':
+      return [pts.map(mh)]
+    case 'xy':
+      return [pts.map(mv), pts.map(mh), pts.map((p) => mh(mv(p)))]
+    default:
+      return []
+  }
+}
+
+// Snap a page-space point onto the active drawing guide: the straightedge is
+// an infinite line through (guideX,guideY) at guideAngle; the french curve is
+// a circle of guideR around the same anchor. Returns the input when guides
+// are off.
+export function snapToGuide(p: { x: number; y: number }): { x: number; y: number } {
+  if (store.guide === 'line') {
+    const c = Math.cos(store.guideAngle)
+    const s = Math.sin(store.guideAngle)
+    const d = (p.x - store.guideX) * c + (p.y - store.guideY) * s
+    return { x: store.guideX + c * d, y: store.guideY + s * d }
+  }
+  if (store.guide === 'arc') {
+    const dx = p.x - store.guideX
+    const dy = p.y - store.guideY
+    const l = Math.hypot(dx, dy) || 1
+    return { x: store.guideX + (dx / l) * store.guideR, y: store.guideY + (dy / l) * store.guideR }
+  }
+  return p
+}
+
+watch(
+  () => store.brushPresets,
+  (presets) => {
+    try {
+      localStorage.setItem(PRESETS_KEY, JSON.stringify(toRaw(presets)))
+    } catch {
+      /* quota */
+    }
+  },
+  { deep: true },
+)
 
 export const covers = [
   '#3a3f4a',
@@ -253,7 +425,7 @@ export function addJournal() {
 export function addPage() {
   const j = currentJournal()
   if (!j) return null
-  const p = newPage()
+  const p = newPage(pageSizePreset(store.pageSize))
   j.pages.push(p)
   return p
 }

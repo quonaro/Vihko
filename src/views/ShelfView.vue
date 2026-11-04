@@ -201,7 +201,7 @@ function openFromScene(id: string) {
       top: `${cr.top + r.top}px`,
       width: `${r.width}px`,
       height: `${r.height}px`,
-      borderRadius: '3px 10px 10px 3px',
+      borderRadius: '4.5%',
       backgroundColor: covers[j.cover % covers.length],
     })
     if (j.coverImg) {

@@ -22,9 +22,9 @@ beforeEach(() => {
 })
 
 describe('ToolTray', () => {
-  it('renders the eleven available tools and the full palette', () => {
+  it('renders the twelve available tools and the full palette', () => {
     const w = mountTray()
-    expect(w.findAll('.tool')).toHaveLength(11)
+    expect(w.findAll('.tool')).toHaveLength(12)
     expect(w.find('.tool[title="Диаграмма"]').exists()).toBe(false)
     expect(w.findAll('.dot')).toHaveLength(palette.length)
     expect(w.find('.swatch').exists()).toBe(true)

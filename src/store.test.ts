@@ -29,6 +29,11 @@ import {
   updateLayer,
   moveLayer,
   deleteLayer,
+  brushOf,
+  applyBrushPreset,
+  saveBrushPreset,
+  mirroredPtSets,
+  snapToGuide,
 } from './store'
 import { PAGE_W, PAGE_H } from './pageSpace'
 import { i18n } from './i18n'
@@ -292,6 +297,18 @@ describe('layers', () => {
     deleteLayer(base.id)
     expect(pageLayers()).toHaveLength(1)
   })
+
+  it('stores blend mode, alpha lock and clipping on layers', () => {
+    const layer = addLayer()!
+    updateLayer(layer.id, { blend: 'multiply', alphaLock: true, clip: true })
+    expect(pageLayers()[1]).toMatchObject({ blend: 'multiply', alphaLock: true, clip: true })
+    updateLayer(layer.id, { blend: 'source-over', alphaLock: false, clip: false })
+    expect(pageLayers()[1]).toMatchObject({
+      blend: 'source-over',
+      alphaLock: false,
+      clip: false,
+    })
+  })
 })
 
 describe('persistence', () => {
@@ -385,5 +402,64 @@ describe('migrateToPageSpace', () => {
     expect(cut.dy).toBeCloseTo(6 * ky)
     expect(photo.photo.w).toBeCloseTo(30 * kx)
     expect(photo.photo.h).toBeCloseTo(40 * ky)
+  })
+})
+
+describe('brush presets', () => {
+  it('applies a preset to its tool params and saves new presets', () => {
+    const preset = {
+      id: 'dbg',
+      name: 'brushes.pencil',
+      tool: 'sketch' as const,
+      params: { size: 2, opacity: 0.6, stab: 0.4, tip: 'noise' as const },
+    }
+    applyBrushPreset(preset)
+    expect(store.tool).toBe('sketch')
+    expect(brushOf('sketch')).toMatchObject({ size: 2, opacity: 0.6, tip: 'noise' })
+
+    const n = store.brushPresets.length
+    saveBrushPreset()
+    expect(store.brushPresets.length).toBe(n + 1)
+  })
+})
+
+describe('symmetry and guides', () => {
+  it('mirrors points per symmetry mode', () => {
+    const pts = [{ x: 10, y: 20, t: 0, p: 0.5 }]
+    store.symmetry = 'v'
+    expect(mirroredPtSets(pts)).toHaveLength(1)
+    expect(mirroredPtSets(pts)[0][0].x).toBe(PAGE_W - 10)
+    store.symmetry = 'xy'
+    expect(mirroredPtSets(pts)).toHaveLength(3)
+    store.symmetry = 'none'
+    expect(mirroredPtSets(pts)).toHaveLength(0)
+  })
+
+  it('snaps points to the ruler line and the arc', () => {
+    store.guide = 'line'
+    store.guideX = 100
+    store.guideY = 100
+    store.guideAngle = 0
+    expect(snapToGuide({ x: 150, y: 220 })).toEqual({ x: 150, y: 100 })
+    store.guide = 'arc'
+    store.guideR = 50
+    const p = snapToGuide({ x: 170, y: 130 })
+    expect(Math.hypot(p.x - 100, p.y - 100)).toBeCloseTo(50, 5)
+    store.guide = 'off'
+  })
+})
+
+describe('page sizes', () => {
+  it('new pages get the selected size preset; spread stays implicit', () => {
+    store.pageSize = 'square'
+    const j = addJournal()
+    store.journalId = j.id
+    const p = addPage()!
+    expect(p.w).toBe(p.h)
+    store.pageSize = 'spread'
+    const p2 = addPage()!
+    expect(p2.w).toBeUndefined()
+    expect(p2.h).toBeUndefined()
+    store.pageSize = 'spread'
   })
 })
