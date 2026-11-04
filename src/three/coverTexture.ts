@@ -1,8 +1,8 @@
 import { getPhoto } from '../ink/ops'
 
-// Rasterize a journal cover into a canvas texture: cover color or photo
-// plus the darker spine strip. The title is not part of the texture — the
-// shelf shows it as a DOM label under each book.
+// Rasterize a journal cover into a canvas texture: cover color or photo.
+// The title is not part of the texture — the shelf shows it as a DOM label
+// under each book.
 
 export const COVER_W = 384
 export const COVER_H = Math.round(COVER_W / 0.735) // matches shelfLayout aspect
@@ -84,25 +84,6 @@ export function paintCover(
   g.addColorStop(1, 'rgba(0,0,0,0.18)')
   ctx.fillStyle = g
   ctx.fillRect(0, 0, w, h)
-
-  // A restrained printed halftone makes the hard-shaded 3D covers feel inked.
-  ctx.fillStyle = 'rgba(30,24,21,0.6)'
-  for (let y = Math.round(h * 0.58); y < h; y += 13) {
-    for (let x = 10; x < w; x += 13) {
-      ctx.globalAlpha = 0.16 + 0.16 * ((y - h * 0.58) / (h * 0.42))
-      ctx.beginPath()
-      ctx.arc(x, y, 1.8, 0, Math.PI * 2)
-      ctx.fill()
-    }
-  }
-  ctx.globalAlpha = 1
-
-  ctx.fillStyle = 'rgba(0,0,0,0.22)'
-  ctx.fillRect(0, 0, w * 0.075, h)
-
-  ctx.strokeStyle = 'rgba(35,28,24,0.58)'
-  ctx.lineWidth = Math.max(2, w * 0.008)
-  ctx.strokeRect(ctx.lineWidth, ctx.lineWidth, w - ctx.lineWidth * 2, h - ctx.lineWidth * 2)
 }
 
 // Offscreen canvas snapshot of a cover; null when 2D is unavailable (jsdom).

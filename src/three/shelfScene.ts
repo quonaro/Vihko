@@ -5,12 +5,8 @@ import {
   createComposer,
   detectQuality,
   FramePump,
-  addComicOutline,
-  outlineMaterial,
   type Quality,
 } from './stage'
-import type { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
-import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import {
   BOOK_W,
   BOOK_H,
@@ -19,10 +15,8 @@ import {
   TILT_LIFT,
   BOARD_T,
   PAGES_D,
-  SPINE_W,
-  SPINE_H,
-  SPINE_D,
-  SPINE_PROUD,
+  pagesOutline,
+  boardOutline,
   shelfPose,
   inHitBox,
   scrollLimit,
@@ -74,15 +68,50 @@ const damp = (rate: number, dt: number) => 1 - Math.exp(-rate * dt)
 const easeOut = (t: number) => 1 - (1 - t) ** 3
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
+// Paper block and cover boards are extruded from the rounded outlines —
+// a plain box leaves corners sharp while the journal inside rounds them
+// (sheetPoint). Arc steps stay under the EdgesGeometry threshold, so the
+// comic outline still traces just the two rounded cap loops, no wall
+// stripes.
+function extrudeOutline(points: [number, number][], depth: number): THREE.ExtrudeGeometry {
+  const shape = new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, y)))
+  const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false })
+  g.translate(0, 0, -depth / 2)
+  return g
+}
+
+function pagesGeometry(): THREE.BufferGeometry {
+  return extrudeOutline(pagesOutline(), PAGES_D)
+}
+
+// ExtrudeGeometry caps carry material index 0 and the side walls index 1,
+// so the front board maps the cover texture across both lids (the hidden
+// inner lid never shows past the page block).
+function boardGeometry(): THREE.BufferGeometry {
+  const g = extrudeOutline(boardOutline(), BOARD_T)
+  // Cap UVs arrive in shape coordinates — normalise to 0..1 so the cover
+  // texture spans the face.
+  const uv = g.attributes.uv as THREE.BufferAttribute
+  const pos = g.attributes.position
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, pos.getX(i) / BOOK_W + 0.5, pos.getY(i) / BOOK_H + 0.5)
+  }
+  return g
+}
+
+// Selection tint for the unlit cover face — a warm >1 multiply stands
+// in for the emissive glow a lit material would get.
+const SELECT_TINT = new THREE.Color(1.45, 1.18, 0.85)
+
 interface BookEntry {
   id: string
   sig: string
   order: number
   group: THREE.Group
-  coverMat: THREE.MeshStandardMaterial
+  coverMat: THREE.MeshBasicMaterial
+  coverBase: THREE.Color
   boardMat: THREE.MeshStandardMaterial
-  fadeMats: THREE.MeshStandardMaterial[]
-  outlineMat: LineMaterial
+  fadeMats: THREE.Material[]
   canvas: HTMLCanvasElement | null
   ctx: CanvasRenderingContext2D | null
   tex: THREE.CanvasTexture | null
@@ -136,9 +165,8 @@ export class ShelfScene {
   private v = new THREE.Vector3()
   private m1 = new THREE.Matrix4()
   private localRay = new THREE.Ray()
-  private pagesGeo = new THREE.BoxGeometry(BOOK_W * 0.955, BOOK_H * 0.96, PAGES_D)
-  private boardGeo = new THREE.BoxGeometry(BOOK_W, BOOK_H, BOARD_T)
-  private spineGeo = new THREE.BoxGeometry(SPINE_W, SPINE_H, SPINE_D)
+  private pagesGeo = pagesGeometry()
+  private boardGeo = boardGeometry()
   private pump = new FramePump((now) => {
     const dt = Math.min((now - this.last) / 1000, 0.05)
     this.last = now
@@ -212,29 +240,22 @@ export class ShelfScene {
       tex.colorSpace = THREE.SRGBColorSpace
       tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
     }
-    const face = new THREE.MeshStandardMaterial({
+    // The cover face stays unlit: under the studio rig a lit material
+    // washes the artwork out, so the printed texture is shown as-is.
+    const face = new THREE.MeshBasicMaterial({
       color: tex ? 0xffffff : coverC,
-      roughness: 0.85,
-      envMapIntensity: 0.35,
     })
+    face.toneMapped = false
     if (tex) face.map = tex
 
     const bz = BOOK_D / 2 - BOARD_T / 2
     const pages = new THREE.Mesh(this.pagesGeo, paper)
     pages.position.set(BOOK_W * 0.02, 0, 0)
-    const front = new THREE.Mesh(this.boardGeo, [board, board, board, board, face, board])
+    const front = new THREE.Mesh(this.boardGeo, [face, board])
     front.position.z = bz
     const back = new THREE.Mesh(this.boardGeo, board)
     back.position.z = -bz
-    const spine = new THREE.Mesh(this.spineGeo, board)
-    spine.position.x = -BOOK_W / 2 + SPINE_W / 2 - SPINE_PROUD
-    const outlineMat = outlineMaterial()
-    outlineMat.resolution.set(this.cw, this.ch)
-    addComicOutline(pages, outlineMat)
-    addComicOutline(front, outlineMat)
-    addComicOutline(back, outlineMat)
-    addComicOutline(spine, outlineMat)
-    for (const m of [pages, front, back, spine]) {
+    for (const m of [pages, front, back]) {
       m.castShadow = true
       m.receiveShadow = true
       group.add(m)
@@ -247,9 +268,9 @@ export class ShelfScene {
       order: 0,
       group,
       coverMat: face,
+      coverBase: face.color.clone(),
       boardMat: board,
       fadeMats: [paper, board, face],
-      outlineMat,
       canvas: cnv,
       ctx,
       tex,
@@ -261,12 +282,8 @@ export class ShelfScene {
 
   private disposeBook(e: BookEntry) {
     this.row.remove(e.group)
-    e.group.traverse((o) => {
-      if (o instanceof LineSegments2) o.geometry.dispose()
-    })
     e.tex?.dispose()
     for (const m of e.fadeMats) m.dispose()
-    e.outlineMat.dispose()
     if (this.hovered === e) this.hovered = null
   }
 
@@ -309,7 +326,8 @@ export class ShelfScene {
     this.selectedId = id
     for (const e of this.books) {
       const on = e.id === id
-      e.coverMat.emissive.setHex(on ? 0x5a3f14 : 0x000000)
+      e.coverMat.color.copy(e.coverBase)
+      if (on) e.coverMat.color.multiply(SELECT_TINT)
       e.boardMat.emissive.setHex(on ? 0x4a3512 : 0x000000)
     }
   }
@@ -355,7 +373,6 @@ export class ShelfScene {
     this.books = []
     this.pagesGeo.dispose()
     this.boardGeo.dispose()
-    this.spineGeo.dispose()
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose()
@@ -583,7 +600,6 @@ export class ShelfScene {
     this.ch = h
     this.renderer.setSize(w, h, false)
     this.post.setSize(w, h)
-    for (const e of this.books) e.outlineMat.resolution.set(w, h)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     // Fit ~5 books across on wide screens, a single one on portrait
@@ -689,7 +705,6 @@ export class ShelfScene {
         m.opacity = en
         m.transparent = en < 1
       }
-      e.outlineMat.opacity = en * 0.82
     }
 
     if (Math.abs(this.vel) > MOMENTUM_MIN && !this.drag) {

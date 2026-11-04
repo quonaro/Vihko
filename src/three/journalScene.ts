@@ -15,6 +15,8 @@ import {
   leafRestZ,
   leafRestFan,
   leafRestSink,
+  leafTurnCurl,
+  leafTurnLift,
   ROW_LEAN,
   rowRestY,
   sheetPoint,
@@ -63,8 +65,6 @@ export interface SceneEvents {
 }
 
 const TEX_W = 1024
-// The free edge trails the spine mid-turn — a paper bend, not a plank.
-const LEAF_CURL = 0.4
 // Touch delete buttons hang this far under a sheet's projected bottom
 // edge — a px gap, so the 30px button stays clear of the paper at any zoom.
 const DEL_DROP_PX = 40
@@ -90,6 +90,7 @@ interface LeafEntry {
   hingeZ: number
   fan: number
   sink: number
+  lift: number
   curl: number
 }
 
@@ -405,7 +406,19 @@ export class JournalScene {
     const outline = this.makeOutline(leafOutlineTheta(0, 0))
     front.add(outline)
     this.stackGroup.add(front, back)
-    return { front, back, outline, rest, k, theta: 0, hingeZ: 0, fan: 0, sink: 0, curl: 0 }
+    return {
+      front,
+      back,
+      outline,
+      rest,
+      k,
+      theta: 0,
+      hingeZ: 0,
+      fan: 0,
+      sink: 0,
+      lift: 0,
+      curl: 0,
+    }
   }
 
   private deformLeaf(leaf: LeafEntry) {
@@ -421,6 +434,7 @@ export class JournalScene {
           leaf.curl,
           leaf.fan,
           leaf.sink,
+          leaf.lift,
         )
         pos.setXYZ(i, x, y, z)
       }
@@ -429,7 +443,7 @@ export class JournalScene {
       geo.computeBoundingSphere()
     }
     leaf.outline.geometry.setPositions(
-      packOutline(leafOutlineTheta(leaf.theta, leaf.curl, leaf.fan, leaf.sink)),
+      packOutline(leafOutlineTheta(leaf.theta, leaf.curl, leaf.fan, leaf.sink, leaf.lift)),
     )
     leaf.front.position.z = leaf.hingeZ
     leaf.back.position.z = leaf.hingeZ
@@ -535,8 +549,19 @@ export class JournalScene {
       leaf.hingeZ = leafRestZ(k, this.cur)
       leaf.fan = leafRestFan(k, this.cur)
       leaf.sink = leafRestSink(k, this.cur)
+      leaf.lift = 0
       this.deformLeaf(leaf)
       this.leaves.push(leaf)
+    }
+
+    // Evict rasterized textures of pages that no longer exist — otherwise a
+    // deleted page's texture lives until the whole scene is disposed.
+    const alive = new Set(pages.map((p) => p.id))
+    for (const [key, entry] of this.texCache) {
+      if (entry.page && !alive.has(entry.page.id)) {
+        entry.tex.dispose()
+        this.texCache.delete(key)
+      }
     }
 
     // (Re)build the overview card row to match the page list.
@@ -1020,6 +1045,7 @@ export class JournalScene {
         let hingeZ: number
         let fan: number
         let sink: number
+        let lift: number
         let curl: number
         if (leaf.k === tl) {
           const t = this.turn.progress
@@ -1035,29 +1061,39 @@ export class JournalScene {
           const sa = leafRestSink(leaf.k, this.turn.srcIndex)
           const sb = leafRestSink(leaf.k, this.turn.dstIndex)
           sink = sa + (sb - sa) * t
-          curl = LEAF_CURL
+          lift = leafTurnLift(t)
+          curl = leafTurnCurl(t)
           leaf.theta = theta
           leaf.hingeZ = hingeZ
           leaf.fan = fan
           leaf.sink = sink
+          leaf.lift = lift
           leaf.curl = curl
         } else {
           theta = leafRestAngle(leaf.k, c)
           hingeZ = leafRestZ(leaf.k, c)
           fan = leafRestFan(leaf.k, c)
           sink = leafRestSink(leaf.k, c)
+          lift = 0
           const dTheta = theta - leaf.theta
           const dZ = hingeZ - leaf.hingeZ
           const dFan = fan - leaf.fan
           const dSink = sink - leaf.sink
+          const dLift = lift - leaf.lift
           const dCurl = 0 - leaf.curl
           leaf.theta += dTheta * k
           leaf.hingeZ += dZ * k
           leaf.fan += dFan * k
           leaf.sink += dSink * k
+          leaf.lift += dLift * k
           leaf.curl += dCurl * k
           if (
-            Math.abs(dTheta) + Math.abs(dZ) + Math.abs(dFan) + Math.abs(dSink) + Math.abs(dCurl) <
+            Math.abs(dTheta) +
+              Math.abs(dZ) +
+              Math.abs(dFan) +
+              Math.abs(dSink) +
+              Math.abs(dLift) +
+              Math.abs(dCurl) <
             1e-4
           )
             continue
@@ -1155,6 +1191,7 @@ export class JournalScene {
         this.hoveredLeaf.curl,
         this.hoveredLeaf.fan,
         this.hoveredLeaf.sink,
+        this.hoveredLeaf.lift,
       )
       const v = new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(this.hoveredLeaf.front.matrixWorld)
       v.project(this.camera)

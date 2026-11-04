@@ -22,8 +22,8 @@ describe('coverCanvas', () => {
 })
 
 describe('paintCover', () => {
-  // Records fillRect calls; covers must not paint a vertical strip past
-  // the spine (the elastic band was removed from the design).
+  // Records fillRect calls; covers must not paint a vertical strip at all
+  // (spine strip and elastic band were removed from the design).
   function stubCtx() {
     const rects: number[][] = []
     const ctx = {
@@ -41,15 +41,15 @@ describe('paintCover', () => {
     return { ctx, rects }
   }
 
-  it('paints no vertical strip other than the spine at x=0', () => {
+  it('paints only full-width fills — no spine strip', () => {
     const canvas = { width: 384, height: 522 } as HTMLCanvasElement
     const { ctx, rects } = stubCtx()
     paintCover(canvas, ctx, { color: '#333' })
     expect(rects.length).toBeGreaterThan(0)
-    expect(rects.every(([x]) => x === 0)).toBe(true)
+    expect(rects.every(([x, , w]) => x === 0 && w === canvas.width)).toBe(true)
   })
 
-  it('adds a halftone print texture and a drawn cover border', () => {
+  it('draws no cover border and no halftone dots', () => {
     const canvas = { width: 384, height: 522 } as HTMLCanvasElement
     const arcs: number[][] = []
     let bordered = false
@@ -61,8 +61,8 @@ describe('paintCover', () => {
       },
     })
     paintCover(canvas, ctx, { color: '#333' })
-    expect(arcs.length).toBeGreaterThan(100)
-    expect(bordered).toBe(true)
+    expect(arcs.length).toBe(0)
+    expect(bordered).toBe(false)
   })
 
   it('paints no title text — the shelf labels books below instead', () => {

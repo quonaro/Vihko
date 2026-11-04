@@ -13,6 +13,10 @@ import {
   leafRestSink,
   leafPointTheta,
   leafOutlineTheta,
+  leafTurnCurl,
+  leafTurnLift,
+  LEAF_TURN_CURL,
+  LEAF_TURN_LIFT,
   leafTexU,
   LEAF_LEAN,
   LEAF_ZSTEP,
@@ -250,6 +254,71 @@ describe('leaf piles', () => {
     expect(leafPointTheta(HALF_W, 0, HALF_W, Math.PI, 0.4)).toEqual(
       leafPointTheta(HALF_W, 0, HALF_W, Math.PI, 0),
     )
+  })
+
+  it('fades curl and lift out at both ends of a turn', () => {
+    expect(leafTurnCurl(0)).toBe(0)
+    expect(leafTurnCurl(1)).toBe(0)
+    expect(leafTurnLift(0)).toBe(0)
+    expect(leafTurnLift(1)).toBe(0)
+    expect(leafTurnCurl(0.5)).toBeCloseTo(LEAF_TURN_CURL)
+    expect(leafTurnLift(0.5)).toBeCloseTo(LEAF_TURN_LIFT)
+    // A resting leaf and a landed leaf are flat — no visible jump on frame 1
+    // or leftover bend on the last frame.
+    for (const t of [0, 1]) {
+      expect(leafTurnCurl(t)).toBe(0)
+      expect(leafTurnLift(t)).toBe(0)
+    }
+  })
+
+  it('lifts the free edge toward the viewer without moving the hinge', () => {
+    const [hx, hy, hz] = leafPointTheta(0, PAGE_H / 2, HALF_W, 0, 0, 0, 0, 0.2)
+    expect(hx).toBeCloseTo(0, 9)
+    expect(hy).toBeCloseTo(PAGE_H / 2, 9)
+    expect(hz).toBeCloseTo(0, 9)
+    const flat = leafPointTheta(HALF_W, 0, HALF_W, 0)
+    const lifted = leafPointTheta(HALF_W, 0, HALF_W, 0, 0, 0, 0, 0.2)
+    expect(lifted[2] - flat[2]).toBeCloseTo(0.2, 9)
+  })
+
+  it('keeps a turning leaf above the pile it sweeps over', () => {
+    // Forward turn 2 -> 3: leaf 3 lifts off the right pile (leaves 4+) and
+    // lands on top of the left pile (leaf 2 and deeper). The free edge must
+    // never dip below a neighbour's free edge, or the sheets intersect.
+    const freeEdgeZ = (k: number, cur: number) => {
+      const [, , z] = leafPointTheta(
+        HALF_W,
+        0,
+        HALF_W,
+        leafRestAngle(k, cur),
+        0,
+        leafRestFan(k, cur),
+        leafRestSink(k, cur),
+      )
+      return z
+    }
+    const rightNeighbour = freeEdgeZ(4, 2)
+    const leftNeighbour = freeEdgeZ(2, 3)
+    const a = leafRestAngle(3, 2)
+    const b = leafRestAngle(3, 3)
+    for (let i = 0; i <= 20; i++) {
+      const t = i / 20
+      const theta = a + (b - a) * t
+      const [, , z] = leafPointTheta(
+        HALF_W,
+        0,
+        HALF_W,
+        theta,
+        leafTurnCurl(t),
+        leafRestFan(3, 2) + (leafRestFan(3, 3) - leafRestFan(3, 2)) * t,
+        leafRestSink(3, 2) + (leafRestSink(3, 3) - leafRestSink(3, 2)) * t,
+        leafTurnLift(t),
+      )
+      expect(z).toBeGreaterThan(Math.max(rightNeighbour, leftNeighbour) - 1e-9)
+    }
+    const startX = leafPointTheta(HALF_W, 0, HALF_W, a, 0)[0]
+    const endX = leafPointTheta(HALF_W, 0, HALF_W, b, 0)[0]
+    expect(Math.sign(startX)).not.toBe(Math.sign(endX))
   })
 
   it('leafTexU maps faces to opposite texture halves', () => {

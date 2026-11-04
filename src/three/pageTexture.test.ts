@@ -184,11 +184,12 @@ describe('cached content rasters', () => {
     return {
       count: () => n,
       engine: {
-        begin: (tool: string) => {
+        begin: (tool: string, size?: number, stab?: number) => {
           n++
-          return eng.begin(tool)
+          return eng.begin(tool, size, stab)
         },
         addPoint: eng.addPoint,
+        predict: eng.predict,
         end: eng.end,
       } as InkEngine,
     }

@@ -1,6 +1,6 @@
 import type { InkEngine, Page } from '../types'
 import { paintLayers } from '../ink/layers'
-import { PAGE_ASPECT, PAGE_UNIT } from '../pageSpace'
+import { PAGE_ASPECT, PAGE_UNIT, pageSize } from '../pageSpace'
 import { pageRev } from '../store'
 
 // Stroke points live in page units (~1071 wide reference): the DOM previews
@@ -31,7 +31,7 @@ function paintContent(
   ink: InkEngine,
   force = false,
 ) {
-  const scale = canvas.width / PAGE_UNIT
+  const scale = canvas.width / pageSize(page).w
   paintLayers(canvas, ctx, page, ink, scale, 0, 0, force)
 
   ctx.save()

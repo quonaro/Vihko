@@ -120,6 +120,29 @@ export const LEAF_ZSTEP = 0.014
 export const LEAF_FAN_STEP = 0.055 // free-edge extension per depth
 export const LEAF_SINK_STEP = 0.022 // free-edge drop per depth
 export const LEAF_FAN_CAP = 8
+// Extra bow toward the viewer while a leaf is in flight, keeping it clear of
+// the stationary pile even when neighboring sheets are still settling.
+export const LEAF_TURN_LIFT = 0.12
+// Free-edge trail while a leaf is in flight. The envelope is zero at both
+// ends: a resting leaf is flat, so a turn must not curl the paper on its
+// first frame or leave a lifted edge behind when it lands.
+export const LEAF_TURN_CURL = 0.4
+
+export function leafTurnEnvelope(t: number): number {
+  const u = Math.max(0, Math.min(1, t))
+  // sin(π·1) leaves a float residue; clamp the endpoints to exactly 0 so a
+  // resting/landed leaf is flat to the last decimal.
+  if (u <= 0 || u >= 1) return 0
+  return Math.sin(Math.PI * u)
+}
+
+export function leafTurnCurl(t: number): number {
+  return LEAF_TURN_CURL * leafTurnEnvelope(t)
+}
+
+export function leafTurnLift(t: number): number {
+  return LEAF_TURN_LIFT * leafTurnEnvelope(t)
+}
 
 export function pileLean(depth: number): number {
   return LEAF_LEAN / (1 + Math.max(0, depth) * LEAF_FAN_DECAY)
@@ -181,7 +204,8 @@ export function stackRestY(): number {
 // trails the free edge behind the spine mid-turn (a paper bend). `fan`
 // extends the free edge radially and `sink` tilts it down — both scale with
 // the distance from the hinge (x/w), so x = 0 stays glued to the spine and
-// the leaf can never tear away from the fold.
+// the leaf can never tear away from the fold. `lift` adds a temporary bow
+// toward the viewer, also pinned to zero at the hinge.
 export function leafPointTheta(
   x: number,
   y: number,
@@ -190,13 +214,14 @@ export function leafPointTheta(
   curl = 0,
   fan = 0,
   sink = 0,
+  lift = 0,
 ): [number, number, number] {
   const ext = x / w
   const th = theta - curl * Math.sin(theta) * ext ** 1.5
   const [rx, ry, rz] = sheetPoint(x, y)
   const px = (rx + fan * ext) * Math.cos(th)
   const pz = (rx + fan * ext) * Math.sin(th) + rz * Math.abs(Math.cos(th))
-  return [px, ry - sink * ext, pz]
+  return [px, ry - sink * ext, pz + lift * ext ** 2]
 }
 
 // Perimeter of a leaf at absolute theta — outline points ride the same
@@ -207,11 +232,12 @@ export function leafOutlineTheta(
   curl = 0,
   fan = 0,
   sink = 0,
+  lift = 0,
 ): [number, number, number][] {
   const s = Math.cos(theta) >= 0 ? 1 : -1
   const e = 0.004
   return sheetOutline({ side: 'right', hinge: true }).map(([x, y]) => {
-    const [px, py, pz] = leafPointTheta(x, y, HALF_W, theta, curl, fan, sink)
+    const [px, py, pz] = leafPointTheta(x, y, HALF_W, theta, curl, fan, sink, lift)
     return [px + Math.sin(theta) * s * e, py, pz + Math.cos(theta) * s * e]
   })
 }
