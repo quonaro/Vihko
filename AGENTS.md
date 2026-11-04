@@ -94,6 +94,17 @@ Frontend work must be mobile-first: design and implement for mobile screens
 and touch interactions first, then adapt and verify the experience on larger
 screens.
 
+## File Size
+
+- Keep Go source files around 300 lines and below 400 lines. Split larger
+  files by responsibility before they exceed the limit.
+- Keep Vue single-file components around 600 lines and below 700 lines.
+  Move reusable logic and UI into focused modules or components before
+  reaching the limit.
+- Count physical lines, including blank lines. Generated files are exempt.
+- Treat these as limits for new and substantially edited code; avoid unrelated
+  churn solely to bring existing files under the limits.
+
 ## Capacitor
 
 - `appId`: `vihko.app`, `webDir`: `dist` (see `capacitor.config.ts`)
