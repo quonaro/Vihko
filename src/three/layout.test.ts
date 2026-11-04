@@ -14,7 +14,9 @@ import {
   leafPointTheta,
   leafOutlineTheta,
   leafTurnCurl,
+  leafTurnHingeClearance,
   leafTurnLift,
+  LEAF_TURN_HINGE_CLEARANCE,
   LEAF_TURN_CURL,
   LEAF_TURN_LIFT,
   leafTexU,
@@ -256,19 +258,23 @@ describe('leaf piles', () => {
     )
   })
 
-  it('fades curl and lift out at both ends of a turn', () => {
+  it('fades the edge curl at rest while retaining hinge clearance through landing', () => {
     expect(leafTurnCurl(0)).toBe(0)
     expect(leafTurnCurl(1)).toBe(0)
     expect(leafTurnLift(0)).toBe(0)
     expect(leafTurnLift(1)).toBe(0)
+    expect(leafTurnHingeClearance(0)).toBe(0)
+    expect(leafTurnHingeClearance(1)).toBeCloseTo(LEAF_TURN_HINGE_CLEARANCE)
     expect(leafTurnCurl(0.5)).toBeCloseTo(LEAF_TURN_CURL)
     expect(leafTurnLift(0.5)).toBeCloseTo(LEAF_TURN_LIFT)
+    expect(leafTurnHingeClearance(0.5)).toBeCloseTo(LEAF_TURN_HINGE_CLEARANCE * 0.5)
     // A resting leaf and a landed leaf are flat — no visible jump on frame 1
     // or leftover bend on the last frame.
     for (const t of [0, 1]) {
       expect(leafTurnCurl(t)).toBe(0)
       expect(leafTurnLift(t)).toBe(0)
     }
+    expect(leafTurnHingeClearance(0)).toBe(0)
   })
 
   it('lifts the free edge toward the viewer without moving the hinge', () => {
@@ -298,7 +304,8 @@ describe('leaf piles', () => {
       return z
     }
     const rightNeighbour = freeEdgeZ(4, 2)
-    const leftNeighbour = freeEdgeZ(2, 3)
+    // During a manual drag, the stationary pile is still in its source pose.
+    const leftNeighbour = freeEdgeZ(2, 2)
     const a = leafRestAngle(3, 2)
     const b = leafRestAngle(3, 3)
     for (let i = 0; i <= 20; i++) {
@@ -314,7 +321,11 @@ describe('leaf piles', () => {
         leafRestSink(3, 2) + (leafRestSink(3, 3) - leafRestSink(3, 2)) * t,
         leafTurnLift(t),
       )
-      expect(z).toBeGreaterThan(Math.max(rightNeighbour, leftNeighbour) - 1e-9)
+      const za = leafRestZ(3, 2)
+      const zb = leafRestZ(3, 3)
+      const hingeZ = za + (zb - za) * t + leafTurnHingeClearance(t)
+      const neighbour = t < 0.5 ? rightNeighbour : leftNeighbour
+      expect(z + hingeZ).toBeGreaterThan(neighbour - 1e-9)
     }
     const startX = leafPointTheta(HALF_W, 0, HALF_W, a, 0)[0]
     const endX = leafPointTheta(HALF_W, 0, HALF_W, b, 0)[0]

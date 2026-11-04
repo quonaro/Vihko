@@ -123,6 +123,11 @@ export const LEAF_FAN_CAP = 8
 // Extra bow toward the viewer while a leaf is in flight, keeping it clear of
 // the stationary pile even when neighboring sheets are still settling.
 export const LEAF_TURN_LIFT = 0.12
+// Lift the hinge slightly too: lifting only the free edge can still let the
+// inner part of a manually dragged leaf slip into the sheet below. Keep this
+// offset at progress 1 while the finger is down; the resting pile only moves
+// underneath the leaf after release.
+export const LEAF_TURN_HINGE_CLEARANCE = 0.04
 // Free-edge trail while a leaf is in flight. The envelope is zero at both
 // ends: a resting leaf is flat, so a turn must not curl the paper on its
 // first frame or leave a lifted edge behind when it lands.
@@ -142,6 +147,10 @@ export function leafTurnCurl(t: number): number {
 
 export function leafTurnLift(t: number): number {
   return LEAF_TURN_LIFT * leafTurnEnvelope(t)
+}
+
+export function leafTurnHingeClearance(t: number): number {
+  return LEAF_TURN_HINGE_CLEARANCE * Math.max(0, Math.min(1, t))
 }
 
 export function pileLean(depth: number): number {

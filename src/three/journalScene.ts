@@ -16,6 +16,7 @@ import {
   leafRestFan,
   leafRestSink,
   leafTurnCurl,
+  leafTurnHingeClearance,
   leafTurnLift,
   ROW_LEAN,
   rowRestY,
@@ -1054,7 +1055,7 @@ export class JournalScene {
           theta = a + (b - a) * t
           const za = leafRestZ(leaf.k, this.turn.srcIndex)
           const zb = leafRestZ(leaf.k, this.turn.dstIndex)
-          hingeZ = za + (zb - za) * t
+          hingeZ = za + (zb - za) * t + leafTurnHingeClearance(t)
           const fa = leafRestFan(leaf.k, this.turn.srcIndex)
           const fb = leafRestFan(leaf.k, this.turn.dstIndex)
           fan = fa + (fb - fa) * t
