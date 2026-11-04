@@ -110,17 +110,49 @@ screens.
 ## Layout
 
 - `engine/` — Go WASM ink engine: pointer points → smoothed samples
-  `{x,y,w,a}` (Catmull-Rom + velocity→width EMA + per-tool profiles).
-  `ink.go` holds the pure logic (no build tag → covered by `go test`);
-  `main.go` is the thin `js && wasm` binding registering `window.Ink`
-  (`begin`/`addPoint`/`end`).
+  `{x,y,w,a}` — a port of the perfect-freehand stroke model adapted to
+  incremental centerline sampling: streamline input smoothing, real stylus
+  pressure when it varies (auto-detected) or speed-simulated pressure
+  otherwise, `radius = dia*(0.5 - thinning*(0.5 - pressure))`, start/end
+  tapers (the end-taper tail is buffered and shaped on flush), a min-length
+  noise gate, and a full-size dot for taps. `ink.go` holds the pure logic
+  (no build tag → covered by `go test`); `main.go` is the thin `js && wasm`
+  binding registering `window.Ink` (`begin(tool, size?, stab?)` /
+  `addPoint` / `predict` / `end`). `stab>=0` overrides the tool streamline
+  (brush stabilizer slider, stored per stroke as `stroke.stab` so replay
+  stays deterministic).
 - `src/ink/engine.ts` — wasm loader + pure-JS fallback (same algorithm).
+  `Ink` also exposes pixel kernels from `engine/px.go` — `floodFill`
+  (paper-aware tolerance fill), `boxBlur`, `sharpen`, `adjust`
+  (brightness/contrast/saturation) and `wetStroke` (libmypaint-style wet
+  mixing: each dab picks up canvas color ahead along the stroke and
+  re-deposits the mix) — mirrored in the JS fallback; ops apply them via
+  `PageOp {kind:'filter'}` and watercolor strokes with `stroke.wet>0` replay
+  through `wetStrokeDabs` in layers.ts. The magic-wand family adds
+  `inverseFill` (paints the complement of the seed region) and `eraseColor`
+  (clears the contiguous matching region — background removal); the fill
+  tool cycles bucket → inverse → erase on second tap (`store.fillMode`,
+  badge on the tray icon), committing `fill` with `invert:true` or
+  `PageOp {kind:'erase'}` respectively.
 - `src/ink/renderer.ts` — Canvas2D painters per tool (solid/pencil/watercolor/eraser).
 - `src/ink/ops.ts` — raster page ops replayed in stroke order via `after`
-  (flood fill, cutout move, photo collage, clear). Photos persist as JPEG
-  dataURLs (downscaled ≤1024px) in localStorage.
+  (flood fill, cutout move, photo collage, clear, filter, erase). Photos
+  persist via `imageDataURL` — WebP where supported (alpha-capable),
+  PNG/JPEG fallback — downscaled ≤2048px. Cover presets and layer
+  thumbnails use the same helper.
 - Pages support ordered layers with visibility, opacity, position, scale, and
-  rotation; legacy strokes and ops are assigned to the first layer.
+  rotation; legacy strokes and ops are assigned to the first layer. Layer
+  contents rasterize once at a fixed 3072px width (`LAYER_RASTER_W` in
+  `src/ink/layers.ts`, cache key `pageId|layerId` — zoom composites via
+  drawImage, never re-replays). `layer.blend` (10
+  `globalCompositeOperation` modes) applies at composite time;
+  `layer.clip` masks a layer to the nearest visible non-clipped layer below
+  (destination-in onto its transformed alpha); `layer.alphaLock` confines
+  new paint to existing alpha — recorded per stroke/op as `alphaLock` so
+  replay stays deterministic (source-atop strokes/photos, fills masked to
+  pre-fill alpha; the eraser is never locked). The layer panel shows
+  content-cropped thumbnails (`layerThumb`/`buildThumb` in CanvasView via
+  `layerRasterCanvas` + `layerContentBounds`).
 - `src/ink/path.ts` — Ramer–Douglas–Peucker simplification for cut gestures.
 - `src/ink/shapes.ts` — vector paths for the shape tool (rectangle, ellipse,
   line, arrow, triangle, diamond).
@@ -129,7 +161,11 @@ screens.
   hex input in a `MobileSlider` dialog, opened via the tray swatch; dropping
   a palette dot on the swatch still blends it in).
 - `src/pageSpace.ts` — canonical page coordinate space (`PAGE_W`×`PAGE_H`
-  units, matching the 300×380 preview viewBox at 0.28). All stroke points and
+  units, matching the 300×380 preview viewBox at 0.28). Pages may declare
+  `page.w`/`page.h` (page units — `pageSize(page)` resolves them, presets in
+  `PAGE_SIZE_PRESETS`, chosen at creation in JournalView via
+  `store.pageSize`; `coverViewport`/`clampOffset` take the page size and the
+  layer raster scales to the page aspect). All stroke points and
   op coords are stored in page units; the editor viewport is a cover-fit
   window onto the sheet (`coverViewport`/`clampOffset`), pannable with the
   `move` tool and zoomable via the `+`/`−` buttons (`view.s = cover * zoom`;
@@ -141,20 +177,27 @@ screens.
   saves are rescaled once by `migrateToPageSpace` in `store.ts`
   (flag `vihko:page-space`).
 - `src/three/` — real 3D (three.js/WebGL) journal + shelf views: `stage.ts`
+  (`FramePump` = render-on-demand: the loop only runs while a scene reports
+  motion, so an idle view costs nothing; quality tiers pick PCF vs VSM
+  shadows and skip the MSAA+FXAA composer on low-tier GPUs). Textures and
+  geometries are disposed on `setPages`/removal (page textures evicted from
+  `texCache` when their page disappears).
   holds the shared renderer + lighting rig; `layout.ts` the pure fan/curl
   math and `shelfLayout.ts` the pure shelf math (book poses, pointer tilt,
   scroll limits — both unit tested); `pageTexture.ts` rasterizes a page
   (strokes via ink engine + ops) and `coverTexture.ts` a journal cover
   (color/photo, spine, title) into canvas textures;
   `journalScene.ts` is the WebGL spread (raycast picking, animated page
-  turn), `shelfScene.ts` the WebGL shelf (books as board+pages boxes,
+  turn), `shelfScene.ts` the WebGL shelf (books as rounded board+pages sandwiches,
   per-book tilt from pointer position, drag/wheel pan, projected anchors
   for DOM overlays). Lazy-imported by JournalView/ShelfView — three.js
   ships as a separate chunk; these views require WebGL and display an
   unavailable message rather than switching to a 2D rendering mode.
 - `src/store.ts` — journals/pages/strokes model, undo/redo, and persistence:
   native Android/iOS use SQLite (with one-time migration from the prior
-  localStorage save); browser development continues to use localStorage.
+  localStorage save; `src/persistence.ts` enables WAL and checkpoints +
+  VACUUMs on open to reclaim space from overwritten journal blobs);
+  browser development continues to use localStorage.
 - `src/covers.ts` — generated, local cover-art presets for the cover picker.
 - `src/views/` — ShelfView (search, journal actions, cover picker) →
   JournalView (page fan / two-page spread) → CanvasView.
@@ -165,10 +208,25 @@ screens.
 - Tools: eraser, draw, sketch, outline, write, color (watercolor),
   shapes (context menu + drag-to-draw), fill (tap-to-fill),
   cut (loop → lift → drag), move (pan the sheet), transform (drag the active layer).
-- Brush size uses a vertical left-rail slider, stored per tool and with each stroke.
+- Brush size uses a vertical left-rail slider, stored per tool and with each
+  stroke. Ink tools also get a stabilizer slider (0..1 streamline override,
+  stored as `stroke.stab`). Tapping the active ink tool again opens the brush
+  panel (`BrushPanel` in ToolTray): size/opacity/stabilizer/blend, texture tip
+  (`noise`/`airbrush`/`marker` stamps — `renderStamped` in renderer.ts with
+  spacing/jitter/scatter/angle) and named presets (`store.brushPresets`,
+  persisted to `vihko:brushes`). Per-tool params live in `store.brush`; a
+  snapshot lands on each stroke (`brushSnapshot` → flat `stroke.opacity`,
+  `tip`, `spacing`, ... fields) so replay stays deterministic.
 - The layer manager is a modal supporting add/select/rename/hide/delete,
-  opacity, and grip-drag reordering. The on-canvas transform frame has resize
-  and rotation handles.
+  thumbnails, opacity, blend mode, alpha lock, clipping mask, layer alpha
+  masks (`layer.mask` + `stroke.mask` strokes replayed into a mask raster —
+  ink reveals, eraser hides; edit mode via `store.maskEdit`), and grip-drag
+  reordering. The on-canvas transform frame has resize and rotation handles.
+- Symmetry (`store.symmetry` v/h/xy, cycled from the top bar) mirrors strokes
+  across the page-center axes — mirrored copies are pushed as extra strokes.
+  Drawing guides (`store.guide` line/arc, `snapToGuide`) snap ink points onto
+  a straightedge or a circular french curve; the overlay draws in page space
+  and its handles drag the anchor, the line angle, or the arc radius.
 - Zoom: `+`/`−` buttons bottom-right zoom around the viewport center (×1.4 per
   tap, clamped to [contain·0.9, cover·5]); two-finger pinch zooms around its
   moving midpoint and pans. The move tool remains a one-finger grab. A fit
@@ -177,7 +235,9 @@ screens.
 - Tray extras: `+` new page, photo import (file picker → centered collage),
   `⌫` clear page (undoable).
 - Top chrome: `×` close, `↶`/`↷` undo/redo buttons, `⤓` PNG export.
-- 1 pointer: draw (pen pressure supported; touch ignored while pen active),
+- 1 pointer: draw (pen pressure supported; touch ignored while pen active;
+  `getCoalescedEvents` feeds all queued points, `getPredictedEvents` paints
+  a speculative tail that is re-blit from the snapshot on the next event),
   or grab with move/transform
 - 2 pointers: pinch zoom + midpoint pan
 - Edge swipe (from left/right ~34px zone, horizontal >60px): prev/next page
