@@ -255,7 +255,7 @@ describe('ShelfView', () => {
     shelfSceneMock.events?.onLongPress?.('a')
     await nextTick()
     expect(document.body.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('Alpha')
-    expect(document.body.querySelectorAll('.journal-action')).toHaveLength(5)
+    expect(document.body.querySelectorAll('.journal-action')).toHaveLength(4)
     expect(document.body.textContent).toContain('Rename journal')
     expect(document.body.textContent).toContain('Export journal (JSON)')
 
@@ -274,9 +274,15 @@ describe('ShelfView', () => {
     shelfSceneMock.events?.onLongPress?.('a')
     await nextTick()
 
+    const coverBtn = [...document.body.querySelectorAll<HTMLButtonElement>('.journal-action')].find(
+      (button) => button.textContent?.includes('Change cover'),
+    )!
+    coverBtn.click()
+    await nextTick()
+
     const textureBtn = [
       ...document.body.querySelectorAll<HTMLButtonElement>('.journal-action'),
-    ].find((button) => button.textContent?.includes('Change cover texture'))!
+    ].find((button) => button.textContent?.includes('Texture'))!
     textureBtn.click()
     await nextTick()
 
@@ -306,6 +312,11 @@ describe('ShelfView', () => {
     )!
     coverBtn.click()
     await nextTick()
+    const imageBtn = [...document.body.querySelectorAll<HTMLButtonElement>('.journal-action')].find(
+      (button) => button.textContent?.includes('Cover'),
+    )!
+    imageBtn.click()
+    await nextTick()
 
     // the cover sheet is teleported to <body>
     expect(document.body.querySelector('.mslider-body')?.classList).toContain('no-scrollbar')
@@ -322,6 +333,11 @@ describe('ShelfView', () => {
       ...document.body.querySelectorAll<HTMLButtonElement>('.journal-action'),
     ].find((button) => button.textContent?.includes('Change cover'))!
     changeCover.click()
+    await nextTick()
+    const changeImage = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('.journal-action'),
+    ].find((button) => button.textContent?.includes('Cover'))!
+    changeImage.click()
     await nextTick()
 
     const removeCover = document.body.querySelector<HTMLButtonElement>('.remove-cover')!

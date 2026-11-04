@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MobileSlider from './MobileSlider.vue'
 import type { Journal } from '../types'
@@ -18,6 +19,18 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const coverOn = ref(false)
+
+function openCover() {
+  emit('update:open', false)
+  coverOn.value = true
+}
+
+function pickCover(which: 'cover' | 'coverTexture') {
+  coverOn.value = false
+  if (which === 'cover') emit('cover')
+  else emit('coverTexture')
+}
 </script>
 
 <template>
@@ -36,13 +49,9 @@ const { t } = useI18n()
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5.5 19h13" /></svg>
         {{ t('shelf.export') }}
       </button>
-      <button class="journal-action" @click="emit('cover')">
+      <button class="journal-action" @click="openCover">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5" width="15" height="14" rx="2" /><circle cx="9.5" cy="10" r="1.5" /><path d="m5.5 16.5 5-5 3.5 3.5 2.5-2.5 2.5 2.5" /></svg>
         {{ t('shelf.cover') }}
-      </button>
-      <button class="journal-action" @click="emit('coverTexture')">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h16M4 12h16M4 16.5h16" /><circle cx="8" cy="7.5" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="10" cy="16.5" r="1.5" /></svg>
-        {{ t('shelf.coverTexture') }}
       </button>
       <button
         class="journal-action danger"
@@ -50,6 +59,25 @@ const { t } = useI18n()
       >
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 6.5h15M9.2 6.5l.5-2h4.6l.5 2M6.5 6.5l.9 13h9.2l.9-13M10 10v6m4-6v6" /></svg>
         {{ t('shelf.delete') }}
+      </button>
+    </div>
+  </MobileSlider>
+
+  <MobileSlider
+    :open="coverOn"
+    :title="t('shelf.cover')"
+    size="sm"
+    :z-index="70"
+    @update:open="coverOn = $event"
+  >
+    <div class="journal-actions">
+      <button class="journal-action" @click="pickCover('cover')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5" width="15" height="14" rx="2" /><circle cx="9.5" cy="10" r="1.5" /><path d="m5.5 16.5 5-5 3.5 3.5 2.5-2.5 2.5 2.5" /></svg>
+        {{ t('shelf.coverImage') }}
+      </button>
+      <button class="journal-action" @click="pickCover('coverTexture')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h16M4 12h16M4 16.5h16" /><circle cx="8" cy="7.5" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="10" cy="16.5" r="1.5" /></svg>
+        {{ t('shelf.coverTexture') }}
       </button>
     </div>
   </MobileSlider>

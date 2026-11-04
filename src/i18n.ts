@@ -20,7 +20,8 @@ const messages = {
       renamePrompt: 'Journal title',
       export: 'Export journal (JSON)',
       delete: 'Delete journal',
-      coverTexture: 'Change cover texture',
+      coverImage: 'Cover',
+      coverTexture: 'Texture',
       texture: {
         paper: { title: 'Paper (current)', hint: 'Matte finish with fine grain' },
         smooth: { title: 'Smooth', hint: 'Flat finish with no grain' },
@@ -229,7 +230,8 @@ const messages = {
       renamePrompt: 'Название блокнота',
       export: 'Экспорт блокнота (JSON)',
       delete: 'Удалить блокнот',
-      coverTexture: 'Сменить текстуру обложки',
+      coverImage: 'Обложка',
+      coverTexture: 'Текстура',
       texture: {
         paper: { title: 'Бумажная (текущая)', hint: 'Матовая, с лёгким зерном' },
         smooth: { title: 'Гладкая', hint: 'Ровная поверхность без зерна' },
