@@ -232,6 +232,51 @@ describe('layer raster cache (fixed resolution)', () => {
     }
   })
 
+  it('paints only appended strokes into the cached raster instead of re-replaying', () => {
+    const rasterCtx = stubCtx()
+    const compositeCtx = stubCtx()
+    const createElement = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation(() => stubCanvas(rasterCtx))
+    const page: Page = {
+      id: 'append-page',
+      strokes: [
+        { tool: 'write', color: '#111', pts: [{ x: 0, y: 0, t: 0, p: 0.5 }], layerId: 'L' },
+      ],
+      layers: [stubLayer('L')],
+      createdAt: 0,
+    }
+    const ink = stubInk()
+    const beginSpy = vi.spyOn(ink, 'begin')
+
+    clearLayerRasterCache(page.id)
+    try {
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, ink, 1)
+      expect(beginSpy).toHaveBeenCalledTimes(1)
+      expect(rasterCtx.clearRect).toHaveBeenCalledTimes(1)
+
+      // Appending a stroke extends the raster incrementally — no clear, and
+      // only the new stroke is replayed through the engine.
+      page.strokes.push({
+        tool: 'write',
+        color: '#222',
+        pts: [{ x: 1, y: 1, t: 1, p: 0.5 }],
+        layerId: 'L',
+      })
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, ink, 1)
+      expect(rasterCtx.clearRect).toHaveBeenCalledTimes(1)
+      expect(beginSpy).toHaveBeenCalledTimes(2)
+
+      page.ops = [{ kind: 'clear', after: 2, layerId: 'L' }]
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, ink, 1)
+      expect(rasterCtx.clearRect).toHaveBeenCalledTimes(2) // the appended clear op
+      expect(beginSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      clearLayerRasterCache(page.id)
+      createElement.mockRestore()
+    }
+  })
+
   it('exposes the cached layer raster for thumbnails', () => {
     const rasterCtx = stubCtx()
     const createElement = vi

@@ -1,7 +1,7 @@
-import type { InkEngine, Layer, Page, PageOp } from '../types'
+import type { InkEngine, Layer, Page, PageOp, Stroke } from '../types'
 import { PAGE_H, PAGE_W, pageSize } from '../pageSpace'
 import { applyOp, applyPhoto, hexToRgb } from './ops'
-import { renderSamples } from './renderer'
+import { newRenderCont, renderSamples } from './renderer'
 
 interface RasterEntry {
   canvas: HTMLCanvasElement
@@ -140,6 +140,14 @@ export function layerContentBounds(
   }
 }
 
+// Optional rotation applied around (cx, cy) on top of the display transform —
+// used when compositing layer rasters straight to a rotated view.
+export interface DisplayRot {
+  angle: number
+  cx: number
+  cy: number
+}
+
 export function paintLayers(
   target: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
@@ -153,6 +161,7 @@ export function paintLayers(
   displayOx = ox,
   displayOy = oy,
   overrides?: Map<string, Partial<Layer>>,
+  displayRot?: DisplayRot | null,
 ) {
   const layers = page.layers?.length
     ? page.layers
@@ -193,6 +202,7 @@ export function paintLayers(
           displayScale,
           displayOx,
           displayOy,
+          displayRot,
         )
       }
       mask = maskCanvas
@@ -209,6 +219,7 @@ export function paintLayers(
       displayOx,
       displayOy,
       mask,
+      displayRot,
     )
     if (!paintLayerState.clip && raster) base = { raster, state: paintLayerState }
   }
@@ -224,6 +235,7 @@ function layerAlphaMask(
   displayScale: number,
   displayOx: number,
   displayOy: number,
+  displayRot?: DisplayRot | null,
 ): HTMLCanvasElement | null {
   if (!clipBase) {
     const c = document.createElement('canvas')
@@ -240,7 +252,7 @@ function layerAlphaMask(
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.clearRect(0, 0, c.width, c.height)
   ctx.restore()
-  drawLayerTransformed(ctx, raster, layer, size, displayScale, displayOx, displayOy)
+  drawLayerTransformed(ctx, raster, layer, size, displayScale, displayOx, displayOy, displayRot)
   return c
 }
 
@@ -253,10 +265,26 @@ function drawLayerTransformed(
   displayScale: number,
   displayOx: number,
   displayOy: number,
+  displayRot?: DisplayRot | null,
 ) {
   ctx.save()
   ctx.globalAlpha *= layer.opacity
-  ctx.setTransform(displayScale, 0, 0, displayScale, displayOx, displayOy)
+  if (displayRot) {
+    const { angle, cx, cy } = displayRot
+    const cos = Math.cos(angle)
+    const sin = Math.sin(angle)
+    // display = R(cx, cy, angle) ∘ (scale + offset)
+    ctx.setTransform(
+      displayScale * cos,
+      displayScale * sin,
+      -displayScale * sin,
+      displayScale * cos,
+      cos * (displayOx - cx) - sin * (displayOy - cy) + cx,
+      sin * (displayOx - cx) + cos * (displayOy - cy) + cy,
+    )
+  } else {
+    ctx.setTransform(displayScale, 0, 0, displayScale, displayOx, displayOy)
+  }
   ctx.translate(size.w / 2 + layer.x, size.h / 2 + layer.y)
   ctx.rotate((layer.rotation * Math.PI) / 180)
   ctx.scale(layer.scale, layer.scale)
@@ -281,6 +309,7 @@ function paintLayer(
   displayOx: number,
   displayOy: number,
   mask: HTMLCanvasElement | null,
+  displayRot?: DisplayRot | null,
 ): HTMLCanvasElement | null {
   const { local: layerOps } = layerLocalOps(page, layer)
 
@@ -304,6 +333,7 @@ function paintLayer(
       const id = ink.begin(stroke.tool, stroke.size ?? 1, stroke.stab ?? -1)
       ctx.save()
       ctx.setTransform(displayScale, 0, 0, displayScale, displayOx, displayOy)
+      const cont = newRenderCont()
       for (const pt of stroke.pts)
         renderSamples(
           ctx,
@@ -313,6 +343,7 @@ function paintLayer(
           index + 1,
           stroke.size ?? 1,
           stroke,
+          cont,
         )
       renderSamples(
         ctx,
@@ -322,6 +353,7 @@ function paintLayer(
         index + 1,
         stroke.size ?? 1,
         stroke,
+        cont,
       )
       ctx.restore()
     })
@@ -350,6 +382,7 @@ function paintLayer(
         displayScale,
         displayOx,
         displayOy,
+        displayRot,
       )
       return entry.canvas
     }
@@ -365,6 +398,7 @@ function paintLayer(
       displayScale,
       displayOx,
       displayOy,
+      displayRot,
     )
     scratch.save()
     scratch.setTransform(1, 0, 0, 1, 0, 0)
@@ -379,7 +413,16 @@ function paintLayer(
     return entry.canvas
   }
 
-  compositeLayer(ctx, content, paintLayerState, pageSize(page), displayScale, displayOx, displayOy)
+  compositeLayer(
+    ctx,
+    content,
+    paintLayerState,
+    pageSize(page),
+    displayScale,
+    displayOx,
+    displayOy,
+    displayRot,
+  )
   return entry.canvas
 }
 
@@ -392,10 +435,11 @@ function compositeLayer(
   displayScale: number,
   displayOx: number,
   displayOy: number,
+  displayRot?: DisplayRot | null,
 ) {
   ctx.save()
   if (layer.blend) ctx.globalCompositeOperation = layer.blend
-  drawLayerTransformed(ctx, raster, layer, size, displayScale, displayOx, displayOy)
+  drawLayerTransformed(ctx, raster, layer, size, displayScale, displayOx, displayOy, displayRot)
   ctx.restore()
 }
 
@@ -447,6 +491,36 @@ function ensureLayerRaster(
     rasterCache.delete(key)
     rasterCache.set(key, entry!)
     return entry!
+  }
+  // Fast path for appended content: when the cached signature is a strict
+  // prefix of the new one, only the new tail entries need painting — a full
+  // replay re-renders every stroke of the layer on each commit.
+  const extending =
+    !force &&
+    !!entry &&
+    !!oldSignature &&
+    !hasCutOps &&
+    signature.length > oldSignature.length &&
+    oldSignature.every((item, i) => signature[i] === item)
+  if (extending && entry) {
+    const rc = entry.canvas.getContext('2d', { willReadFrequently: true })
+    if (rc) {
+      const scale = rasterScale(page)
+      for (const item of signature.slice(oldSignature!.length)) {
+        if (typeof (item as PageOp).kind === 'string') {
+          const op = item as PageOp
+          if (op.alphaLock && (op.kind === 'fill' || op.kind === 'photo'))
+            applyAlphaLockedOp(entry.canvas, rc, op, scale, ink)
+          else applyOp(entry.canvas, rc, op, scale, 0, 0, ink)
+        } else {
+          replayStroke(entry.canvas, rc, page, ink, item as Stroke, scale)
+        }
+      }
+      entry = { canvas: entry.canvas, signature }
+      rasterCache.delete(key)
+      rasterCache.set(key, entry)
+      return entry
+    }
   }
   const raster = entry?.canvas ?? document.createElement('canvas')
   raster.width = LAYER_RASTER_W
@@ -503,6 +577,7 @@ function ensureLayerMask(page: Page, ink: InkEngine, layer: Layer): RasterEntry 
     const id = ink.begin(stroke.tool, stroke.size ?? 1, stroke.stab ?? -1)
     rc.save()
     rc.setTransform(scale, 0, 0, scale, 0, 0)
+    const cont = newRenderCont()
     for (const pt of stroke.pts)
       renderSamples(
         rc,
@@ -512,8 +587,9 @@ function ensureLayerMask(page: Page, ink: InkEngine, layer: Layer): RasterEntry 
         1,
         stroke.size ?? 1,
         stroke,
+        cont,
       )
-    renderSamples(rc, stroke.tool, '#fff', ink.end(id), 1, stroke.size ?? 1, stroke)
+    renderSamples(rc, stroke.tool, '#fff', ink.end(id), 1, stroke.size ?? 1, stroke, cont)
     rc.restore()
   }
   entry = { canvas: raster, signature }
@@ -573,6 +649,18 @@ export function layerRasterCanvas(
   return ensureLayerRaster(page, ink, layer, false)?.canvas ?? null
 }
 
+// The cached alpha-mask raster of a layer — the live eraser preview in
+// mask-edit mode erases into it like the content raster.
+export function layerMaskRasterCanvas(
+  page: Page,
+  ink: InkEngine,
+  layerId: string,
+): HTMLCanvasElement | null {
+  const layer = page.layers?.find((item) => item.id === layerId)
+  if (!layer) return null
+  return ensureLayerMask(page, ink, layer)?.canvas ?? null
+}
+
 // An op committed under alpha lock can't grow the layer's alpha: photos
 // composite source-atop; fills (which write pixels directly) are masked back
 // to the pre-fill alpha afterwards.
@@ -608,6 +696,65 @@ function applyAlphaLockedOp(
   ctx.restore()
 }
 
+// Replay one stroke into a layer raster (layer-local page units at `scale`).
+// Used by both the full layer replay and the appended-tail fast path.
+function replayStroke(
+  raster: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  page: Page,
+  ink: InkEngine,
+  stroke: Stroke,
+  scale: number,
+) {
+  const index = page.strokes.indexOf(stroke)
+  const id = ink.begin(stroke.tool, stroke.size ?? 1, stroke.stab ?? -1)
+  // Watercolor strokes with a wet pickup replay as pixel smudging over the
+  // raster (the WASM wetStroke kernel); alpha-locked or wet=0 strokes keep
+  // the gradient painter so alpha stays confined.
+  if (
+    stroke.tool === 'color' &&
+    !stroke.alphaLock &&
+    ink.wetStroke &&
+    (stroke.wet ?? 0) > 0 &&
+    typeof ctx.getImageData === 'function'
+  ) {
+    const dabs: number[] = []
+    for (const pt of stroke.pts)
+      for (const s of ink.addPoint(id, pt.x, pt.y, pt.t, pt.p)) dabs.push(s.x, s.y, s.w, s.a)
+    for (const s of ink.end(id)) dabs.push(s.x, s.y, s.w, s.a)
+    wetStrokeDabs(raster, ctx, dabs, stroke.color, scale, ink, stroke.wet ?? 0.6)
+    return
+  }
+  ctx.save()
+  // source-atop confines locked strokes to the layer's existing alpha. The
+  // eraser is never locked (destination-out already can't add alpha).
+  if (stroke.alphaLock && stroke.tool !== 'eraser') ctx.globalCompositeOperation = 'source-atop'
+  ctx.setTransform(scale, 0, 0, scale, 0, 0)
+  const cont = newRenderCont()
+  for (const pt of stroke.pts)
+    renderSamples(
+      ctx,
+      stroke.tool,
+      stroke.color,
+      ink.addPoint(id, pt.x, pt.y, pt.t, pt.p),
+      index + 1,
+      stroke.size ?? 1,
+      stroke,
+      cont,
+    )
+  renderSamples(
+    ctx,
+    stroke.tool,
+    stroke.color,
+    ink.end(id),
+    index + 1,
+    stroke.size ?? 1,
+    stroke,
+    cont,
+  )
+  ctx.restore()
+}
+
 function replayLayer(
   raster: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
@@ -631,41 +778,7 @@ function replayLayer(
     drainOps(index)
     if (stroke.mask) return // mask strokes paint into ensureLayerMask, not content
     if ((stroke.layerId ?? page.layers?.[0]?.id ?? 'legacy') !== layer.id) return
-    const id = ink.begin(stroke.tool, stroke.size ?? 1, stroke.stab ?? -1)
-    // Watercolor strokes with a wet pickup replay as pixel smudging over the
-    // raster (the WASM wetStroke kernel); alpha-locked or wet=0 strokes keep
-    // the gradient painter so alpha stays confined.
-    if (
-      stroke.tool === 'color' &&
-      !stroke.alphaLock &&
-      ink.wetStroke &&
-      (stroke.wet ?? 0) > 0 &&
-      typeof ctx.getImageData === 'function'
-    ) {
-      const dabs: number[] = []
-      for (const pt of stroke.pts)
-        for (const s of ink.addPoint(id, pt.x, pt.y, pt.t, pt.p)) dabs.push(s.x, s.y, s.w, s.a)
-      for (const s of ink.end(id)) dabs.push(s.x, s.y, s.w, s.a)
-      wetStrokeDabs(raster, ctx, dabs, stroke.color, scale, ink, stroke.wet ?? 0.6)
-      return
-    }
-    ctx.save()
-    // source-atop confines locked strokes to the layer's existing alpha. The
-    // eraser is never locked (destination-out already can't add alpha).
-    if (stroke.alphaLock && stroke.tool !== 'eraser') ctx.globalCompositeOperation = 'source-atop'
-    ctx.setTransform(scale, 0, 0, scale, 0, 0)
-    for (const pt of stroke.pts)
-      renderSamples(
-        ctx,
-        stroke.tool,
-        stroke.color,
-        ink.addPoint(id, pt.x, pt.y, pt.t, pt.p),
-        index + 1,
-        stroke.size ?? 1,
-        stroke,
-      )
-    renderSamples(ctx, stroke.tool, stroke.color, ink.end(id), index + 1, stroke.size ?? 1, stroke)
-    ctx.restore()
+    replayStroke(raster, ctx, page, ink, stroke, scale)
   })
   drainOps(page.strokes.length)
 }

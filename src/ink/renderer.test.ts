@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { renderSamples } from './renderer'
+import { describe, it, expect, vi } from 'vitest'
+import { newRenderCont, renderSamples } from './renderer'
 import type { Sample, ToolId } from '../types'
 
 interface Op {
@@ -162,6 +162,23 @@ describe('renderSamples', () => {
     renderSamples(ctx, 'draw', '#fff', stroke(0))
     expect(ctx.fillStyle).toBe('rgb(255,255,255)')
   })
+
+  it('stitches each new batch onto the previous emitted sample', () => {
+    const ctx = makeCtx()
+    const cont = newRenderCont()
+    renderSamples(ctx, 'draw', '#22221f', stroke(0, 5), 1, 1, undefined, cont)
+    ctx.ops.length = 0
+    renderSamples(ctx, 'draw', '#22221f', stroke(9, 14), 1, 1, undefined, cont)
+    // The new polygon starts at the previous batch's last sample (x=5) so
+    // the joint paints as one continuous stroke — no gap at the batch join.
+    expect(ops(ctx, 'moveTo')[0].args).toEqual([5, 12])
+  })
+
+  it('draws without a stitch when no continuation is given', () => {
+    const ctx = makeCtx()
+    renderSamples(ctx, 'draw', '#22221f', stroke(9, 14))
+    expect(ops(ctx, 'moveTo')[0].args).toEqual([9, 12])
+  })
 })
 
 describe('brush options', () => {
@@ -190,5 +207,39 @@ describe('brush options', () => {
     const ctx = makeCtx()
     renderSamples(ctx, 'eraser', '#fff', stroke(0, 5), 1, 1, { tip: 'noise' })
     expect(ops(ctx, 'fill').length).toBeGreaterThan(0)
+  })
+
+  it('stamped brushes keep stamp spacing continuous across batches', () => {
+    // stampSprite needs a 2d backend — stub one so the stamped path runs.
+    const spriteCtx = {
+      createRadialGradient: () => ({ addColorStop: () => {} }),
+      fillRect: () => {},
+      beginPath: () => {},
+      arc: () => {},
+      fill: () => {},
+      save: () => {},
+      restore: () => {},
+      translate: () => {},
+      rotate: () => {},
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      fillStyle: '',
+    }
+    const sprite = { width: 0, height: 0, getContext: () => spriteCtx }
+    const createElement = vi
+      .spyOn(document, 'createElement')
+      .mockReturnValue(sprite as unknown as HTMLCanvasElement)
+    try {
+      const ctx = makeCtx()
+      const cont = newRenderCont()
+      const brush = { tip: 'noise' as const, spacing: 1 } // step = w*2 = 4
+      renderSamples(ctx, 'draw', '#22221f', stroke(0, 5), 1, 1, brush, cont)
+      expect(cont.carry).toBe(3) // stamps at 0 and 4; 8-5 carries 3
+      renderSamples(ctx, 'draw', '#22221f', stroke(5, 10), 1, 1, brush, cont)
+      expect(cont.carry).toBe(2) // resumes at 3, next stamp lands at 7
+      expect(ops(ctx, 'drawImage')).toHaveLength(3)
+    } finally {
+      createElement.mockRestore()
+    }
   })
 })

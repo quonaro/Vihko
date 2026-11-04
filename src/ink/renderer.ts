@@ -203,6 +203,19 @@ function stampSprite(tip: BrushTip, color: string): HTMLCanvasElement | null {
   return c
 }
 
+// Per-stroke render continuity across incremental sample batches: `prev`
+// stitches each new batch's polygon onto the last emitted sample (otherwise
+// thin strokes show gaps at batch joins), `carry` keeps the stamped-brush
+// spacing continuous so stamps don't restart at each batch boundary.
+export interface RenderCont {
+  prev: Sample | null
+  carry: number
+}
+
+export function newRenderCont(): RenderCont {
+  return { prev: null, carry: 0 }
+}
+
 function renderStamped(
   ctx: CanvasRenderingContext2D,
   color: string,
@@ -210,6 +223,7 @@ function renderStamped(
   seed: number,
   brush: BrushOpts,
   erase: boolean,
+  cont?: RenderCont,
 ) {
   const sprite = stampSprite(brush.tip!, erase ? '#000000' : color)
   if (!sprite) {
@@ -222,7 +236,7 @@ function renderStamped(
   const jitter = brush.jitter ?? 0
   const scatter = brush.scatter ?? 0
   const followAngle = !!brush.angle
-  let carry = 0
+  let carry = cont?.carry ?? 0
   ctx.save()
   ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over'
   for (let i = 1; i < samples.length; i++) {
@@ -258,6 +272,7 @@ function renderStamped(
   }
   ctx.restore()
   ctx.globalAlpha = 1
+  if (cont) cont.carry = carry
 }
 
 export function renderSamples(
@@ -268,16 +283,24 @@ export function renderSamples(
   seed = 1,
   widthScale = 1,
   brush?: BrushOpts,
+  cont?: RenderCont,
 ) {
   if (!samples.length) return
+  const lastRaw = samples[samples.length - 1]
+  // Outline painters stitch onto the previous batch's last sample so the
+  // join paints as one continuous stroke. Stamped brushes skip the stitch —
+  // re-stamping the join segment would double the paint; their continuity
+  // comes from cont.carry instead.
+  const stamped = !!brush?.tip && brush.tip !== 'round'
+  if (cont?.prev && !stamped) samples = [cont.prev, ...samples]
   if (widthScale !== 1) samples = samples.map((sample) => ({ ...sample, w: sample.w * widthScale }))
   const opacity = brush?.opacity ?? 1
   const erase = tool === 'eraser'
   ctx.save()
   if (brush?.blend) ctx.globalCompositeOperation = erase ? 'destination-out' : brush.blend
   if (opacity !== 1) samples = samples.map((s) => ({ ...s, a: s.a * opacity }))
-  if (brush?.tip && brush.tip !== 'round') {
-    renderStamped(ctx, color, samples, seed, brush, erase)
+  if (stamped) {
+    renderStamped(ctx, color, samples, seed, brush, erase, cont)
   } else {
     switch (tool) {
       case 'sketch':
@@ -294,4 +317,5 @@ export function renderSamples(
     }
   }
   ctx.restore()
+  if (cont) cont.prev = lastRaw
 }
