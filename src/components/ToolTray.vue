@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { store, palette, addPage, openPage, clearPage } from '../store'
-import { mixColors } from '../ink/mix'
+import { store } from '../store'
 import { INK_TOOLS } from '../ink/tools'
 import ColorPicker from './ColorPicker.vue'
 import ShapeMenu from './ShapeMenu.vue'
@@ -24,7 +23,6 @@ const tools: { id: ToolId }[] = [
   { id: 'fill' },
   { id: 'cut' },
   { id: 'filter' },
-  { id: 'move' },
   { id: 'transform' },
 ]
 
@@ -72,50 +70,19 @@ function onPhotoPicked(e: Event) {
   if (file) emit('photo', file)
   input.value = ''
 }
-
-function newPage() {
-  const p = addPage()
-  if (p) openPage(p.id)
-}
-
-// Drag a palette dot onto the color swatch to blend it in (Paper-style mixing).
-let dragColor: string | null = null
-const ghost = ref<{ color: string; x: number; y: number } | null>(null)
-
-function onDotDown(e: PointerEvent, color: string) {
-  dragColor = color
-  ghost.value = { color, x: e.clientX, y: e.clientY }
-  ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-}
-
-function onDotMove(e: PointerEvent) {
-  if (ghost.value) ghost.value = { ...ghost.value, x: e.clientX, y: e.clientY }
-}
-
-function onDotUp(e: PointerEvent) {
-  if (!dragColor) return
-  const el = document.elementFromPoint(e.clientX, e.clientY)
-  if (el?.classList.contains('swatch')) {
-    store.color = mixColors(store.color, dragColor, 0.35)
-  } else if (Math.abs(e.movementY) < 40) {
-    store.color = dragColor // plain tap -> pick color
-  }
-  dragColor = null
-  ghost.value = null
-}
-
-// A tray scroll gesture cancels the in-flight pointer — just drop the drag.
-function onDotCancel() {
-  dragColor = null
-  ghost.value = null
-}
 </script>
 
 <template>
   <div class="tray">
-    <button class="action" @click="newPage" :title="t('canvas.newPage')">+</button>
-
     <div class="tools">
+      <button class="action icon" @click="pickPhoto" :title="t('canvas.photo')">
+        <svg viewBox="0 0 24 40" width="26" height="44">
+          <rect x="3" y="12" width="18" height="16" rx="2" fill="#55565c" />
+          <rect x="5" y="14" width="14" height="12" rx="1" fill="#333" />
+          <circle cx="9" cy="18" r="2" fill="#d9a441" />
+          <path d="M5 24 L9 20 L12 23 L15 19 L19 24 Z" fill="#8a8a8e" />
+        </svg>
+      </button>
       <button
         v-for="tool in tools"
         :key="tool.id"
@@ -125,7 +92,7 @@ function onDotCancel() {
         :aria-expanded="tool.id === 'shapes' ? shapeMenuOpen : undefined"
         @click="selectTool(tool.id)"
       >
-        <svg viewBox="0 0 24 40" width="22" height="36">
+        <svg viewBox="0 0 24 40" width="26" height="44">
           <!-- eraser -->
           <g v-if="tool.id === 'eraser'">
             <rect x="5" y="10" width="14" height="22" rx="3" fill="#8a8a8e" />
@@ -193,11 +160,6 @@ function onDotCancel() {
             <path d="M5 15V10h5M19 23v5h-5" />
             <path d="M12 5v4 M10 7l2-2 2 2 M12 34v-4 M10 32l2 2 2-2" />
           </g>
-          <!-- move cross (move) -->
-          <g v-else fill="none" stroke="#9a9aa0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 5v30 M12 5l-3.5 3.5 M12 5l3.5 3.5 M12 35l-3.5-3.5 M12 35l3.5-3.5" />
-            <path d="M3 20h18 M3 20l3.5-3.5 M3 20l3.5 3.5 M21 20l-3.5-3.5 M21 20l-3.5 3.5" />
-          </g>
         </svg>
       </button>
     </div>
@@ -216,27 +178,6 @@ function onDotCancel() {
 
     <FilterPanel v-model:open="filterPanelOpen" />
 
-    <div class="dots">
-      <button
-        v-for="c in palette"
-        :key="c"
-        class="dot"
-        :class="{ active: store.color.toLowerCase() === c.toLowerCase() }"
-        :style="{ background: c }"
-        @pointerdown="onDotDown($event, c)"
-        @pointermove="onDotMove"
-        @pointerup="onDotUp"
-        @pointercancel="onDotCancel"
-      />
-    </div>
-
-    <button class="action icon" @click="pickPhoto" :title="t('canvas.photo')">
-      <svg viewBox="0 0 24 24" width="20" height="20">
-        <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="#ddd" stroke-width="1.6" />
-        <circle cx="9" cy="10" r="1.8" fill="#ddd" />
-        <path d="M4.5 17 L10 12 L14 15.5 L17.5 12.5 L20 15" fill="none" stroke="#ddd" stroke-width="1.6" />
-      </svg>
-    </button>
     <input
       ref="fileInput"
       type="file"
@@ -245,9 +186,6 @@ function onDotCancel() {
       @change="onPhotoPicked"
     />
 
-    <button class="action" @click="clearPage" :title="t('canvas.clearPage')">⌫</button>
-
-    <div v-if="ghost" class="ghost" :style="{ left: ghost.x + 'px', top: ghost.y + 'px', background: ghost.color }" />
   </div>
 </template>
 
@@ -255,7 +193,7 @@ function onDotCancel() {
 .tray {
   position: absolute;
   left: 0; right: 0; bottom: 0;
-  height: var(--tray-height, 86px);
+  height: var(--tray-height, 60px);
   background: linear-gradient(180deg, color-mix(in srgb, var(--chrome-bg) 90%, white 10%), var(--chrome-bg));
   border-top: 1px solid var(--chrome-border);
   display: flex;
@@ -285,6 +223,7 @@ function onDotCancel() {
 @media (hover: hover) {
   .action:hover { opacity: 1; background: var(--chrome-hover); }
 }
+.action.icon { margin-bottom: 11px; }
 .action.icon svg { display: block; }
 .tools {
   display: flex;
@@ -296,7 +235,7 @@ function onDotCancel() {
 }
 .tool {
   height: 100%;
-  padding: 8px 10px 14px;
+  padding: 0 8px 8px;
   display: flex;
   align-items: flex-end;
   opacity: 0.75;
@@ -313,40 +252,12 @@ function onDotCancel() {
 }
 .tool.active svg { transform: translateY(-6px); }
 .swatch {
-  width: 52px;
-  height: 52px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.22);
   box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.25), 0 2px 6px rgba(0,0,0,0.4);
   cursor: pointer;
   flex: 0 0 auto;
 }
-.dots {
-  display: grid;
-  grid-template-columns: repeat(5, 26px);
-  grid-auto-rows: 26px;
-  gap: 9px;
-}
-.dot {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  box-shadow: inset 0 -2px 4px rgba(0,0,0,0.25), 0 1px 3px rgba(0,0,0,0.4);
-  cursor: pointer;
-}
-.dot.active {
-  transform: scale(1.2);
-}
-.ghost {
-  position: fixed;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-  z-index: 100;
-  opacity: 0.9;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
-}
-
 </style>

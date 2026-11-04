@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import ColorPicker from './ColorPicker.vue'
 import { i18n } from '../i18n'
-import { store } from '../store'
+import { palette, store } from '../store'
+import { mixColors } from '../ink/mix'
 
 function pev(type: string, props: Record<string, unknown> = {}) {
   const e = new Event(type, { bubbles: true })
@@ -29,15 +30,18 @@ const q = <T extends Element = HTMLElement>(sel: string) =>
   document.body.querySelector(sel) as T | null
 
 let w: VueWrapper | null = null
+let originalElementFromPoint: typeof document.elementFromPoint
 const mountPicker = (open = true) =>
   (w = mount(ColorPicker, { props: { open }, global: { plugins: [i18n] } }))
 
 beforeEach(() => {
   store.color = '#ff0000'
+  originalElementFromPoint = document.elementFromPoint
 })
 afterEach(() => {
   w?.unmount()
   w = null
+  document.elementFromPoint = originalElementFromPoint
 })
 
 describe('ColorPicker', () => {
@@ -52,6 +56,47 @@ describe('ColorPicker', () => {
     store.color = '#4a6b8a'
     mountPicker()
     expect(q<HTMLInputElement>('input.hex')!.value).toBe('#4a6b8a')
+  })
+
+  it('shows the palette in the color dialog and selects a color', async () => {
+    mountPicker()
+    expect(document.body.querySelectorAll('.dot')).toHaveLength(palette.length)
+    const dot = q<HTMLButtonElement>(`.dot[aria-label="${palette[4]}"]`)!
+    dot.dispatchEvent(pev('pointerdown', { clientX: 5, clientY: 5, pointerId: 1 }))
+    dot.dispatchEvent(pev('pointerup', { clientX: 5, clientY: 5, movementY: 0, pointerId: 1 }))
+    await w!.vm.$nextTick()
+
+    expect(store.color).toBe(palette[4])
+    expect(q<HTMLInputElement>('input.hex')!.value).toBe(palette[4])
+    expect(dot.classList.contains('active')).toBe(true)
+  })
+
+  it('cancelling a palette drag drops the ghost without changing color', async () => {
+    mountPicker()
+    const before = store.color
+    const dot = q<HTMLButtonElement>(`.dot[aria-label="${palette[2]}"]`)!
+    dot.dispatchEvent(pev('pointerdown', { clientX: 5, clientY: 5, pointerId: 1 }))
+    await w!.vm.$nextTick()
+    expect(q('.ghost')).not.toBeNull()
+    dot.dispatchEvent(pev('pointercancel', { pointerId: 1 }))
+    await w!.vm.$nextTick()
+
+    expect(q('.ghost')).toBeNull()
+    expect(store.color).toBe(before)
+  })
+
+  it('dropping a palette color on the current swatch mixes it in', async () => {
+    mountPicker()
+    const before = store.color
+    document.elementFromPoint = () => q('.new')!
+    const dot = q<HTMLButtonElement>(`.dot[aria-label="${palette[3]}"]`)!
+    dot.dispatchEvent(pev('pointerdown', { clientX: 5, clientY: 5, pointerId: 1 }))
+    dot.dispatchEvent(pev('pointerup', { clientX: 40, clientY: 40, movementY: 60, pointerId: 1 }))
+    await w!.vm.$nextTick()
+
+    const mixed = mixColors(before, palette[3], 0.35)
+    expect(store.color).toBe(mixed)
+    expect(q<HTMLInputElement>('input.hex')!.value).toBe(mixed)
   })
 
   it('typing a valid hex applies it to the store', async () => {
@@ -93,17 +138,10 @@ describe('ColorPicker', () => {
     hue.dispatchEvent(pev('pointerup', { pointerId: 1 }))
   })
 
-  it('the previous-color swatch restores the opening color', async () => {
+  it('shows only the current-color swatch', () => {
     mountPicker()
-    const hex = q<HTMLInputElement>('input.hex')!
-    hex.value = '#00ff00'
-    hex.dispatchEvent(new Event('input'))
-    await w!.vm.$nextTick()
-    expect(store.color).toBe('#00ff00')
-    q('.old')!.dispatchEvent(new Event('click', { bubbles: true }))
-    await w!.vm.$nextTick()
-    expect(store.color).toBe('#ff0000')
-    expect(q<HTMLInputElement>('input.hex')!.value).toBe('#ff0000')
+    expect(q('.old')).toBeNull()
+    expect(q('.new')).not.toBeNull()
   })
 
   it('closing the dialog emits update:open false', async () => {

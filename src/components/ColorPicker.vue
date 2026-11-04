@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { store } from '../store'
-import { hexToHsv, hsvToHex } from '../ink/mix'
+import { palette, store } from '../store'
+import { hexToHsv, hsvToHex, mixColors } from '../ink/mix'
 import MobileSlider from './MobileSlider.vue'
 
 // Arbitrary color picker: saturation/value square + hue strip + hex field.
-// Commits to store.color live while dragging; the "current" swatch restores
-// the color the page had when the dialog was opened.
+// Commits to store.color live while dragging.
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
@@ -16,7 +15,6 @@ const { t } = useI18n()
 const h = ref(0)
 const s = ref(0)
 const v = ref(0)
-const original = ref(store.color)
 const hexText = ref('')
 const hexBad = ref(false)
 
@@ -27,7 +25,6 @@ watch(
   () => props.open,
   (open) => {
     if (!open) return
-    original.value = store.color
     ;[h.value, s.value, v.value] = hexToHsv(store.color)
     hexText.value = store.color
     hexBad.value = false
@@ -41,8 +38,8 @@ function apply() {
   hexBad.value = false
 }
 
-function revert() {
-  ;[h.value, s.value, v.value] = hexToHsv(original.value)
+function selectColor(hex: string) {
+  ;[h.value, s.value, v.value] = hexToHsv(hex)
   apply()
 }
 
@@ -55,6 +52,36 @@ function onHex(e: Event) {
   }
   ;[h.value, s.value, v.value] = hexToHsv(raw.startsWith('#') ? raw : `#${raw}`)
   apply()
+}
+
+let dragColor: string | null = null
+const ghost = ref<{ color: string; x: number; y: number } | null>(null)
+
+function onPaletteDown(e: PointerEvent, color: string) {
+  dragColor = color
+  ghost.value = { color, x: e.clientX, y: e.clientY }
+  ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+}
+
+function onPaletteMove(e: PointerEvent) {
+  if (ghost.value) ghost.value = { ...ghost.value, x: e.clientX, y: e.clientY }
+}
+
+function onPaletteUp(e: PointerEvent) {
+  if (!dragColor) return
+  const target = document.elementFromPoint(e.clientX, e.clientY)
+  if (target?.classList.contains('new')) {
+    selectColor(mixColors(store.color, dragColor, 0.35))
+  } else if (Math.abs(e.movementY) < 40) {
+    selectColor(dragColor)
+  }
+  dragColor = null
+  ghost.value = null
+}
+
+function onPaletteCancel() {
+  dragColor = null
+  ghost.value = null
 }
 
 const sv = ref<HTMLElement>()
@@ -137,12 +164,6 @@ function hueUp() {
       </div>
 
       <div class="row">
-        <button
-          class="old"
-          :style="{ background: original }"
-          :title="t('picker.revert')"
-          @click="revert"
-        />
         <div class="new" :style="{ background: color }" />
         <input
           class="hex"
@@ -154,6 +175,26 @@ function hueUp() {
           @input="onHex"
         />
       </div>
+
+      <div class="dots">
+        <button
+          v-for="c in palette"
+          :key="c"
+          class="dot"
+          :class="{ active: store.color.toLowerCase() === c.toLowerCase() }"
+          :style="{ background: c }"
+          :aria-label="c"
+          @pointerdown="onPaletteDown($event, c)"
+          @pointermove="onPaletteMove"
+          @pointerup="onPaletteUp"
+          @pointercancel="onPaletteCancel"
+        />
+      </div>
+      <div
+        v-if="ghost"
+        class="ghost"
+        :style="{ left: `${ghost.x}px`, top: `${ghost.y}px`, background: ghost.color }"
+      />
     </div>
   </MobileSlider>
 </template>
@@ -216,24 +257,19 @@ function hueUp() {
 }
 .row {
   display: grid;
-  grid-template-columns: 44px 44px minmax(0, 1fr);
+  grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   width: 100%;
   min-width: 0;
 }
-.old,
 .new {
   width: 44px;
   height: 44px;
   border-radius: 10px;
   flex-shrink: 0;
-  box-shadow:
-    inset 0 -3px 6px rgba(0, 0, 0, 0.25),
-    0 0 0 1px rgba(255, 255, 255, 0.14);
-}
-.old {
-  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: inset 0 -3px 6px rgba(0, 0, 0, 0.25);
 }
 .hex {
   min-width: 0;
@@ -256,7 +292,33 @@ function hueUp() {
 .hex.bad {
   background: rgba(226, 96, 30, 0.12);
 }
-:deep(.mslider-body) {
-  overflow-x: hidden;
+.dots {
+  display: grid;
+  grid-template-columns: repeat(5, 34px);
+  grid-auto-rows: 34px;
+  justify-content: center;
+  gap: 10px;
+}
+.dot {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  box-shadow: inset 0 -2px 4px rgba(0, 0, 0, 0.25), 0 1px 3px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  touch-action: none;
+}
+.dot.active {
+  transform: scale(1.1);
+}
+.ghost {
+  position: fixed;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 100;
+  opacity: 0.9;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 </style>
