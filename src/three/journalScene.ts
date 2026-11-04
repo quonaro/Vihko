@@ -461,7 +461,7 @@ export class JournalScene {
     if (!canvas) return null
     const tex = new THREE.CanvasTexture(canvas)
     tex.colorSpace = THREE.SRGBColorSpace
-    tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
+    tex.anisotropy = Math.min(16, this.renderer.capabilities.getMaxAnisotropy())
     this.texCache.set(key, { tex, ctx: canvas.getContext('2d')!, page, fold, edgeShade })
     return tex
   }

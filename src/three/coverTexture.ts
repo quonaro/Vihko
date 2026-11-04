@@ -146,8 +146,10 @@ export function paintCover(
 
   const texture = input.coverTexture ?? 'paper'
   if (texture === 'comic') comicHalftone(ctx, w, h)
-  else if (texture !== 'smooth') {
-    // Fine, low-contrast grain gives paper a printed finish without gloss.
+  else if (texture !== 'smooth' && !input.coverImg) {
+    // Fine, low-contrast grain gives flat covers a printed finish without
+    // gloss — photo covers already carry their own detail, grain on top
+    // just reads as noise.
     const grain = paperGrain(ctx)
     if (grain) {
       ctx.fillStyle = grain

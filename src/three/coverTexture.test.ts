@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { coverCanvas, coverWidth, paintCover, dominantColorFromPixels } from './coverTexture'
 
 describe('dominantColorFromPixels', () => {
@@ -107,6 +107,34 @@ describe('paintCover', () => {
     expect(alphas[0]).toBeCloseTo(0.16)
     expect(alphas[alphas.length - 1]).toBeGreaterThan(alphas[0])
     expect(ctx.globalAlpha).toBe(1)
+  })
+
+  // Must run before any grain-applying paintCover call: the grain tile is
+  // module-cached, so only the first attempt creates a canvas element.
+  it('keeps paper grain off photo covers', () => {
+    const createElement = vi.spyOn(document, 'createElement')
+    try {
+      const canvas = { width: 384, height: 522 } as HTMLCanvasElement
+      const { ctx } = stubCtx()
+      Object.assign(ctx, { createPattern: () => null })
+      paintCover(canvas, ctx, { color: '#333', coverImg: 'data:image/png;base64,x' })
+      expect(createElement).not.toHaveBeenCalled()
+    } finally {
+      createElement.mockRestore()
+    }
+  })
+
+  it('still applies paper grain to plain covers', () => {
+    const createElement = vi.spyOn(document, 'createElement')
+    try {
+      const canvas = { width: 384, height: 522 } as HTMLCanvasElement
+      const { ctx } = stubCtx()
+      Object.assign(ctx, { createPattern: () => null })
+      paintCover(canvas, ctx, { color: '#333' })
+      expect(createElement).toHaveBeenCalledWith('canvas')
+    } finally {
+      createElement.mockRestore()
+    }
   })
 
   it('paints no title text — the shelf labels books below instead', () => {

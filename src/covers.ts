@@ -4,16 +4,20 @@ import { imageDataURL } from './ink/ops'
 
 const W = 340
 const H = 480
+// Presets are authored at W×H but baked at 3x so they downscale into the
+// cover texture instead of stretching — much sharper on hiDPI shelves.
+const SCALE = 3
 const FALLBACK_COVER = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='
 
 function bake(draw: (c: CanvasRenderingContext2D) => void): string {
   const el = document.createElement('canvas')
-  el.width = W
-  el.height = H
+  el.width = W * SCALE
+  el.height = H * SCALE
   const ctx = el.getContext('2d')
   if (!ctx) return FALLBACK_COVER // no canvas backend (e.g. jsdom tests)
+  ctx.scale(SCALE, SCALE)
   draw(ctx)
-  return imageDataURL(el, false, 0.85)
+  return imageDataURL(el, false, 0.9)
 }
 
 const mulberry32 = (seed: number) => () => {

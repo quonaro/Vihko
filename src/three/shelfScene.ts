@@ -228,7 +228,7 @@ export class ShelfScene {
     if (cnv) {
       tex = new THREE.CanvasTexture(cnv)
       tex.colorSpace = THREE.SRGBColorSpace
-      tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
+      tex.anisotropy = Math.min(16, this.renderer.capabilities.getMaxAnisotropy())
     }
     // The cover face stays unlit: under the studio rig a lit material
     // washes the artwork out, so the printed texture is shown as-is.

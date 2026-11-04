@@ -24,7 +24,7 @@ async function onCoverPicked(e: Event) {
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
-  const img = await imageFileToPhoto(file, 800)
+  const img = await imageFileToPhoto(file, 1600)
   emit('select', img.src)
 }
 </script>
