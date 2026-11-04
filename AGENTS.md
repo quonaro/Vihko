@@ -175,12 +175,12 @@ screens.
   units, matching the 300×380 preview viewBox at 0.28). Pages may declare
   `page.w`/`page.h` (page units — `pageSize(page)` resolves them, presets in
   `PAGE_SIZE_PRESETS`, chosen at creation in JournalView via
-  `store.pageSize`; `coverViewport`/`clampOffset` take the page size and the
+  `store.pageSize`; `coverViewport` takes the page size and the
   layer raster scales to the page aspect). All stroke points and
-  op coords are stored in page units; the editor viewport is a cover-fit
-  window onto the sheet (`coverViewport`/`clampOffset`), pannable with the
-  `move` tool and zoomable via the `+`/`−` buttons (`view.s = cover * zoom`;
-  `clampOffset` centers the sheet on axes where it fits inside the viewport).
+  op coords are stored in page units; the editor opens in a centered contain-fit
+  view showing the full sheet (`view.s = cover * zoom`); panning is free —
+  the sheet may be dragged anywhere, and offsets persist per page as
+  fractions relative to the centered position.
   Committed strokes+ops are cached in an offscreen snapshot (`ensureSnap` in
   CanvasView, ~3200px cap) so pans/zooms blit instead of replaying — watchers
   on `strokes`/`ops`/`pageId` (flush:'sync') invalidate it; appended strokes/ops
@@ -244,11 +244,14 @@ screens.
   Drawing guides (`store.guide` line/arc, `snapToGuide`) snap ink points onto
   a straightedge or a circular french curve; the overlay draws in page space
   and its handles drag the anchor, the line angle, or the arc radius.
-- Zoom: `+`/`−` buttons bottom-right zoom around the viewport center (×1.4 per
-  tap, clamped to [contain·0.9, cover·5]); two-finger pinch zooms around its
-  moving midpoint and pans. The move tool remains a one-finger grab. A fit
-  button appears when the view diverges from cover-fit and restores it.
-  Each page remembers its own view.
+- Zoom/rotate: two-finger pinch zooms around its moving midpoint and pans
+  freely (scale clamped to [half-size contain, cover·5]; offsets are
+  unbounded); rotating the finger chord rotates the whole canvas
+  (`view.angle` is composed into the 2D context in `setPageTransform`/
+  `setViewTransform` — rotating the element itself gets clipped by
+  `.viewport` and breaks `getBoundingClientRect` mapping; pointer coords map
+  back via `toLocalPoint`; gesture chord/midpoint stay in raw screen space).
+  Zoom/rotation are gesture-only, and each page remembers its own view.
 - Tray extras: `+` new page, photo import (file picker → centered collage),
   `⌫` clear page (undoable).
 - Top chrome: `×` close, `↶`/`↷` undo/redo buttons, `⤓` PNG export.

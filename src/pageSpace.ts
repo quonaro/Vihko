@@ -2,7 +2,7 @@
 // photo placements are all stored in page units: a fixed-size landscape sheet
 // (a two-page spread, fold down the middle) that the journal stack/overview
 // views sample as PAGE_W x PAGE_H world units. The editor viewport is a
-// window onto this sheet — see coverViewport/clampOffset.
+// window onto this sheet — see coverViewport.
 export const PAGE_UNIT = 600 / 0.28
 export const PAGE_ASPECT = 380 / 600 // two portrait halves, one continuous spread
 export const PAGE_W = PAGE_UNIT
@@ -41,7 +41,7 @@ export interface Viewport {
 
 // Cover fit: the smallest uniform scale at which the sheet still fills the
 // viewport. On aspect-mismatched screens the sheet overflows one axis and the
-// excess is reachable by panning (clamped by clampOffset).
+// excess is reachable by free panning.
 export function coverViewport(cssW: number, cssH: number, size?: PageSize): Viewport {
   const { w: pw, h: ph } = size ?? { w: PAGE_W, h: PAGE_H }
   const s = Math.max(cssW / pw, cssH / ph)
@@ -50,24 +50,4 @@ export function coverViewport(cssW: number, cssH: number, size?: PageSize): View
     ox: (cssW - pw * s) / 2,
     oy: (cssH - ph * s) / 2,
   }
-}
-
-// Keep the sheet covering the viewport: on each axis the offset ranges from
-// (css - sheet) up to 0; where the sheet fits inside the viewport (zoomed out)
-// it is centered instead.
-export function clampOffset(
-  ox: number,
-  oy: number,
-  s: number,
-  cssW: number,
-  cssH: number,
-  size?: PageSize,
-): { ox: number; oy: number } {
-  const { w: pw, h: ph } = size ?? { w: PAGE_W, h: PAGE_H }
-  const cl = (v: number, css: number, page: number) => {
-    const sheet = page * s
-    if (sheet <= css) return (css - sheet) / 2
-    return Math.min(0, Math.max(css - sheet, v))
-  }
-  return { ox: cl(ox, cssW, pw), oy: cl(oy, cssH, ph) }
 }

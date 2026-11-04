@@ -20,12 +20,18 @@ import {
   updateLayer,
 } from '../store'
 import { initInk } from '../ink/engine'
-import { renderSamples } from '../ink/renderer'
-import { clearLayerRasterCache, layerRasterCanvas, paintLayers } from '../ink/layers'
+import { newRenderCont, renderSamples } from '../ink/renderer'
+import type { RenderCont } from '../ink/renderer'
+import {
+  clearLayerRasterCache,
+  layerMaskRasterCanvas,
+  layerRasterCanvas,
+  paintLayers,
+} from '../ink/layers'
 import { extractRegion, onImageLoaded, imageFileToPhoto } from '../ink/ops'
 import { rdp } from '../ink/path'
 import { shapePoints } from '../ink/shapes'
-import { pageSize, coverViewport, clampOffset } from '../pageSpace'
+import { pageSize, coverViewport } from '../pageSpace'
 import { INK_TOOLS } from '../ink/tools'
 import {
   buildTransformFrame,
@@ -49,14 +55,13 @@ import type {
   ShapeKind,
   Stroke,
   SymmetryMode,
-  ToolId,
 } from '../types'
 
 export function useCanvasView() {
   const PAPER = '#f6f1e6'
   const BACKDROP = '#2a2a2c'
   const EDGE = 34 // px edge zone for page-swipe nav
-  const TRAY_HEIGHT = 86
+  const TRAY_HEIGHT = 60
   const canvas = ref<HTMLCanvasElement>()
   const navClass = ref<'' | 'from-right' | 'from-left'>('')
   const journal = computed(() => currentJournal())
@@ -71,17 +76,14 @@ export function useCanvasView() {
   let dpr = 1
 
   // --- viewport: the screen is a window onto a fixed page-unit sheet ---
-  // Cover fit keeps the sheet filling the canvas at zoom 1; on aspect-mismatched
-  // screens it overflows one axis. The move tool pans, the +/- buttons zoom
-  // around the viewport center, and each page remembers its own view.
-  const ZOOM_STEP = 1.4
+  // Open with the whole sheet visible and some breathing room; pinch gestures
+  // zoom and pan, and each page remembers its own view.
+  const INITIAL_FIT = 0.8
   const ZOOM_MAX = 5 // scale relative to cover fit
   const ZOOM_MARGIN = 0.5 // zoom-out stops at half-size contain fit
-  const view = { s: 1, ox: 0, oy: 0 }
+  const view = { s: 1, ox: 0, oy: 0, angle: 0 }
   const zoom = ref(1)
-  const isFit = ref(true)
-  const viewSize = ref({ w: 0, h: 0 })
-  const views = new Map<string, { zoom: number; fx: number; fy: number }>() // per-page
+  const views = new Map<string, { zoom: number; fx: number; fy: number; angle: number }>() // per-page
   let panStart: { x: number; y: number } | null = null
   const layerPanelOpen = ref(false)
   const selectedLayer = computed(() => activeLayer())
@@ -118,6 +120,22 @@ export function useCanvasView() {
   const brushProgress = computed(() => Math.min(1, Math.max(0, (brushSize.value - 0.25) / 3.75)))
   const brushMarkWidth = computed(() => `${Math.min(20, 7 + brushSize.value * 3)}px`)
 
+  // The view rotation is applied inside the canvas 2D transform, not via CSS
+  // rotate on the element: a rotated viewport-sized element gets clipped by
+  // .viewport (its edges cut across the screen, shrinking the visible area)
+  // and its getBoundingClientRect() inflates to the rotated bounding box,
+  // breaking pointer mapping. toLocalPoint inverts the same center rotation,
+  // so screen coordinates map back into the unrotated canvas space.
+  function toLocalPoint(pt: { x: number; y: number }, angle = view.angle) {
+    if (!angle) return pt
+    const { w, h } = canvasSize()
+    const cx = pt.x - w / 2
+    const cy = pt.y - h / 2
+    const cos = Math.cos(-angle)
+    const sin = Math.sin(-angle)
+    return { x: w / 2 + cx * cos - cy * sin, y: h / 2 + cx * sin + cy * cos }
+  }
+
   const toPageX = (x: number) => (x - view.ox) / view.s
   const toPageY = (y: number) => (y - view.oy) / view.s
   // Current page's size in page units (custom sizes come from page.w/h).
@@ -139,39 +157,27 @@ export function useCanvasView() {
     }
   }
 
-  // Saved offsets are fractions of the pannable range so they survive resizes;
-  // 0.5 = centered, which is also what a fitting sheet gets from clampOffset.
-  const frac = (o: number, css: number, sheet: number) => (sheet > css ? o / (css - sheet) : 0.5)
-  const unfrac = (f: number, css: number, sheet: number) =>
-    sheet > css ? f * (css - sheet) : (css - sheet) / 2
+  // Saved offsets are fractions of the sheet size relative to the centered
+  // position, so any free pan survives canvas resizes; 0 = centered.
+  const frac = (o: number, css: number, sheet: number) =>
+    sheet > 0 ? (o - (css - sheet) / 2) / sheet : 0
+  const unfrac = (f: number, css: number, sheet: number) => (css - sheet) / 2 + f * sheet
 
   function applyViewport() {
     const { w, h } = canvasSize()
-    viewSize.value = { w, h }
     const cover = coverViewport(w, h, pageSize(currentPage()))
     const saved = views.get(store.pageId ?? '')
-    view.s = cover.s * (saved?.zoom ?? 1)
-    const c = clampOffset(
-      saved ? unfrac(saved.fx, w, pw() * view.s) : cover.ox,
-      saved ? unfrac(saved.fy, h, ph() * view.s) : cover.oy,
-      view.s,
-      w,
-      h,
-      pageSize(currentPage()),
-    )
-    view.ox = c.ox
-    view.oy = c.oy
-    syncViewUI()
+    view.s = saved ? cover.s * saved.zoom : Math.min(w / pw(), h / ph()) * INITIAL_FIT
+    view.angle = saved?.angle ?? 0
+    view.ox = saved ? unfrac(saved.fx, w, pw() * view.s) : (w - pw() * view.s) / 2
+    view.oy = saved ? unfrac(saved.fy, h, ph() * view.s) : (h - ph() * view.s) / 2
+    syncZoomState()
   }
 
-  function syncViewUI() {
+  function syncZoomState() {
     const { w, h } = canvasSize()
     const cover = coverViewport(w, h, pageSize(currentPage()))
     zoom.value = cover.s ? view.s / cover.s : 1
-    isFit.value =
-      Math.abs(view.s - cover.s) < 1e-4 &&
-      Math.abs(view.ox - cover.ox) < 0.5 &&
-      Math.abs(view.oy - cover.oy) < 0.5
   }
 
   function saveView() {
@@ -180,51 +186,74 @@ export function useCanvasView() {
       zoom: zoom.value,
       fx: frac(view.ox, w, pw() * view.s),
       fy: frac(view.oy, h, ph() * view.s),
+      angle: view.angle,
     })
   }
 
-  function zoomBy(f: number) {
+  // device px = rotate(canvas-local px) about the canvas center. Used to draw
+  // things that live in canvas space (paper rect, transform frame) so they
+  // turn with the sheet.
+  function setViewTransform(c: CanvasRenderingContext2D) {
     const { w, h } = canvasSize()
-    if (!w || !h) return
-    const cover = coverViewport(w, h, pageSize(currentPage()))
-    const minS = Math.min(w / pw(), h / ph()) * ZOOM_MARGIN
-    const s = Math.min(cover.s * ZOOM_MAX, Math.max(minS, view.s * f))
-    if (s === view.s) return
-    const k = s / view.s
-    // keep the page point under the viewport center fixed
-    const c = clampOffset(
-      w / 2 - (w / 2 - view.ox) * k,
-      h / 2 - (h / 2 - view.oy) * k,
-      s,
-      w,
-      h,
-      pageSize(currentPage()),
+    const cx = (w * dpr) / 2
+    const cy = (h * dpr) / 2
+    const cos = Math.cos(view.angle)
+    const sin = Math.sin(view.angle)
+    c.setTransform(
+      dpr * cos,
+      dpr * sin,
+      -dpr * sin,
+      dpr * cos,
+      cx * (1 - cos) + cy * sin,
+      cy * (1 - cos) - cx * sin,
     )
-    view.s = s
-    view.ox = c.ox
-    view.oy = c.oy
-    syncViewUI()
-    saveView()
-    reRender()
   }
-
-  function resetView() {
-    views.delete(store.pageId ?? '')
-    applyViewport()
-    reRender()
-  }
-
-  const minZoom = computed(() => {
-    const { w, h } = viewSize.value
-    if (!w || !h) return 0
-    const cover = coverViewport(w, h, pageSize(currentPage()))
-    return (Math.min(w / pw(), h / ph()) * ZOOM_MARGIN) / cover.s
-  })
-  const canZoomIn = computed(() => zoom.value < ZOOM_MAX - 0.01)
-  const canZoomOut = computed(() => zoom.value > minZoom.value + 0.01)
 
   function setPageTransform(c: CanvasRenderingContext2D) {
-    c.setTransform(dpr * view.s, 0, 0, dpr * view.s, dpr * view.ox, dpr * view.oy)
+    if (!view.angle) {
+      c.setTransform(dpr * view.s, 0, 0, dpr * view.s, dpr * view.ox, dpr * view.oy)
+      return
+    }
+    const { w, h } = canvasSize()
+    const cx = (w * dpr) / 2
+    const cy = (h * dpr) / 2
+    const s = view.s * dpr
+    const ox = view.ox * dpr
+    const oy = view.oy * dpr
+    const cos = Math.cos(view.angle)
+    const sin = Math.sin(view.angle)
+    // device = R(canvas center, angle) ∘ (page * s + offset)
+    c.setTransform(
+      s * cos,
+      s * sin,
+      -s * sin,
+      s * cos,
+      cos * (ox - cx) - sin * (oy - cy) + cx,
+      sin * (ox - cx) + cos * (oy - cy) + cy,
+    )
+  }
+
+  // The same center rotation as a standalone value for the display transform
+  // paintLayers applies when compositing rasters straight to the screen.
+  function viewRot() {
+    if (!view.angle) return null
+    const { w, h } = canvasSize()
+    return { angle: view.angle, cx: (w * dpr) / 2, cy: (h * dpr) / 2 }
+  }
+
+  // Page units -> device px through the full view transform (scale + offset,
+  // then the center rotation).
+  function viewToDevice(pt: { x: number; y: number }) {
+    const lx = pt.x * view.s + view.ox
+    const ly = pt.y * view.s + view.oy
+    if (!view.angle) return { x: lx * dpr, y: ly * dpr }
+    const { w, h } = canvasSize()
+    const cos = Math.cos(view.angle)
+    const sin = Math.sin(view.angle)
+    return {
+      x: (w / 2 + (lx - w / 2) * cos - (ly - h / 2) * sin) * dpr,
+      y: (h / 2 + (lx - w / 2) * sin + (ly - h / 2) * cos) * dpr,
+    }
   }
 
   // Raster resolution for the alpha-scan in layerContentBounds (~300px wide).
@@ -379,7 +408,7 @@ export function useCanvasView() {
     const frame = transformFrame()
     if (!frame) return
     ctx.save()
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    setViewTransform(ctx)
     ctx.strokeStyle = '#2a8097'
     ctx.fillStyle = '#fff'
     ctx.lineWidth = 1.5
@@ -406,13 +435,18 @@ export function useCanvasView() {
   }
 
   // --- stroke state ---
-  const pointers = new Map<number, { x: number; y: number; t: number; type: string }>()
+  const pointers = new Map<
+    number,
+    { x: number; y: number; t: number; type: string; gx: number; gy: number }
+  >()
   let drawing = false
   let strokeId = -1
   let curPts: Pt[] = []
   let curSamples: Sample[] = [] // emitted so far, for repaints
   let predRect: { x: number; y: number; w: number; h: number } | null = null // page units
-  let liveStroke: { tool: ToolId; color: string } | null = null
+  let liveStroke: Stroke | null = null
+  let renderCont = newRenderCont() // live stroke's batch-to-batch continuity
+  let repaintRaf = 0 // pending rAF for the live-eraser composite repaint
   let seed = 1
   let penActive = false
   let curStrokeSize = 1
@@ -485,6 +519,7 @@ export function useCanvasView() {
   // --- two-finger gesture state ---
   let gestureActive = false
   let gDist0 = 0
+  let gAngle0 = 0
   let gCenter0 = { x: 0, y: 0 }
 
   // --- fill / cut tool state ---
@@ -527,7 +562,8 @@ export function useCanvasView() {
     c.fillStyle = BACKDROP
     c.fillRect(0, 0, w, h)
     c.fillStyle = PAPER
-    c.fillRect(view.ox, view.oy, pw() * view.s, ph() * view.s)
+    setPageTransform(c)
+    c.fillRect(0, 0, pw(), ph())
     c.restore()
   }
 
@@ -579,14 +615,24 @@ export function useCanvasView() {
     stroke: Stroke,
     samples: ReturnType<InkEngine['end']>,
     s: number,
+    cont: RenderCont | null = null,
     layerId = curLayerId,
     size = curStrokeSize,
   ) {
     if (!ctx || !ink) return
+    if (stroke.tool === 'eraser') {
+      eraseLiveIntoRaster(stroke, samples, s, cont, layerId, size)
+      return
+    }
     const layer = pageLayers().find((item) => item.id === layerId)
     const paintInto = (c: CanvasRenderingContext2D) => {
       c.save()
       setPageTransform(c)
+      // Paint never leaves the sheet: clip to the page rect in page space so
+      // the layer transform below can't push ink past the paper edge.
+      c.beginPath()
+      c.rect(0, 0, pw(), ph())
+      c.clip()
       if (layer) {
         c.globalAlpha *= layer.opacity
         c.translate(pw() / 2 + layer.x, ph() / 2 + layer.y)
@@ -594,12 +640,13 @@ export function useCanvasView() {
         c.scale(layer.scale, layer.scale)
         c.translate(-pw() / 2, -ph() / 2)
       }
-      renderSamples(c, stroke.tool, stroke.color, samples, s, size, stroke)
+      renderSamples(c, stroke.tool, stroke.color, samples, s, size, stroke, cont ?? undefined)
       const mirrored = mirroredSampleSets(samples)
       if (mirrored.length) renderSamples(c, stroke.tool, stroke.color, mirrored, s, size, stroke)
       c.restore()
     }
-    const locked = !!layer?.alphaLock && stroke.tool !== 'eraser'
+    // The eraser already left through the raster branch above.
+    const locked = !!layer?.alphaLock
     const mask = locked ? alphaLockMask(layer) : null
     const scratch = mask ? lockCanvas('paint') : null
     if (!scratch) {
@@ -617,6 +664,49 @@ export function useCanvasView() {
     scratch.ctx.drawImage(mask!, 0, 0)
     scratch.ctx.restore()
     ctx.drawImage(scratch.c, 0, 0)
+  }
+
+  // Coalesce live-eraser repaints to one composite per frame — each batch
+  // already mutated the layer raster, so a single rebuild shows them all.
+  function scheduleRepaint() {
+    if (repaintRaf || typeof requestAnimationFrame !== 'function') return
+    repaintRaf = requestAnimationFrame(() => {
+      repaintRaf = 0
+      reRender()
+    })
+  }
+
+  // Live eraser preview: erase straight into the layer's cached raster and
+  // re-composite the page. destination-out on the display canvas would erase
+  // the paper and every layer together — a dark line until the next repaint.
+  function eraseLiveIntoRaster(
+    stroke: Stroke,
+    samples: ReturnType<InkEngine['end']>,
+    s: number,
+    cont: RenderCont | null,
+    layerId: string,
+    size: number,
+  ) {
+    const p = currentPage()
+    const layer = pageLayers().find((item) => item.id === layerId)
+    if (!p || !ink || !layer?.visible) return
+    const raster =
+      stroke.mask || (store.maskEdit && layer.mask)
+        ? layerMaskRasterCanvas(p, ink, layer.id)
+        : layerRasterCanvas(p, ink, layer.id)
+    if (!raster) return
+    const rc = raster.getContext('2d', { willReadFrequently: true })
+    if (!rc) return
+    const scale = raster.width / pw()
+    rc.save()
+    rc.setTransform(scale, 0, 0, scale, 0, 0)
+    renderSamples(rc, 'eraser', stroke.color, samples, s, size, stroke, cont ?? undefined)
+    const mirrored = mirroredSampleSets(samples)
+    if (mirrored.length) renderSamples(rc, 'eraser', stroke.color, mirrored, s, size, stroke)
+    rc.restore()
+    // Only mark the snapshot dirty — callers schedule the repaint so repaint-
+    // driven drawSamples calls (reRender's live repaint) can't loop forever.
+    snapDirty = true
   }
 
   function paintShapeDrag(
@@ -645,7 +735,7 @@ export function useCanvasView() {
       alphaLock: pageLayers().find((item) => item.id === drag.layerId)?.alphaLock || undefined,
     }
     reRender()
-    drawSamples(stroke, samples, seed, drag.layerId, drag.size)
+    drawSamples(stroke, samples, seed, null, drag.layerId, drag.size)
     if (commit) {
       pushStroke(stroke)
       seed++
@@ -660,10 +750,11 @@ export function useCanvasView() {
     scale: number,
     ox: number,
     oy: number,
+    rot: { angle: number; cx: number; cy: number } | null = null,
   ) {
     const p = currentPage()
     if (!p || !ink) return
-    paintLayers(el, c, p, ink, scale, ox, oy)
+    paintLayers(el, c, p, ink, scale, ox, oy, false, scale, ox, oy, undefined, rot)
   }
 
   // --- page snapshot ---------------------------------------------------------
@@ -671,16 +762,18 @@ export function useCanvasView() {
   // blit it in one drawImage instead of replaying the whole page per frame
   // (flood fills read every pixel back — far too heavy per pointermove). It is
   // rebuilt only when content changes (snapDirty) or when zooming in past its
-  // resolution.
+  // resolution — except mid-pinch, where the blit upscales the existing raster
+  // and the high-res rebuild waits for the gesture to settle. Without that
+  // gate every pointermove replays the whole page into an ever-larger bitmap.
   const SNAP_HEADROOM = 2 // build at 2x the needed device scale so zoom stays crisp
-  const SNAP_MAX_W = 3200 // px cap; past it the blit upscales
+  const SNAP_MAX_DIM = 3200 // px cap on the largest side; past it the blit upscales
   let snap: { c: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null
   let snapScale = 0 // device px per page unit in the snapshot
   let snapDirty = true
 
   function ensureSnap() {
     if (!ink) return
-    const maxScale = SNAP_MAX_W / pw()
+    const maxScale = Math.min(SNAP_MAX_DIM / pw(), SNAP_MAX_DIM / ph())
     const want = Math.min(view.s * dpr * SNAP_HEADROOM, maxScale)
     if (!snap) {
       const c = document.createElement('canvas')
@@ -688,7 +781,7 @@ export function useCanvasView() {
       if (!c2) return
       snap = { c, ctx: c2 }
     }
-    if (!snapDirty && snapScale >= want * 0.999) return
+    if (!snapDirty && (gestureActive || snapScale >= want * 0.999)) return
     snapScale = Math.min(Math.max(want, snapScale), maxScale)
     const { c, ctx: sc } = snap
     c.width = Math.round(pw() * snapScale)
@@ -722,6 +815,7 @@ export function useCanvasView() {
           dpr * view.ox,
           dpr * view.oy,
           new Map([[layerPreview.value.id, layerPreview.value]]),
+          viewRot(),
         )
         drawTransformControls()
         return
@@ -733,7 +827,7 @@ export function useCanvasView() {
       ctx.drawImage(snap.c, 0, 0, pw(), ph())
       ctx.restore()
     } else {
-      replayPageInto(el, ctx, dpr * view.s, dpr * view.ox, dpr * view.oy)
+      replayPageInto(el, ctx, dpr * view.s, dpr * view.ox, dpr * view.oy, viewRot())
     }
     // Sheet center marker — a subtle cross in page space (pans/zooms with it).
     ctx.save()
@@ -752,7 +846,7 @@ export function useCanvasView() {
     // put the committed samples back.
     predRect = null
     if (drawing && liveStroke && curSamples.length) {
-      drawSamples({ tool: liveStroke.tool, color: liveStroke.color, pts: curPts }, curSamples, seed)
+      drawSamples(liveStroke, curSamples, seed)
     }
     drawTransformControls()
     drawGuide()
@@ -772,7 +866,12 @@ export function useCanvasView() {
     ctx.shadowColor = 'rgba(0,0,0,0.35)'
     ctx.shadowBlur = 14 * dpr
     ctx.shadowOffsetY = 6 * dpr
-    ctx.drawImage(cutPending.piece, cutPending.dx * dpr * view.s, cutPending.dy * dpr * view.s)
+    // The drag delta is stored in page units; rotate it into screen space.
+    const cos = Math.cos(view.angle)
+    const sin = Math.sin(view.angle)
+    const dx = (cutPending.dx * cos - cutPending.dy * sin) * dpr * view.s
+    const dy = (cutPending.dx * sin + cutPending.dy * cos) * dpr * view.s
+    ctx.drawImage(cutPending.piece, dx, dy)
     ctx.restore()
   }
 
@@ -815,11 +914,23 @@ export function useCanvasView() {
     curPts = [q]
     curSamples = []
     predRect = null
-    liveStroke = { tool: store.tool, color: store.color }
+    renderCont = newRenderCont()
+    // The live stroke carries the brush snapshot from the start so what the
+    // user sees while drawing is exactly what the committed replay paints.
+    liveStroke = {
+      tool: store.tool,
+      color: store.color,
+      pts: curPts,
+      size: curStrokeSize,
+      stab: curStab >= 0 ? curStab : undefined,
+      layerId: curLayerId,
+      ...(INK_TOOLS.includes(store.tool) ? brushSnapshot(store.tool) : null),
+    }
     drawing = true
     const s = ink.addPoint(strokeId, q.x, q.y, q.t, q.p)
     curSamples.push(...s)
-    drawSamples({ tool: store.tool, color: store.color, pts: curPts }, s, seed)
+    drawSamples(liveStroke, s, seed, renderCont)
+    if (liveStroke.tool === 'eraser') scheduleRepaint()
   }
 
   function addStrokePoint(pt: Pt) {
@@ -828,7 +939,10 @@ export function useCanvasView() {
     curPts.push(q)
     const s = ink.addPoint(strokeId, q.x, q.y, q.t, q.p)
     curSamples.push(...s)
-    drawSamples({ tool: store.tool, color: store.color, pts: curPts }, s, seed)
+    if (liveStroke) {
+      drawSamples(liveStroke, s, seed, renderCont)
+      if (liveStroke.tool === 'eraser') scheduleRepaint()
+    }
   }
 
   function finishStroke(commit: boolean) {
@@ -839,31 +953,35 @@ export function useCanvasView() {
     const strokeLayer = pageLayers().find((item) => item.id === curLayerId)
     const toMask = store.maskEdit && !!strokeLayer?.mask && INK_TOOLS.includes(store.tool)
     const stroke: Stroke = {
-      tool: store.tool,
-      color: store.color,
-      pts: curPts,
-      size: curStrokeSize,
-      stab: curStab >= 0 ? curStab : undefined,
-      layerId: curLayerId,
+      ...liveStroke!,
       mask: toMask || undefined,
       alphaLock: !toMask && strokeLayer?.alphaLock && store.tool !== 'eraser' ? true : undefined,
-      ...(INK_TOOLS.includes(store.tool) ? brushSnapshot(store.tool) : null),
     }
-    drawSamples(stroke, tail, seed)
-    if (commit && curPts.length) {
-      pushStroke(stroke) // strokes watcher -> refresh() rebuilds the snapshot
-      for (const pts of mirroredPtSets(curPts, pageSize(currentPage())))
-        pushStroke({ ...stroke, pts })
-      seed++
-    } else {
-      reRender()
-    }
+    const strokePts = curPts
+    drawSamples(stroke, tail, seed, renderCont)
+    if (stroke.tool === 'eraser') scheduleRepaint()
+    // Clear the live state before committing: the strokes watcher repaints
+    // synchronously, and a still-live stroke would be painted twice.
     drawing = false
     strokeId = -1
     curPts = []
     curSamples = []
     liveStroke = null
     curLayerId = ''
+    renderCont = newRenderCont()
+    if (stroke.tool === 'eraser') {
+      // The live preview erased into the cached raster — drop it so the
+      // committed stroke replays from a clean layer instead.
+      clearLayerRasterCache(store.pageId ?? undefined)
+      snapDirty = true
+    }
+    if (commit && strokePts.length) {
+      pushStroke(stroke) // strokes watcher -> refresh() rebuilds the snapshot
+      for (const pts of mirroredPtSets(strokePts, pageSize(currentPage())))
+        pushStroke({ ...stroke, pts })
+      seed++
+    }
+    reRender()
   }
 
   // Predicted pointer events are painted ahead of the real input to hide the
@@ -902,25 +1020,32 @@ export function useCanvasView() {
     ctx.rect(r.x, r.y, r.w, r.h)
     ctx.clip()
     if (liveStroke && curSamples.length) {
-      drawSamples({ tool: liveStroke.tool, color: liveStroke.color, pts: curPts }, curSamples, seed)
+      drawSamples(liveStroke, curSamples, seed)
     }
     ctx.restore()
   }
 
   function paintPredicted(e: PointerEvent) {
-    if (!ink || !drawing || typeof e.getPredictedEvents !== 'function') return
+    if (!ink || !drawing || !liveStroke || typeof e.getPredictedEvents !== 'function') return
+    // The eraser's preview mutates the layer raster — speculative paint
+    // there couldn't be rolled back, and it doesn't need latency hiding.
+    if (liveStroke.tool === 'eraser') return
     const { left, top } = canvas.value!.getBoundingClientRect()
     const predicted = e.getPredictedEvents()
     if (!predicted.length) return
     let acc: { x: number; y: number; w: number; h: number } | null = null
+    // Predicted batches stitch onto the real stroke (and each other) but
+    // must not advance the real render continuation.
+    const pcont = { ...renderCont }
     for (const ev of predicted) {
+      const local = toLocalPoint({ x: ev.clientX - left, y: ev.clientY - top })
       const q = toLayerPt(
-        { x: ev.clientX - left, y: ev.clientY - top, t: ev.timeStamp, p: ev.pressure || 0.5 },
+        { x: local.x, y: local.y, t: ev.timeStamp, p: ev.pressure || 0.5 },
         curLayerId,
       )
       const s = ink.predict(strokeId, q.x, q.y, q.t, q.p)
       if (!s.length) continue
-      drawSamples({ tool: store.tool, color: store.color, pts: curPts }, s, seed)
+      drawSamples(liveStroke, s, seed, pcont)
       const b = layerRectToPage(curLayerId, sampleBounds(s))
       acc = acc
         ? {
@@ -935,28 +1060,40 @@ export function useCanvasView() {
   }
 
   // ---- gestures ----
-  function gestureMetrics(): { dist: number; x: number; y: number } | null {
+  function gestureMetrics(): { dist: number; angle: number; x: number; y: number } | null {
     if (pointers.size !== 2) return null
     const [a, b] = [...pointers.values()]
+    // Chord and midpoint in raw screen space: the chord's rotation drives
+    // view.angle; midpoints map to unrotated space per-frame in the handler.
     return {
-      dist: Math.hypot(b.x - a.x, b.y - a.y),
-      x: (a.x + b.x) / 2,
-      y: (a.y + b.y) / 2,
+      dist: Math.hypot(b.gx - a.gx, b.gy - a.gy),
+      angle: Math.atan2(b.gy - a.gy, b.gx - a.gx),
+      x: (a.gx + b.gx) / 2,
+      y: (a.gy + b.gy) / 2,
     }
   }
 
   function onPointerDown(e: PointerEvent) {
     const el = canvas.value!
     el.setPointerCapture(e.pointerId)
-    const { left, top } = el.getBoundingClientRect()
-    const x = e.clientX - left
-    const y = e.clientY - top
+    const rect = el.getBoundingClientRect()
+    const { x, y } = toLocalPoint({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    })
 
     if (e.pointerType === 'pen') penActive = true
     // palm rejection: ignore touches while a pen is drawing
     if (e.pointerType === 'touch' && penActive && drawing) return
 
-    pointers.set(e.pointerId, { x, y, t: e.timeStamp, type: e.pointerType })
+    pointers.set(e.pointerId, {
+      x,
+      y,
+      t: e.timeStamp,
+      type: e.pointerType,
+      gx: e.clientX,
+      gy: e.clientY,
+    })
 
     if (pointers.size === 2) {
       // second finger down -> cancel stroke, start rewind/pinch gesture
@@ -983,7 +1120,9 @@ export function useCanvasView() {
       const m = gestureMetrics()!
       gestureActive = true
       gDist0 = m.dist
-      gCenter0 = { x: m.x, y: m.y }
+      gAngle0 = m.angle
+      // Midpoints are tracked in canvas-local space for toLocalPoint.
+      gCenter0 = { x: m.x - rect.left, y: m.y - rect.top }
       return
     }
 
@@ -1128,8 +1267,7 @@ export function useCanvasView() {
   function onPointerMove(e: PointerEvent) {
     const rec = pointers.get(e.pointerId)
     const { left, top } = canvas.value!.getBoundingClientRect()
-    const x = e.clientX - left
-    const y = e.clientY - top
+    const { x, y } = toLocalPoint({ x: e.clientX - left, y: e.clientY - top })
     if (!rec) {
       if (e.pointerType === 'mouse') updateCanvasCursor(x, y)
       return
@@ -1137,6 +1275,8 @@ export function useCanvasView() {
     rec.x = x
     rec.y = y
     rec.t = e.timeStamp
+    rec.gx = e.clientX
+    rec.gy = e.clientY
 
     if (guideDrag) {
       const px = toPageX(x)
@@ -1164,21 +1304,24 @@ export function useCanvasView() {
         Math.max(minS, (view.s * m.dist) / Math.max(gDist0, 1)),
       )
       const k = nextS / view.s
-      const c = clampOffset(
-        m.x - (gCenter0.x - view.ox) * k,
-        m.y - (gCenter0.y - view.oy) * k,
-        nextS,
-        w,
-        h,
-        pageSize(currentPage()),
-      )
+      let angleDelta = m.angle - gAngle0
+      if (angleDelta > Math.PI) angleDelta -= Math.PI * 2
+      if (angleDelta < -Math.PI) angleDelta += Math.PI * 2
+      const nextAngle = view.angle + angleDelta
+      // Keep the page point under the fingers' previous screen midpoint under
+      // the new midpoint: local coords map at the pre/post-rotation angles.
+      const prev = toLocalPoint(gCenter0)
+      const next = toLocalPoint({ x: m.x - left, y: m.y - top }, nextAngle)
       view.s = nextS
-      view.ox = c.ox
-      view.oy = c.oy
+      view.ox = next.x - (prev.x - view.ox) * k
+      view.oy = next.y - (prev.y - view.oy) * k
+      if (angleDelta) view.angle = nextAngle
       gDist0 = m.dist
-      gCenter0 = { x: m.x, y: m.y }
-      syncViewUI()
-      reRender()
+      gAngle0 = m.angle
+      gCenter0 = { x: m.x - left, y: m.y - top }
+      syncZoomState()
+      // Coalesce repaints to one per frame — pointermove can outpace vsync.
+      scheduleRepaint()
       return
     }
 
@@ -1214,18 +1357,11 @@ export function useCanvasView() {
     }
 
     if (panStart) {
-      const { w, h } = canvasSize()
-      const c = clampOffset(
-        view.ox + (x - panStart.x),
-        view.oy + (y - panStart.y),
-        view.s,
-        w,
-        h,
-        pageSize(currentPage()),
-      )
-      if (c.ox !== view.ox || c.oy !== view.oy) {
-        view.ox = c.ox
-        view.oy = c.oy
+      const ox = view.ox + (x - panStart.x)
+      const oy = view.oy + (y - panStart.y)
+      if (ox !== view.ox || oy !== view.oy) {
+        view.ox = ox
+        view.oy = oy
         reRender()
       }
       panStart = { x, y }
@@ -1265,9 +1401,8 @@ export function useCanvasView() {
     const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : null
     const events = coalesced?.length ? coalesced : [e]
     for (const ev of events) {
-      const cx = ev.clientX - left
-      const cy = ev.clientY - top
-      addStrokePoint({ x: cx, y: cy, t: ev.timeStamp, p: ev.pressure || 0.5 })
+      const point = toLocalPoint({ x: ev.clientX - left, y: ev.clientY - top })
+      addStrokePoint({ x: point.x, y: point.y, t: ev.timeStamp, p: ev.pressure || 0.5 })
     }
     paintPredicted(e)
   }
@@ -1312,6 +1447,7 @@ export function useCanvasView() {
     const displayScale = dpr * view.s
     const displayOx = dpr * view.ox
     const displayOy = dpr * view.oy
+    const rot = viewRot()
     paintLayers(
       source,
       sourceCtx,
@@ -1324,8 +1460,12 @@ export function useCanvasView() {
       displayScale,
       displayOx,
       displayOy,
+      undefined,
+      rot,
     )
-    const piece = extractRegion(source, sourceCtx, path, displayScale, displayOx, displayOy, null)
+    // extractRegion clips by device-px coordinates, so the page-space cut
+    // path goes through the full view transform (including rotation).
+    const piece = extractRegion(source, sourceCtx, path.map(viewToDevice), 1, 0, 0, null)
     paintPaper(baseCtx)
     const previewPage: Page = {
       ...page,
@@ -1346,6 +1486,8 @@ export function useCanvasView() {
       displayScale,
       displayOx,
       displayOy,
+      undefined,
+      rot,
     )
 
     const pieceCtx = piece?.getContext('2d', { willReadFrequently: true })
@@ -1397,22 +1539,25 @@ export function useCanvasView() {
     if (gestureActive) {
       if (pointers.size < 2) {
         gestureActive = false
-        syncViewUI()
+        syncZoomState()
         saveView()
+        // Rebuilds the snapshot at the final zoom level — during the gesture
+        // the blit upscaled the existing raster (slightly soft, but fast).
+        reRender()
       }
       return
     }
 
     if (panStart) {
       panStart = null
-      syncViewUI()
+      syncZoomState()
       saveView()
       return
     }
 
     if (layerTransformDrag) {
       const { left, top } = canvas.value!.getBoundingClientRect()
-      flushLayerTransform({ x: e.clientX - left, y: e.clientY - top })
+      flushLayerTransform(toLocalPoint({ x: e.clientX - left, y: e.clientY - top }))
       const drag = layerTransformDrag
       const preview = layerPreview.value
       layerTransformDrag = null
@@ -1427,7 +1572,8 @@ export function useCanvasView() {
       }
       if (e.pointerType === 'mouse') {
         const { left, top } = canvas.value!.getBoundingClientRect()
-        updateCanvasCursor(e.clientX - left, e.clientY - top)
+        const local = toLocalPoint({ x: e.clientX - left, y: e.clientY - top })
+        updateCanvasCursor(local.x, local.y)
       }
       return
     }
@@ -1636,6 +1782,7 @@ export function useCanvasView() {
 
   onBeforeUnmount(() => {
     cancelLayerTransformFrame()
+    if (repaintRaf) cancelAnimationFrame(repaintRaf)
     sizeObserver?.disconnect()
     window.removeEventListener('resize', resize)
     window.removeEventListener('keydown', onKeyDown)
@@ -1644,6 +1791,7 @@ export function useCanvasView() {
 
   return {
     canvas,
+    view,
     navClass,
     journal,
     pageIndex,
@@ -1654,14 +1802,8 @@ export function useCanvasView() {
     brushMarkWidth,
     TRAY_HEIGHT,
     INK_TOOLS,
-    ZOOM_STEP,
-    isFit,
-    canZoomIn,
-    canZoomOut,
     selectedLayer,
     layerPreview,
-    zoomBy,
-    resetView,
     onPointerDown,
     onPointerMove,
     onPointerUp,

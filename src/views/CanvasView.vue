@@ -8,18 +8,13 @@ import { useCanvasView } from '../composables/useCanvasView'
 const { t } = useI18n()
 const {
   canvas,
+  view,
   navClass,
   journal,
   pageIndex,
   layerPanelOpen,
   layerThumb,
   TRAY_HEIGHT,
-  ZOOM_STEP,
-  isFit,
-  canZoomIn,
-  canZoomOut,
-  zoomBy,
-  resetView,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -40,16 +35,18 @@ const {
   <div class="canvas-view" :style="{ '--tray-height': `${TRAY_HEIGHT}px` }">
     <BrushRail />
 
-    <canvas
-      ref="canvas"
-      :class="[navClass, { grab: store.tool === 'move' }]"
-      @pointerdown="onPointerDown"
-      @pointermove="onPointerMove"
-      @pointerup="onPointerUp"
-      @pointercancel="onPointerUp"
-      @pointerleave="onPointerUp"
-      @contextmenu.prevent
-    />
+    <div class="viewport">
+      <canvas
+        ref="canvas"
+        :class="[navClass, { grab: store.tool === 'move' }]"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+        @pointerleave="onPointerUp"
+        @contextmenu.prevent
+      />
+    </div>
 
     <button class="close-btn" @click="closeToJournal" :title="t('canvas.close')">
       <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -79,18 +76,6 @@ const {
 
     <LayerPanel v-model:open="layerPanelOpen" :thumb="layerThumb" />
 
-    <div class="zoom-actions">
-      <button v-if="!isFit" class="round-btn fit-btn" @click="resetView" :title="t('canvas.zoomFit')">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H4v5 M15 4h5v5 M9 20H4v-5 M15 20h5v-5"/></svg>
-      </button>
-      <button class="round-btn" :disabled="!canZoomIn" @click="zoomBy(ZOOM_STEP)" :title="t('canvas.zoomIn')">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      </button>
-      <button class="round-btn" :disabled="!canZoomOut" @click="zoomBy(1 / ZOOM_STEP)" :title="t('canvas.zoomOut')">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      </button>
-    </div>
-
     <ToolTray @photo="importPhoto" />
   </div>
 </template>
@@ -101,12 +86,18 @@ const {
   height: 100%;
   background: #2a2a2c;
 }
+.viewport {
+  position: absolute;
+  inset: 0 0 var(--tray-height) 0;
+  overflow: hidden;
+}
 canvas {
   display: block;
   width: 100%;
   /* Keep the drawing viewport above the overlaying tool tray. */
-  height: calc(100% - var(--tray-height));
+  height: 100%;
   touch-action: none;
+  transform-origin: 50% 50%;
 }
 canvas.from-right { animation: slide-from-right 0.28s ease; }
 canvas.from-left { animation: slide-from-left 0.28s ease; }
@@ -149,15 +140,6 @@ canvas.grab { cursor: grab; }
 }
 .round-btn:disabled { opacity: 0.35; cursor: default; }
 .round-btn.selected { color: #6dbbcf; background: rgba(40, 40, 42, .95); }
-.zoom-actions {
-  position: absolute;
-  right: 18px;
-  bottom: 102px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  z-index: 20;
-}
 .page-badge {
   position: absolute;
   top: 26px;
