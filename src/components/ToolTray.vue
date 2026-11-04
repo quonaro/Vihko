@@ -1,26 +1,14 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import {
-  store,
-  palette,
-  addPage,
-  openPage,
-  clearPage,
-  brushOf,
-  applyBrushPreset,
-  saveBrushPreset,
-  pushOp,
-  currentPage,
-  activeLayer,
-} from '../store'
+import { ref } from 'vue'
+import { store, palette, addPage, openPage, clearPage } from '../store'
 import { mixColors } from '../ink/mix'
+import { INK_TOOLS } from '../ink/tools'
 import ColorPicker from './ColorPicker.vue'
-import MobileSlider from './MobileSlider.vue'
-import { BLEND_MODES, BRUSH_TIPS, FILTER_KINDS } from '../types'
-import type { BlendMode, BrushTip, FilterKind, ShapeKind, ToolId } from '../types'
+import ShapeMenu from './ShapeMenu.vue'
+import BrushPanel from './BrushPanel.vue'
+import FilterPanel from './FilterPanel.vue'
+import type { ToolId } from '../types'
 import { useI18n } from 'vue-i18n'
-
-const INK_TOOLS: ToolId[] = ['eraser', 'draw', 'sketch', 'outline', 'write', 'color']
 
 const { t } = useI18n()
 const emit = defineEmits<{ photo: [file: File] }>()
@@ -43,31 +31,9 @@ const tools: { id: ToolId }[] = [
 const fileInput = ref<HTMLInputElement>()
 const pickerOpen = ref(false)
 const shapeMenuOpen = ref(false)
-const shapeMenu = ref<HTMLElement>()
-const shapeOptions: ShapeKind[] = ['rectangle', 'ellipse', 'line', 'arrow', 'triangle', 'diamond']
 
 const brushPanelOpen = ref(false)
 const filterPanelOpen = ref(false)
-const activeBrush = () => brushOf(store.tool)
-
-// Filter tool state — committed as a raster op on the active layer.
-const filterKind = ref<FilterKind>('blur')
-const filterAmount = ref(4)
-const filterAdjust = ref({ brightness: 0, contrast: 0, saturation: 0 })
-
-function applyFilter() {
-  const p = currentPage()
-  if (!p) return
-  const layer = activeLayer()
-  pushOp({
-    kind: 'filter',
-    filter: filterKind.value,
-    amount: filterAmount.value,
-    ...(filterKind.value === 'adjust' ? filterAdjust.value : null),
-    after: p.strokes.length,
-    alphaLock: layer?.alphaLock ? true : undefined,
-  })
-}
 
 function selectTool(id: ToolId) {
   if (id === 'filter') {
@@ -95,33 +61,6 @@ function selectTool(id: ToolId) {
   if (id === 'shapes') shapeMenuOpen.value = !shapeMenuOpen.value
   else shapeMenuOpen.value = false
 }
-
-function chooseShape(shape: ShapeKind) {
-  store.shape = shape
-  store.tool = 'shapes'
-  shapeMenuOpen.value = false
-}
-
-function closeShapeMenuOutside(e: PointerEvent) {
-  const target = e.target
-  if (
-    target instanceof Element &&
-    (target.closest('.shape-menu') || target.closest('.tool[aria-expanded]'))
-  )
-    return
-  shapeMenuOpen.value = false
-}
-
-watch(shapeMenuOpen, async (open) => {
-  if (open) {
-    await nextTick()
-    shapeMenu.value?.focus()
-    document.addEventListener('pointerdown', closeShapeMenuOutside)
-  } else {
-    document.removeEventListener('pointerdown', closeShapeMenuOutside)
-  }
-})
-onBeforeUnmount(() => document.removeEventListener('pointerdown', closeShapeMenuOutside))
 
 function pickPhoto() {
   fileInput.value?.click()
@@ -263,39 +202,7 @@ function onDotCancel() {
       </button>
     </div>
 
-    <Teleport to="body">
-      <div v-if="shapeMenuOpen">
-        <div
-          ref="shapeMenu"
-          class="shape-menu"
-          role="menu"
-          tabindex="-1"
-          :aria-label="t('shapeMenu.title')"
-          @keydown.esc.stop.prevent="shapeMenuOpen = false"
-        >
-          <button
-            v-for="shape in shapeOptions"
-            :key="shape"
-            class="shape-option"
-            :class="{ selected: store.shape === shape }"
-            role="menuitemradio"
-            :aria-checked="store.shape === shape"
-            :aria-label="t(`shapeMenu.${shape}`)"
-            @click="chooseShape(shape)"
-          >
-            <svg viewBox="0 0 32 32" aria-hidden="true">
-              <rect v-if="shape === 'rectangle'" x="5" y="7" width="22" height="18" />
-              <ellipse v-else-if="shape === 'ellipse'" cx="16" cy="16" rx="11" ry="8" />
-              <path v-else-if="shape === 'line'" d="M5 24 27 8" />
-              <path v-else-if="shape === 'arrow'" d="M5 24 25 9m-9 0h9v9" />
-              <path v-else-if="shape === 'triangle'" d="m16 6 12 20H4L16 6Z" />
-              <path v-else d="m16 4 12 12-12 12L4 16 16 4Z" />
-            </svg>
-            <span>{{ t(`shapeMenu.${shape}`) }}</span>
-          </button>
-        </div>
-      </div>
-    </Teleport>
+    <ShapeMenu v-model:open="shapeMenuOpen" />
 
     <button
       class="swatch"
@@ -305,119 +212,9 @@ function onDotCancel() {
     />
     <ColorPicker v-model:open="pickerOpen" />
 
-    <MobileSlider
-      :open="brushPanelOpen"
-      :title="t(`tool.${store.tool}`)"
-      size="sm"
-      @update:open="brushPanelOpen = $event"
-    >
-      <div class="brush-panel">
-        <label>{{ t('canvas.size') }} <span>{{ Math.round(activeBrush().size * 100) }}%</span></label>
-        <input
-          type="range" min="0.25" max="4" step="0.05" :value="activeBrush().size"
-          @input="activeBrush().size = Number(($event.target as HTMLInputElement).value)"
-        />
-        <label>{{ t('brush.opacity') }} <span>{{ Math.round(activeBrush().opacity * 100) }}%</span></label>
-        <input
-          type="range" min="0.05" max="1" step="0.01" :value="activeBrush().opacity"
-          @input="activeBrush().opacity = Number(($event.target as HTMLInputElement).value)"
-        />
-        <label>{{ t('canvas.stabilize') }} <span>{{ Math.round(activeBrush().stab * 100) }}%</span></label>
-        <input
-          type="range" min="0" max="1" step="0.05" :value="activeBrush().stab"
-          @input="activeBrush().stab = Number(($event.target as HTMLInputElement).value)"
-        />
-        <label>{{ t('layers.blend') }}</label>
-        <select
-          :value="activeBrush().blend ?? 'source-over'"
-          @change="activeBrush().blend = ($event.target as HTMLSelectElement).value as BlendMode"
-        >
-          <option v-for="m in BLEND_MODES" :key="m" :value="m">{{ t(`layers.blends.${m}`) }}</option>
-        </select>
-        <label>{{ t('brush.tip') }}</label>
-        <select
-          :value="activeBrush().tip ?? 'round'"
-          @change="activeBrush().tip = ($event.target as HTMLSelectElement).value as BrushTip"
-        >
-          <option v-for="tip in BRUSH_TIPS" :key="tip" :value="tip">{{ t(`brush.tips.${tip}`) }}</option>
-        </select>
-        <template v-if="activeBrush().tip && activeBrush().tip !== 'round'">
-          <label>{{ t('brush.spacing') }} <span>{{ Math.round((activeBrush().spacing ?? 0.3) * 100) }}%</span></label>
-          <input
-            type="range" min="0.05" max="1" step="0.05" :value="activeBrush().spacing ?? 0.3"
-            @input="activeBrush().spacing = Number(($event.target as HTMLInputElement).value)"
-          />
-          <label>{{ t('brush.jitter') }} <span>{{ Math.round((activeBrush().jitter ?? 0) * 100) }}%</span></label>
-          <input
-            type="range" min="0" max="1" step="0.05" :value="activeBrush().jitter ?? 0"
-            @input="activeBrush().jitter = Number(($event.target as HTMLInputElement).value)"
-          />
-          <label>{{ t('brush.scatter') }} <span>{{ Math.round((activeBrush().scatter ?? 0) * 100) }}%</span></label>
-          <input
-            type="range" min="0" max="1" step="0.05" :value="activeBrush().scatter ?? 0"
-            @input="activeBrush().scatter = Number(($event.target as HTMLInputElement).value)"
-          />
-          <label class="brush-flag">
-            <input
-              type="checkbox"
-              :checked="!!activeBrush().angle"
-              @change="activeBrush().angle = ($event.target as HTMLInputElement).checked ? 1 : 0"
-            />
-            {{ t('brush.angle') }}
-          </label>
-        </template>
-        <template v-if="store.tool === 'color'">
-          <label>{{ t('brush.wet') }} <span>{{ Math.round((activeBrush().wet ?? 0.6) * 100) }}%</span></label>
-          <input
-            type="range" min="0" max="1" step="0.05" :value="activeBrush().wet ?? 0.6"
-            @input="activeBrush().wet = Number(($event.target as HTMLInputElement).value)"
-          />
-        </template>
-        <label>{{ t('brush.presets') }}</label>
-        <div class="brush-presets">
-          <button
-            v-for="p in store.brushPresets"
-            :key="p.id"
-            class="preset"
-            @click="applyBrushPreset(p)"
-          >
-            {{ t(p.name) }}
-          </button>
-          <button class="preset add" :title="t('brush.savePreset')" @click="saveBrushPreset()">+</button>
-        </div>
-      </div>
-    </MobileSlider>
+    <BrushPanel v-model:open="brushPanelOpen" />
 
-    <MobileSlider
-      :open="filterPanelOpen"
-      :title="t('filter.title')"
-      size="sm"
-      @update:open="filterPanelOpen = $event"
-    >
-      <div class="brush-panel">
-        <label>{{ t('filter.kind') }}</label>
-        <select v-model="filterKind">
-          <option v-for="k in FILTER_KINDS" :key="k" :value="k">{{ t(`filter.${k}`) }}</option>
-        </select>
-        <template v-if="filterKind === 'blur'">
-          <label>{{ t('filter.radius') }} <span>{{ filterAmount }}px</span></label>
-          <input type="range" min="1" max="16" step="1" v-model.number="filterAmount" />
-        </template>
-        <template v-else-if="filterKind === 'sharpen'">
-          <label>{{ t('filter.amount') }} <span>{{ Math.round(filterAmount * 100) }}%</span></label>
-          <input type="range" min="0.2" max="2" step="0.1" v-model.number="filterAmount" />
-        </template>
-        <template v-else>
-          <label>{{ t('filter.brightness') }} <span>{{ Math.round(filterAdjust.brightness * 100) }}%</span></label>
-          <input type="range" min="-1" max="1" step="0.05" v-model.number="filterAdjust.brightness" />
-          <label>{{ t('filter.contrast') }} <span>{{ Math.round(filterAdjust.contrast * 100) }}%</span></label>
-          <input type="range" min="-1" max="1" step="0.05" v-model.number="filterAdjust.contrast" />
-          <label>{{ t('filter.saturation') }} <span>{{ Math.round(filterAdjust.saturation * 100) }}%</span></label>
-          <input type="range" min="-1" max="1" step="0.05" v-model.number="filterAdjust.saturation" />
-        </template>
-        <button class="filter-apply" @click="applyFilter">{{ t('filter.apply') }}</button>
-      </div>
-    </MobileSlider>
+    <FilterPanel v-model:open="filterPanelOpen" />
 
     <div class="dots">
       <button
@@ -515,44 +312,6 @@ function onDotCancel() {
   border-top-color: #2a8097;
 }
 .tool.active svg { transform: translateY(-6px); }
-.shape-menu {
-  position: fixed;
-  z-index: 100;
-  left: 50%;
-  bottom: calc(var(--tray-height, 86px) + 10px);
-  transform: translateX(-50%);
-  display: grid;
-  grid-template-columns: repeat(3, minmax(82px, 1fr));
-  gap: 5px;
-  width: min(340px, 100%);
-  padding: 9px;
-  border: 1px solid var(--chrome-border);
-  border-radius: 16px;
-  background: var(--chrome-bg);
-  color: var(--chrome-text);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
-}
-.shape-option {
-  min-height: 72px;
-  border-radius: 10px;
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 5px;
-  color: inherit;
-  font-size: 11px;
-}
-.shape-option svg {
-  width: 28px;
-  height: 28px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.shape-option.selected { background: var(--chrome-hover); color: #2a8097; }
-.shape-option:focus-visible { outline: 2px solid #2a8097; outline-offset: 1px; }
 .swatch {
   width: 52px;
   height: 52px;
@@ -589,60 +348,5 @@ function onDotCancel() {
   opacity: 0.9;
   box-shadow: 0 2px 8px rgba(0,0,0,0.5);
 }
-.brush-panel {
-  display: grid;
-  gap: 7px;
-  padding: 6px 14px 14px;
-}
-.brush-panel label {
-  display: flex;
-  justify-content: space-between;
-  color: var(--chrome-muted);
-  font-size: 11px;
-}
-.brush-panel label span { color: var(--layer-accent); font-variant-numeric: tabular-nums; }
-.brush-panel input[type="range"] { width: 100%; margin: 0; accent-color: var(--layer-accent); }
-.brush-panel select {
-  width: 100%;
-  height: 30px;
-  color: var(--chrome-text);
-  background: var(--chrome-control-bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: 8px;
-  font-size: 12px;
-}
-.brush-flag {
-  justify-content: flex-start !important;
-  align-items: center;
-  gap: 8px;
-  color: var(--chrome-text) !important;
-  font-size: 12px !important;
-  cursor: pointer;
-}
-.brush-flag input { accent-color: var(--layer-accent); margin: 0; }
-.brush-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.preset {
-  padding: 7px 12px;
-  border-radius: 16px;
-  color: var(--chrome-text);
-  background: var(--chrome-control-bg);
-  border: 1px solid var(--chrome-border);
-  font-size: 12px;
-}
-@media (hover: hover) {
-  .preset:hover { background: var(--chrome-hover); }
-}
-.preset.add { min-width: 34px; font-size: 16px; line-height: 1; }
-.filter-apply {
-  margin-top: 6px;
-  padding: 9px;
-  border-radius: 10px;
-  color: #fff;
-  background: var(--layer-accent, #2a8097);
-  font-size: 13px;
-}
+
 </style>
