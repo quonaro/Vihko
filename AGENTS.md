@@ -210,6 +210,12 @@ screens.
   VACUUMs on open to reclaim space from overwritten journal blobs);
   browser development continues to use localStorage.
 - `src/covers.ts` — generated, local cover-art presets for the cover picker.
+- `src/router.ts` — tiny history-API router: two-way sync between the URL and
+  `store.view`/`journalId`/`pageId`/`journalMode` (`/` shelf,
+  `/journal/<id>[/overview]`, `/journal/<id>/page/<pageId>` canvas), popstate
+  handling, and a `vihko:nav` localStorage copy of the last position that
+  `initRouter` restores when booting on `/` (the native WebView always starts
+  there; a dev-server reload keeps the deep link).
 - `src/views/` — ShelfView (search, journal actions, cover picker) →
   JournalView (page fan / two-page spread) → CanvasView.
 - `refs/` — reference screenshots (not shipped).
