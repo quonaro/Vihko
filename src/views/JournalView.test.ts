@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import JournalView from './JournalView.vue'
 import { i18n } from '../i18n'
 import { closeToJournal, openPage, store } from '../store'
+import { PAGE_SIZE_PRESETS } from '../pageSpace'
 import type { Journal } from '../types'
 
 // jsdom has no WebGL, so a fake stands in for JournalScene. It mirrors the
@@ -89,6 +90,7 @@ beforeEach(() => {
   store.journalMode = 'stack'
   store.journalPageIdx = 0
   store.journalOverviewIdx = 0
+  store.pageSize = 'spread'
 })
 
 describe('JournalView', () => {
@@ -104,16 +106,56 @@ describe('JournalView', () => {
 
   it('switches between stack and overview and advances the page counter', async () => {
     const w = mountJournal()
-    expect(w.find('.page-pos').text()).toBe('1 / 3')
+    expect(w.find('.page-number').text()).toBe('1 / 3')
     await w.find('.flip.next').trigger('click')
-    expect(w.find('.page-pos').text()).toBe('2 / 3')
+    expect(w.find('.page-number').text()).toBe('2 / 3')
     await w.find('.flip.prev').trigger('click')
-    expect(w.find('.page-pos').text()).toBe('1 / 3')
+    expect(w.find('.page-number').text()).toBe('1 / 3')
     await w.findAll('.view-modes .icon-btn')[1].trigger('click')
     expect(w.find('.page-pos').exists()).toBe(false)
     expect(w.find('.flip.next').exists()).toBe(false)
     await w.findAll('.view-modes .icon-btn')[0].trigger('click')
-    expect(w.find('.page-pos').text()).toBe('1 / 3')
+    expect(w.find('.page-number').text()).toBe('1 / 3')
+  })
+
+  it('shows the size type of the currently selected page beside its counter', async () => {
+    const portrait = PAGE_SIZE_PRESETS.find((preset) => preset.id === 'portrait')!
+    store.journals[0].pages[1].w = portrait.w
+    store.journals[0].pages[1].h = portrait.h
+    const w = mountJournal()
+
+    expect(w.find('.page-kind').text()).toContain(i18n.global.t('journal.size.spread'))
+    await w.find('.flip.next').trigger('click')
+    expect(w.find('.page-number').text()).toBe('2 / 3')
+    expect(w.find('.page-kind').text()).toContain(i18n.global.t('journal.size.portrait'))
+  })
+
+  it('chooses the new page size from a custom modal selector', async () => {
+    const w = mountJournal()
+
+    await w.find('.page-size').trigger('click')
+    const options = document.body.querySelectorAll<HTMLButtonElement>('.page-size-option')
+    expect(options).toHaveLength(PAGE_SIZE_PRESETS.length)
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
+
+    options[2].click()
+    await flushPromises()
+
+    expect(store.pageSize).toBe('square')
+    expect(w.find('.page-size').text()).toContain(i18n.global.t('journal.size.square'))
+    expect(document.body.querySelector('.page-size-option')).toBeNull()
+  })
+
+  it('uses the selected size for the next page', async () => {
+    const w = mountJournal()
+
+    await w.find('.page-size').trigger('click')
+    document.body.querySelectorAll<HTMLButtonElement>('.page-size-option')[1].click()
+    await flushPromises()
+    await w.find('.round').trigger('click')
+
+    const portrait = PAGE_SIZE_PRESETS.find((preset) => preset.id === 'portrait')!
+    expect(store.journals[0].pages.at(-1)).toMatchObject({ w: portrait.w, h: portrait.h })
   })
 
   it('keeps the last page reachable and stops turning at the stack ends', async () => {
@@ -121,14 +163,14 @@ describe('JournalView', () => {
     const w = mountJournal()
     expect(w.find('.flip.prev').attributes('disabled')).toBeDefined()
     await w.find('.flip.next').trigger('click')
-    expect(w.find('.page-pos').text()).toBe('2 / 4')
+    expect(w.find('.page-number').text()).toBe('2 / 4')
     await w.find('.flip.next').trigger('click')
-    expect(w.find('.page-pos').text()).toBe('3 / 4')
+    expect(w.find('.page-number').text()).toBe('3 / 4')
     await w.find('.flip.next').trigger('click')
-    expect(w.find('.page-pos').text()).toBe('4 / 4')
+    expect(w.find('.page-number').text()).toBe('4 / 4')
     expect(w.find('.flip.next').attributes('disabled')).toBeDefined()
     await w.find('.flip.prev').trigger('click')
-    expect(w.find('.page-pos').text()).toBe('3 / 4')
+    expect(w.find('.page-number').text()).toBe('3 / 4')
   })
 
   it('returns from editing to the overview focused on the edited page', async () => {
@@ -157,7 +199,7 @@ describe('JournalView', () => {
     expect(store.journalMode).toBe('stack')
     expect(store.journalPageIdx).toBe(2)
     expect(returned.findAll('.view-modes .icon-btn')[0].classes()).toContain('on')
-    expect(returned.find('.page-pos').text()).toBe('3 / 3')
+    expect(returned.find('.page-number').text()).toBe('3 / 3')
   })
 
   it('keeps cross-page stroke coordinates intact for the 3D page renderer', () => {
@@ -294,20 +336,20 @@ describe('JournalView', () => {
       expect(scene.busy).toBe(true)
       await w.find('.flip.next').trigger('click')
       await w.find('.flip.next').trigger('click')
-      expect(w.find('.page-pos').text()).toBe('1 / 3')
+      expect(w.find('.page-number').text()).toBe('1 / 3')
 
       scene.finish()
       await w.vm.$nextTick()
-      expect(w.find('.page-pos').text()).toBe('2 / 3')
+      expect(w.find('.page-number').text()).toBe('2 / 3')
       w.unmount()
     })
 
     it('advances the counter exactly once when the turn completes', async () => {
       const w = await mountAttached()
       await w.find('.flip.next').trigger('click')
-      expect(w.find('.page-pos').text()).toBe('2 / 3')
+      expect(w.find('.page-number').text()).toBe('2 / 3')
       await w.find('.flip.next').trigger('click')
-      expect(w.find('.page-pos').text()).toBe('3 / 3')
+      expect(w.find('.page-number').text()).toBe('3 / 3')
       w.unmount()
     })
 
@@ -319,11 +361,11 @@ describe('JournalView', () => {
       await w.find('.flip.next').trigger('click')
       scene.cancel()
       await w.vm.$nextTick()
-      expect(w.find('.page-pos').text()).toBe('1 / 3')
+      expect(w.find('.page-number').text()).toBe('1 / 3')
 
       scene.held = false
       await w.find('.flip.next').trigger('click')
-      expect(w.find('.page-pos').text()).toBe('2 / 3')
+      expect(w.find('.page-number').text()).toBe('2 / 3')
       w.unmount()
     })
   })

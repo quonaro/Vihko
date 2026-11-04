@@ -15,7 +15,8 @@ import { useI18n } from 'vue-i18n'
 import { initInk } from '../ink/engine'
 import { usePrompt } from '../composables/usePrompt'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
-import { PAGE_SIZE_PRESETS } from '../pageSpace'
+import MobileSlider from '../components/MobileSlider.vue'
+import { pageSize, PAGE_SIZE_PRESETS } from '../pageSpace'
 import EmptyState from '../components/EmptyState.vue'
 import { saveFile } from '../saveFile'
 import type { JournalScene } from '../three/journalScene'
@@ -37,6 +38,17 @@ const pageIdx = computed({
     store.journalPageIdx = value
   },
 })
+const currentPageSizeId = computed(() => {
+  const page = journal.value?.pages[pageIdx.value]
+  if (!page) return null
+  const size = pageSize(page)
+  return (
+    PAGE_SIZE_PRESETS.find(
+      (preset) => Math.abs(preset.w - size.w) < 0.01 && Math.abs(preset.h - size.h) < 0.01,
+    )?.id ?? 'custom'
+  )
+})
+const pageSizePickerOpen = ref(false)
 const menuOn = ref(false)
 const glCanvas = ref<HTMLCanvasElement>()
 const glOk = ref(false)
@@ -50,6 +62,11 @@ let sceneRequest = 0
 function requestDeletePage(id: string, ev: Event) {
   ev.stopPropagation()
   deleteTarget.value = { type: 'page', id }
+}
+
+function selectPageSize(id: (typeof PAGE_SIZE_PRESETS)[number]['id']) {
+  store.pageSize = id
+  pageSizePickerOpen.value = false
 }
 
 function requestDeleteJournal() {
@@ -249,7 +266,10 @@ async function goToPage() {
     <div class="stage">
       <canvas ref="glCanvas" class="stage3d" v-show="glOk"></canvas>
       <p v-if="mode === 'stack'" class="page-pos">
-        {{ pageIdx + 1 }} / {{ journal.pages.length }}
+        <span class="page-number">{{ pageIdx + 1 }} / {{ journal.pages.length }}</span>
+        <span v-if="currentPageSizeId" class="page-kind">
+          · {{ t(`journal.size.${currentPageSizeId}`) }}
+        </span>
       </p>
       <button
         v-if="glOk && glHover && !coarse && journal.pages.length > 1"
@@ -301,20 +321,46 @@ async function goToPage() {
     </div>
 
     <footer>
-      <select
-        v-model="store.pageSize"
+      <button
         class="page-size"
+        aria-haspopup="dialog"
+        :aria-expanded="pageSizePickerOpen"
         :title="t('journal.pageSize')"
         :aria-label="t('journal.pageSize')"
+        @click="pageSizePickerOpen = true"
       >
-        <option v-for="s in PAGE_SIZE_PRESETS" :key="s.id" :value="s.id">
-          {{ t(`journal.size.${s.id}`) }}
-        </option>
-      </select>
+        {{ t(`journal.size.${store.pageSize}`) }}
+        <svg aria-hidden="true" viewBox="0 0 12 12" width="12" height="12">
+          <path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
       <button class="round" @click="addPage" :title="t('journal.newPage')">
         <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 5 L12 19 M5 12 L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </footer>
+    <MobileSlider
+      :open="pageSizePickerOpen"
+      :title="t('journal.pageSize')"
+      size="sm"
+      @update:open="pageSizePickerOpen = $event"
+    >
+      <div class="page-size-options" role="group" :aria-label="t('journal.pageSize')">
+        <button
+          v-for="s in PAGE_SIZE_PRESETS"
+          :key="s.id"
+          class="page-size-option"
+          :class="{ selected: store.pageSize === s.id }"
+          :aria-pressed="store.pageSize === s.id"
+          @click="selectPageSize(s.id)"
+        >
+          <span class="size-preview" :style="{ width: `${36 * s.w / s.h}px` }" aria-hidden="true"></span>
+          <span class="size-label">{{ t(`journal.size.${s.id}`) }}</span>
+          <svg v-if="store.pageSize === s.id" class="size-check" viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
+            <path d="m4 10 4 4 8-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </MobileSlider>
     <ConfirmDialog
       :open="deleteTarget !== null"
       :title="deleteTarget?.type === 'page' ? t('dlg.deletePageTitle') : t('dlg.deleteJournalTitle')"
@@ -513,9 +559,16 @@ h1 {
   bottom: calc(max(30px, env(safe-area-inset-bottom)) + 64px);
   left: 50%;
   transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
   color: var(--paper-muted);
   font-size: 12px;
   z-index: 4;
+}
+.page-kind {
+  opacity: .85;
 }
 footer {
   position: absolute;
@@ -524,11 +577,16 @@ footer {
   bottom: 0;
   z-index: 10;
   display: flex;
+  align-items: center;
   justify-content: center;
   gap: 18px;
   padding: 20px 0 max(30px, env(safe-area-inset-bottom));
 }
 .page-size {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   height: 32px;
   border: none;
   border-radius: 16px;
@@ -538,6 +596,45 @@ footer {
   font-size: 12px;
   backdrop-filter: blur(6px);
 }
+.page-size-options {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 2px;
+}
+.page-size-option {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 12px;
+  color: var(--chrome-text);
+  text-align: left;
+  background: transparent;
+  transition: background .16s ease, border-color .16s ease;
+}
+.page-size-option.selected {
+  border-color: var(--chrome-text);
+  background: var(--chrome-hover);
+}
+@media (hover: hover) {
+  .page-size-option:hover { background: var(--chrome-hover); }
+}
+.size-preview {
+  flex: 0 0 auto;
+  height: 36px;
+  max-width: 58px;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  opacity: .8;
+}
+.size-label {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+}
+.size-check { color: var(--chrome-text); }
 .round {
   width: 48px;
   height: 48px;
