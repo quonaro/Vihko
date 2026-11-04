@@ -205,6 +205,10 @@ const messages = {
       ideas: 'Ideas',
       travel: 'Travel',
     },
+    fatal: {
+      title: 'Could not open the local database',
+      hint: 'Your data was not modified.',
+    },
   },
   ru: {
     shelf: {
@@ -408,6 +412,10 @@ const messages = {
       sketches: 'Наброски',
       ideas: 'Идеи',
       travel: 'Путешествия',
+    },
+    fatal: {
+      title: 'Не удалось открыть локальную базу данных',
+      hint: 'Данные не были изменены.',
     },
   },
 } as const

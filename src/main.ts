@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import { disableBrowserContextMenu } from './contextMenu'
+import { showFatalError } from './fatal'
 import { i18n } from './i18n'
 import { initInk } from './ink/engine'
 import { initRouter } from './router'
@@ -18,9 +19,8 @@ async function start() {
     void requestStartupPermissions()
   } catch (error) {
     console.error('Could not initialize local storage', error)
-    const root = document.querySelector('#app')
-    if (root)
-      root.textContent = 'Не удалось открыть локальную базу данных. Данные не были изменены.'
+    const root = document.querySelector<HTMLElement>('#app')
+    if (root) showFatalError(root)
   }
 }
 

@@ -216,6 +216,35 @@ button {
   }
 }
 
+/* ---- fatal startup error ---- */
+.fatal {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px;
+  text-align: center;
+}
+.fatal-icon {
+  width: 56px;
+  height: 56px;
+  color: var(--warn-icon);
+  margin-bottom: 10px;
+}
+.fatal-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--chrome-text);
+}
+.fatal-hint {
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--chrome-muted);
+  max-width: 36ch;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
