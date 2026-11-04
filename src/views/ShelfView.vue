@@ -12,44 +12,31 @@ import {
 } from '../store'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { setLocale } from '../i18n'
-import { setTheme, theme } from '../theme'
-import {
-  appVersion,
-  update,
-  checkForUpdate,
-  downloadUpdate,
-  perms,
-  permsRelevant,
-  refreshPermissions,
-  grantNotificationPermission,
-  grantInstallPermission,
-} from '../update'
+import { update, downloadUpdate } from '../update'
 import { morphTo, centeredRect } from '../anim'
-import { presetCovers } from '../covers'
-import { imageFileToPhoto } from '../ink/ops'
-import MobileSlider from '../components/MobileSlider.vue'
+import JournalMenuDialog from '../components/JournalMenuDialog.vue'
+import CoverTexturePicker from '../components/CoverTexturePicker.vue'
+import CoverPicker from '../components/CoverPicker.vue'
+import SettingsDialog from '../components/SettingsDialog.vue'
+import ShelfSearchDialog from '../components/ShelfSearchDialog.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { usePrompt } from '../composables/usePrompt'
 import { saveFile } from '../saveFile'
-import { COVER_TEXTURES, type CoverTexture } from '../types'
+import type { CoverTexture } from '../types'
 import type { ShelfAnchor, ShelfJournal, ShelfScene } from '../three/shelfScene'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const { prompt } = usePrompt()
 const deleteTarget = ref<string | null>(null)
 const menuJournalId = ref<string | null>(null)
 const menuOn = ref(false)
-const query = ref('')
 const searchOn = ref(false)
 const coverOn = ref(false)
 const coverTextureOn = ref(false)
 const settingsOn = ref(false)
-const coverInput = ref<HTMLInputElement>()
 
 const menuJournal = computed(() => store.journals.find((j) => j.id === menuJournalId.value) ?? null)
-const coverTextures = COVER_TEXTURES
 const updateLabel = computed(() => {
   switch (update.dl) {
     case 'downloading':
@@ -62,35 +49,9 @@ const updateLabel = computed(() => {
       return t('shelf.updateAvailable', { v: update.latest })
   }
 })
-const results = computed(() => {
-  const q = query.value.trim().toLowerCase()
-  return q ? store.journals.filter((j) => j.title.toLowerCase().includes(q)) : store.journals
-})
-
 function openSearch() {
-  query.value = ''
   searchOn.value = true
 }
-
-// --- Permissions (Android) ---------------------------------------------------
-
-const showPerms = permsRelevant()
-
-// Re-read states when the sheet opens and when the user returns from a system
-// settings screen (e.g. after toggling "install unknown apps").
-function onVisible() {
-  if (!document.hidden) void refreshPermissions()
-}
-watch(settingsOn, (on) => {
-  if (!showPerms) return
-  if (on) {
-    void refreshPermissions()
-    document.addEventListener('visibilitychange', onVisible)
-  } else {
-    document.removeEventListener('visibilitychange', onVisible)
-  }
-})
-onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible))
 
 function openFromSearch(id: string) {
   searchOn.value = false
@@ -236,8 +197,7 @@ function openJournalMenu(id: string) {
   menuOn.value = true
 }
 
-function requestDelete(id: string, ev: Event) {
-  ev.stopPropagation()
+function requestDelete(id: string) {
   menuOn.value = false
   deleteTarget.value = id
 }
@@ -288,15 +248,6 @@ function applyCoverTexture(texture: CoverTexture) {
 function applyCover(src: string | null) {
   if (menuJournalId.value) setCoverImage(menuJournalId.value, src)
   coverOn.value = false
-}
-
-async function onCoverPicked(e: Event) {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  const img = await imageFileToPhoto(file, 800)
-  applyCover(img.src)
 }
 </script>
 
@@ -388,204 +339,31 @@ async function onCoverPicked(e: Event) {
 
     <footer>
       <button class="round" @click="addJournal" :title="t('shelf.newJournal')">
-        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 5 L12 19 M5 12 L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5 L12 19 M5 12 L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </footer>
 
-    <MobileSlider v-model:open="menuOn" :title="menuJournal?.title ?? t('shelf.menu')" size="sm">
-      <div class="journal-actions">
-        <button class="journal-action" @click="rename">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l.8-3.8L16 5l3 3L7.8 19.2 4 20zM14 7l3 3" /></svg>
-          {{ t('shelf.rename') }}
-        </button>
-        <button class="journal-action" @click="exportJournal">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5.5 19h13" /></svg>
-          {{ t('shelf.export') }}
-        </button>
-        <button class="journal-action" @click="openCoverPicker">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5" width="15" height="14" rx="2" /><circle cx="9.5" cy="10" r="1.5" /><path d="m5.5 16.5 5-5 3.5 3.5 2.5-2.5 2.5 2.5" /></svg>
-          {{ t('shelf.cover') }}
-        </button>
-        <button class="journal-action" @click="openCoverTexturePicker">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h16M4 12h16M4 16.5h16" /><circle cx="8" cy="7.5" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="10" cy="16.5" r="1.5" /></svg>
-          {{ t('shelf.coverTexture') }}
-        </button>
-        <button
-          class="journal-action danger"
-          @click="menuJournal && requestDelete(menuJournal.id, $event)"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 6.5h15M9.2 6.5l.5-2h4.6l.5 2M6.5 6.5l.9 13h9.2l.9-13M10 10v6m4-6v6" /></svg>
-          {{ t('shelf.delete') }}
-        </button>
-      </div>
-    </MobileSlider>
+    <JournalMenuDialog
+      v-model:open="menuOn"
+      :journal="menuJournal"
+      @rename="rename"
+      @export="exportJournal"
+      @cover="openCoverPicker"
+      @cover-texture="openCoverTexturePicker"
+      @delete="menuJournal && requestDelete(menuJournal.id)"
+    />
 
-    <MobileSlider v-model:open="coverTextureOn" :title="t('shelf.coverTexture')" size="sm">
-      <p class="hint texture-hint">{{ menuJournal?.title }}</p>
-      <div class="texture-options" role="group" :aria-label="t('shelf.coverTexture')">
-        <button
-          v-for="texture in coverTextures"
-          :key="texture"
-          class="texture-option"
-          :class="[
-            `texture-${texture}`,
-            { selected: (menuJournal?.coverTexture ?? 'paper') === texture },
-          ]"
-          :aria-pressed="(menuJournal?.coverTexture ?? 'paper') === texture"
-          @click="applyCoverTexture(texture)"
-        >
-          <span class="texture-swatch" aria-hidden="true"></span>
-          <span class="texture-copy">
-            <span class="texture-name">{{ t(`shelf.texture.${texture}.title`) }}</span>
-            <span class="texture-description">{{ t(`shelf.texture.${texture}.hint`) }}</span>
-          </span>
-          <svg
-            v-if="(menuJournal?.coverTexture ?? 'paper') === texture"
-            class="texture-check"
-            viewBox="0 0 20 20"
-            width="20"
-            height="20"
-            aria-hidden="true"
-          >
-            <path d="m4 10 4 4 8-8" />
-          </svg>
-        </button>
-      </div>
-    </MobileSlider>
+    <CoverTexturePicker
+      v-model:open="coverTextureOn"
+      :journal="menuJournal"
+      @select="applyCoverTexture"
+    />
 
-    <MobileSlider v-model:open="coverOn" :title="t('shelf.cover')" no-scrollbar>
-      <p class="hint cover-hint">{{ menuJournal?.title }}</p>
-      <div class="cover-grid">
-        <button
-          v-for="c in presetCovers"
-          :key="c.id"
-          class="cover-option"
-          :style="{ backgroundImage: `url(${c.src})` }"
-          @click="applyCover(c.src)"
-        />
-        <button class="cover-option upload" @click="coverInput?.click()">
-          {{ t('shelf.uploadCover') }}
-        </button>
-        <button
-          v-if="menuJournal?.coverImg"
-          class="cover-option plain remove-cover"
-          :aria-label="t('shelf.removeCover')"
-          :title="t('shelf.removeCover')"
-          @click="applyCover(null)"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            width="24"
-            height="24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.7"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <rect x="3.5" y="5" width="17" height="14" rx="2" />
-            <circle cx="9" cy="10" r="1.5" />
-            <path d="m5 17 5-5 3 3 2-2 4 4M4 4l16 16" />
-          </svg>
-        </button>
-      </div>
-      <input ref="coverInput" type="file" accept="image/*" hidden @change="onCoverPicked" />
-    </MobileSlider>
+    <CoverPicker v-model:open="coverOn" :journal="menuJournal" @select="applyCover" />
 
-    <MobileSlider v-model:open="settingsOn" :title="t('shelf.settings')" size="sm">
-      <div class="set-row">
-        <span class="set-label">{{ t('shelf.version') }}</span>
-        <span class="set-value">v{{ appVersion }}</span>
-      </div>
-      <div class="set-row">
-        <span class="set-label">{{ t('shelf.theme') }}</span>
-        <div class="seg">
-          <button
-            class="seg-btn"
-            :class="{ on: theme === 'light' }"
-            :aria-pressed="theme === 'light'"
-            @click="setTheme('light')"
-          >{{ t('shelf.themeLight') }}</button>
-          <button
-            class="seg-btn"
-            :class="{ on: theme === 'dark' }"
-            :aria-pressed="theme === 'dark'"
-            @click="setTheme('dark')"
-          >{{ t('shelf.themeDark') }}</button>
-        </div>
-      </div>
-      <div class="set-row">
-        <span class="set-label">{{ t('shelf.language') }}</span>
-        <div class="seg">
-          <button class="seg-btn" :class="{ on: locale === 'en' }" @click="setLocale('en')">English</button>
-          <button class="seg-btn" :class="{ on: locale === 'ru' }" @click="setLocale('ru')">Русский</button>
-        </div>
-      </div>
-      <div class="set-row">
-        <span class="set-label">{{ t('shelf.updates') }}</span>
-        <button
-          class="set-action"
-          :class="{ accent: update.status === 'available' }"
-          :disabled="update.busy || update.dl === 'downloading'"
-          @click="update.status === 'available' ? downloadUpdate() : checkForUpdate()"
-        >{{ update.busy ? t('shelf.checking')
-          : update.status === 'available'
-            ? (update.dl === 'idle' ? t('shelf.updateNow', { v: update.latest }) : updateLabel)
-            : update.status === 'error' ? t('shelf.checkFailed')
-            : t('shelf.checkUpdate') }}</button>
-      </div>
-      <template v-if="showPerms">
-        <div class="set-row">
-          <span class="set-label">{{ t('shelf.permNotif') }}</span>
-          <span v-if="perms.notifications === 'granted'" class="set-value">{{ t('shelf.permGranted') }}</span>
-          <button v-else class="set-action" @click="grantNotificationPermission()">{{
-            perms.notifications === 'denied' ? t('shelf.permOpenSettings') : t('shelf.permGrant')
-          }}</button>
-        </div>
-        <div class="set-row">
-          <span class="set-label">{{ t('shelf.permInstall') }}</span>
-          <span v-if="perms.install === 'granted'" class="set-value">{{ t('shelf.permGranted') }}</span>
-          <button v-else class="set-action" @click="grantInstallPermission()">{{ t('shelf.permOpenSettings') }}</button>
-        </div>
-      </template>
-    </MobileSlider>
+    <SettingsDialog v-model:open="settingsOn" />
 
-    <MobileSlider v-model:open="searchOn" :title="t('shelf.search')" size="sm">
-      <input
-        v-model="query"
-        class="search-input"
-        :placeholder="t('shelf.searchPh')"
-        autofocus
-      />
-      <div class="search-results">
-        <button
-          v-for="j in results"
-          :key="j.id"
-          class="search-hit"
-          @click="openFromSearch(j.id)"
-        >
-          <span
-            class="hit-cover"
-            :style="j.coverImg
-              ? { backgroundImage: `url(${j.coverImg})`, backgroundSize: 'cover', backgroundPosition: 'center' }
-              : { background: covers[j.cover % covers.length] }"
-          />
-          <span class="hit-text">
-            <span class="hit-title">{{ j.title }}</span>
-            <span class="hit-count">{{ t('journal.count', j.pages.length) }}</span>
-          </span>
-        </button>
-        <EmptyState v-if="!results.length" class="search-none" :title="t('shelf.noMatch')">
-          <template #icon>
-            <svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-              <circle cx="10.5" cy="10.5" r="6.5"/>
-              <path d="M15.5 15.5 20 20"/>
-            </svg>
-          </template>
-        </EmptyState>
-      </div>
-    </MobileSlider>
+    <ShelfSearchDialog v-model:open="searchOn" @select="openFromSearch" />
     <ConfirmDialog
       :open="deleteTarget !== null"
       :title="t('dlg.deleteJournalTitle')"
@@ -638,55 +416,6 @@ async function onCoverPicked(e: Event) {
     background: var(--paper-hover);
   }
 }
-.search-input {
-  width: 100%;
-  padding: 10px 16px;
-  border-radius: 12px;
-  border: 1px solid var(--chrome-border);
-  background: var(--chrome-input-bg);
-  color: var(--chrome-text);
-  font-size: 14px;
-  outline: none;
-}
-.search-input:focus { border-color: #2a8097; }
-.search-results {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.search-hit {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  text-align: left;
-}
-@media (hover: hover) {
-  .search-hit:hover { background: var(--chrome-hover); }
-}
-.hit-cover {
-  width: 30px;
-  height: 40px;
-  border-radius: 2px 5px 5px 2px;
-  flex-shrink: 0;
-  box-shadow: inset 0 0 0 1px var(--chrome-border);
-}
-.hit-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.hit-title {
-  color: var(--chrome-text);
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.hit-count { color: var(--chrome-muted); font-size: 12px; margin-top: 2px; }
-.search-none { padding: 18px 0 10px; }
 header {
   position: relative;
   z-index: 10;
@@ -769,8 +498,8 @@ footer {
   padding: 20px 0 max(30px, env(safe-area-inset-bottom));
 }
 .round {
-  width: 48px;
-  height: 48px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: #191a18;
   color: #fff;
@@ -789,129 +518,6 @@ footer {
 }
 .round svg { display: block; }
 
-.journal-actions { display: grid; gap: 8px; }
-.journal-action {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 13px 16px;
-  border-radius: 12px;
-  background: var(--chrome-control-bg);
-  color: var(--chrome-text);
-  text-align: left;
-  font-size: 14px;
-  font-weight: 600;
-}
-.journal-action svg {
-  width: 19px;
-  height: 19px;
-  flex: 0 0 19px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.journal-action.danger { color: #c45c52; }
-
-.texture-hint { margin: -4px 0 14px; }
-.texture-options { display: grid; gap: 8px; }
-.texture-option {
-  min-height: 72px;
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  padding: 9px 12px;
-  border: 1px solid var(--chrome-border);
-  border-radius: 12px;
-  color: var(--chrome-text);
-  text-align: left;
-  background: transparent;
-  transition: background .16s ease, border-color .16s ease;
-}
-.texture-option.selected {
-  border-color: var(--chrome-text);
-  background: var(--chrome-hover);
-}
-.texture-swatch {
-  width: 40px;
-  height: 50px;
-  flex: 0 0 40px;
-  border: 1px solid rgba(30, 27, 24, .18);
-  border-radius: 5px;
-  background-color: #b7a98e;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, .12);
-}
-.texture-smooth .texture-swatch { background-color: #718792; }
-.texture-comic .texture-swatch {
-  background-color: #dfb77e;
-  background-image: radial-gradient(rgba(32, 28, 24, .62) 1px, transparent 1.25px);
-  background-size: 5px 5px;
-}
-.texture-paper .texture-swatch {
-  background-image:
-    repeating-linear-gradient(12deg, rgba(255,255,255,.12) 0 1px, transparent 1px 4px),
-    repeating-linear-gradient(103deg, rgba(48,39,30,.08) 0 1px, transparent 1px 5px);
-}
-.texture-copy { min-width: 0; flex: 1; display: grid; gap: 3px; }
-.texture-name { font-size: 14px; font-weight: 600; }
-.texture-description { color: var(--chrome-muted); font-size: 12px; }
-.texture-check {
-  flex: 0 0 20px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-@media (hover: hover) {
-  .texture-option:hover { background: var(--chrome-hover); }
-}
-
-.cover-hint { margin: -4px 0 14px; }
-.hint { color: var(--chrome-muted); font-size: 13px; }
-.set-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-}
-.set-row + .set-row { margin-top: 14px; }
-.set-label { color: var(--chrome-text); font-size: 14px; }
-.seg {
-  display: flex;
-  gap: 3px;
-  padding: 3px;
-  border-radius: 10px;
-  background: var(--chrome-control-bg);
-}
-.seg-btn {
-  padding: 7px 18px;
-  border-radius: 8px;
-  color: var(--chrome-muted);
-  font-size: 13px;
-  font-weight: 650;
-}
-.seg-btn.on { background: #2a8097; color: #fff; }
-.set-value {
-  color: var(--chrome-muted);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-.set-action {
-  padding: 7px 16px;
-  border-radius: 8px;
-  background: var(--chrome-control-bg);
-  color: var(--chrome-text);
-  font-size: 13px;
-  font-weight: 650;
-}
-.set-action.accent {
-  background: #2a8097;
-  color: #fff;
-}
-.set-action:disabled { opacity: .6; }
 .settings-btn { position: relative; }
 .update-dot {
   position: absolute;
@@ -945,29 +551,6 @@ footer {
 .update-banner svg { flex-shrink: 0; color: var(--warn-icon); }
 @media (hover: hover) {
   .update-banner:hover { background: rgba(234, 179, 8, .18); }
-}
-.cover-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-}
-.cover-option {
-  aspect-ratio: 34 / 48;
-  border-radius: 8px;
-  background-size: cover;
-  background-position: center;
-  border: 1px solid var(--chrome-border);
-  cursor: pointer;
-  color: var(--chrome-muted);
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 6px;
-}
-.cover-option.upload, .cover-option.plain {
-  background: var(--chrome-input-bg);
 }
 @media (max-width: 600px) {
   .topbar { padding: 14px 16px 0; }
