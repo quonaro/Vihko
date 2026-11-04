@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import App from './App.vue'
+import { disableBrowserContextMenu } from './contextMenu'
 import { i18n } from './i18n'
 import { initInk } from './ink/engine'
 import { initializeStorePersistence } from './store'
@@ -8,6 +9,7 @@ import './style.css'
 
 async function start() {
   try {
+    disableBrowserContextMenu()
     await initializeStorePersistence()
     void initInk()
     createApp(App).use(i18n).mount('#app')
