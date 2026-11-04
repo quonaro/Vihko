@@ -16,6 +16,7 @@ import {
   pagesOutline,
   boardOutline,
   shelfPose,
+  shelfEntrance,
   inHitBox,
   viewHalfWidth,
   scrollLimit,
@@ -49,6 +50,26 @@ describe('shelfPose', () => {
 
   it('pitches -90° so the cover normal points straight up', () => {
     expect(LIE_PITCH).toBeCloseTo(-Math.PI / 2)
+  })
+})
+
+describe('shelfEntrance', () => {
+  it('starts with a subtle lift and scale, without rotating the book', () => {
+    expect(shelfEntrance(0)).toEqual({ lift: 0.12, scale: 0.985, opacity: 0 })
+  })
+
+  it('settles to the exact shelf pose', () => {
+    expect(shelfEntrance(1)).toEqual({ lift: 0, scale: 1, opacity: 1 })
+  })
+
+  it('clamps progress and moves smoothly toward the settled pose', () => {
+    expect(shelfEntrance(-1)).toEqual(shelfEntrance(0))
+    expect(shelfEntrance(2)).toEqual(shelfEntrance(1))
+    const start = shelfEntrance(0.25)
+    const end = shelfEntrance(0.75)
+    expect(end.lift).toBeLessThan(start.lift)
+    expect(end.scale).toBeGreaterThan(start.scale)
+    expect(end.opacity).toBeGreaterThan(start.opacity)
   })
 })
 

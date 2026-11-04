@@ -9,33 +9,41 @@ import { setTheme } from '../theme'
 import { update } from '../update'
 import type { Journal } from '../types'
 
-// The real shelf needs WebGL; the fake scene emits fixed anchors so the
-// overlay ⋮/× buttons render and a journal can be selected in tests.
+const shelfSceneMock = vi.hoisted(() => ({
+  events: null as { onLongPress?: (id: string) => void } | null,
+}))
+
+// The real shelf needs WebGL; the fake scene emits fixed anchors and exposes
+// its long-press callback so the management sheet can be tested.
 vi.mock('../three/shelfScene', () => ({
   ShelfScene: class {
     private journals: { id: string }[] = []
     constructor(
       _canvas: HTMLCanvasElement,
-      private events: { onOverlay?: (anchors: unknown[]) => void },
-    ) {}
+      private events: {
+        onOverlay?: (anchors: unknown[]) => void
+        onLongPress?: (id: string) => void
+      },
+    ) {
+      shelfSceneMock.events = this.events
+    }
     setJournals(list: { id: string }[]) {
       this.journals = list
     }
-    setSelected() {}
     start() {
       this.events.onOverlay?.(
         this.journals.map((j, i) => ({
           id: j.id,
           onScreen: true,
-          hover: i === 0,
-          del: { x: 60 + i * 80, y: 60 },
-          sel: { x: 60 + i * 80, y: 120 },
-          actions: { x: 60 + i * 80, y: 120 },
           label: { x: 60 + i * 80, y: 160 },
+          title: { x: 60 + i * 80, y: 180 },
         })),
       )
     }
     dispose() {}
+    longPress(id: string) {
+      this.events.onLongPress?.(id)
+    }
     screenRect() {
       return null
     }
@@ -53,6 +61,7 @@ const journal = (id: string, title: string): Journal => ({
 })
 
 beforeEach(() => {
+  shelfSceneMock.events = null
   store.journals.splice(0, store.journals.length, journal('a', 'Alpha'), journal('b', 'Beta'))
   store.journalId = null
   store.pageId = null
@@ -210,23 +219,65 @@ describe('ShelfView', () => {
     expect(document.body.querySelector('.search-input')).toBeNull()
   })
 
-  it('has no store button; the cover button only shows for a selected journal', async () => {
-    const w = mountShelf()
+  it('replaces the journal overlay buttons with a long-press action sheet', async () => {
+    const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
     await flushPromises()
     expect(w.find('.store-link').exists()).toBe(false)
-    expect(w.find('footer .cover-btn').exists()).toBe(false)
+    expect(w.findAll('.gl-del')).toHaveLength(0)
+    expect(w.findAll('.gl-sel')).toHaveLength(0)
+    shelfSceneMock.events?.onLongPress?.('a')
+    await nextTick()
+    expect(document.body.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('Alpha')
+    expect(document.body.querySelectorAll('.journal-action')).toHaveLength(5)
+    expect(document.body.textContent).toContain('Rename journal')
+    expect(document.body.textContent).toContain('Export journal (JSON)')
+
+    const deleteButton = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('.journal-action'),
+    ].find((button) => button.textContent?.includes('Delete journal'))!
+    deleteButton.click()
+    await nextTick()
+    expect(document.body.textContent).toContain('Delete "Alpha" and all its pages?')
+    expect(document.body.querySelector('.confirm-delete')).toBeTruthy()
   })
 
-  it('opens the cover picker from the footer and applies a preset cover', async () => {
+  it('lets each journal choose a paper, smooth, or comic cover texture', async () => {
+    const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
+    await flushPromises()
+    shelfSceneMock.events?.onLongPress?.('a')
+    await nextTick()
+
+    const textureBtn = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('.journal-action'),
+    ].find((button) => button.textContent?.includes('Change cover texture'))!
+    textureBtn.click()
+    await nextTick()
+
+    const options = document.body.querySelectorAll<HTMLButtonElement>('.texture-option')
+    expect(options).toHaveLength(3)
+    expect(options[0].getAttribute('aria-pressed')).toBe('true')
+    expect(options[0].textContent).toContain('Paper (current)')
+    expect(options[1].textContent).toContain('Smooth')
+    expect(options[2].textContent).toContain('Comic')
+
+    options[2].click()
+    await flushPromises()
+    expect(store.journals[0].coverTexture).toBe('comic')
+    expect(document.body.querySelector('.texture-option')).toBeNull()
+    w.unmount()
+  })
+
+  it('opens the cover picker from the journal action sheet and applies a preset cover', async () => {
     // attachTo: the scene setup bails unless the canvas is connected.
     const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
     await flushPromises()
-    await w.find('.gl-sel').trigger('click')
+    shelfSceneMock.events?.onLongPress?.('a')
     await nextTick()
 
-    const coverBtn = w.find('footer .cover-btn')
-    expect(coverBtn.exists()).toBe(true)
-    await coverBtn.trigger('click')
+    const coverBtn = [...document.body.querySelectorAll<HTMLButtonElement>('.journal-action')].find(
+      (button) => button.textContent?.includes('Change cover'),
+    )!
+    coverBtn.click()
     await nextTick()
 
     // the cover sheet is teleported to <body>
@@ -237,6 +288,22 @@ describe('ShelfView', () => {
     await flushPromises()
     expect(store.journals[0].coverImg).toBeTruthy()
     expect(document.body.querySelector('.cover-option')).toBeNull()
+
+    shelfSceneMock.events?.onLongPress?.('a')
+    await nextTick()
+    const changeCover = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('.journal-action'),
+    ].find((button) => button.textContent?.includes('Change cover'))!
+    changeCover.click()
+    await nextTick()
+
+    const removeCover = document.body.querySelector<HTMLButtonElement>('.remove-cover')!
+    expect(removeCover.textContent?.trim()).toBe('')
+    expect(removeCover.getAttribute('aria-label')).toBe('Remove photo cover')
+    expect(removeCover.querySelector('svg')).not.toBeNull()
+    removeCover.click()
+    await flushPromises()
+    expect(store.journals[0].coverImg).toBeUndefined()
     w.unmount()
   })
 

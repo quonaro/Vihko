@@ -7,6 +7,7 @@ import {
   openJournal,
   renameJournal,
   setCoverImage,
+  setCoverTexture,
   journalToJson,
 } from '../store'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -32,19 +33,23 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { usePrompt } from '../composables/usePrompt'
 import { saveFile } from '../saveFile'
+import { COVER_TEXTURES, type CoverTexture } from '../types'
 import type { ShelfAnchor, ShelfJournal, ShelfScene } from '../three/shelfScene'
 
 const { t, locale } = useI18n()
 const { prompt } = usePrompt()
 const deleteTarget = ref<string | null>(null)
-const selectedId = ref<string | null>(null)
+const menuJournalId = ref<string | null>(null)
+const menuOn = ref(false)
 const query = ref('')
 const searchOn = ref(false)
 const coverOn = ref(false)
+const coverTextureOn = ref(false)
 const settingsOn = ref(false)
 const coverInput = ref<HTMLInputElement>()
 
-const selected = computed(() => store.journals.find((j) => j.id === selectedId.value) ?? null)
+const menuJournal = computed(() => store.journals.find((j) => j.id === menuJournalId.value) ?? null)
+const coverTextures = COVER_TEXTURES
 const updateLabel = computed(() => {
   switch (update.dl) {
     case 'downloading':
@@ -99,10 +104,6 @@ const glOk = ref(false)
 const glFailed = ref(false)
 const showGlLabels = ref(false)
 const anchors = ref<ShelfAnchor[]>([])
-const hoverId = ref<string | null>(null)
-const uiHold = ref(false) // pointer sits on a DOM overlay button
-// Touch devices have no hover — keep the action buttons visible.
-const coarse = typeof matchMedia === 'function' && matchMedia('(hover: none)').matches
 let scene: ShelfScene | null = null
 let sceneRequest = 0
 let labelTimer: ReturnType<typeof setTimeout> | undefined
@@ -114,12 +115,15 @@ const sceneJournals = (): ShelfJournal[] =>
     id: j.id,
     color: covers[j.cover % covers.length],
     coverImg: j.coverImg,
+    coverTexture: j.coverTexture,
   }))
 
-// Rebuild book meshes when the row or a cover's look (color/photo) changes —
+// Rebuild book meshes when the row or a cover's look (color/photo/texture) changes —
 // same signature the scene uses for its texture cache.
 const journalSig = computed(() =>
-  store.journals.map((j) => `${j.id}${j.cover}${j.coverImg?.slice(-24) ?? ''}`).join(''),
+  store.journals
+    .map((j) => `${j.id}${j.cover}${j.coverImg?.slice(-24) ?? ''}${j.coverTexture ?? 'paper'}`)
+    .join(''),
 )
 
 function setLabelEl(id: string, el: unknown) {
@@ -133,7 +137,7 @@ function setTitleEl(id: string, el: unknown) {
 }
 
 // Per-frame anchors from the scene: pin labels imperatively (no Vue churn)
-// and track which book the pointer is over for the del/⋮ overlay buttons.
+// while the scene renders the books and tracks pointer interaction.
 function onOverlay(list: ShelfAnchor[]) {
   anchors.value = list
   for (const a of list) {
@@ -154,39 +158,7 @@ function onOverlay(list: ShelfAnchor[]) {
       }
     }
   }
-  const hov = list.find((a) => a.hover && a.onScreen)
-  if (hov) hoverId.value = hov.id
-  else if (!uiHold.value) hoverId.value = null
 }
-
-// On touch there is no hover: action buttons sit below each book, clear of
-// the title label that lives just under the cover.
-const belowBook = (a: ShelfAnchor, dx: number) =>
-  a.actions ? { x: a.actions.x + dx, y: a.actions.y + 40 } : null
-
-const delBtns = computed(() =>
-  anchors.value
-    .filter((a) => a.onScreen && (coarse ? a.actions : a.del) && (coarse || a.id === hoverId.value))
-    .map((a) => ({
-      id: a.id,
-      ...(coarse ? belowBook(a, -18)! : a.del!),
-    })),
-)
-
-const selBtns = computed(() =>
-  anchors.value
-    .filter(
-      (a) =>
-        a.onScreen &&
-        (coarse ? a.actions : a.sel) &&
-        (coarse || a.id === hoverId.value || a.id === selectedId.value),
-    )
-    .map((a) => ({
-      id: a.id,
-      ...(coarse ? belowBook(a, 18)! : a.sel!),
-      on: a.id === selectedId.value,
-    })),
-)
 
 function openFromScene(id: string) {
   const j = store.journals.find((x) => x.id === id)
@@ -230,10 +202,10 @@ async function startScene() {
     if (request !== sceneRequest || !canvas.isConnected) return
     scene = new ShelfScene(canvas, {
       onPick: (id) => openFromScene(id),
+      onLongPress: openJournalMenu,
       onOverlay: (a) => onOverlay(a),
     })
     scene.setJournals(sceneJournals())
-    scene.setSelected(selectedId.value)
     scene.start()
     glOk.value = true
     labelTimer = window.setTimeout(() => {
@@ -253,22 +225,20 @@ function stopScene() {
   scene = null
   glOk.value = false
   anchors.value = []
-  hoverId.value = null
 }
 
 onMounted(startScene)
 onBeforeUnmount(stopScene)
 
 watch(journalSig, () => scene?.setJournals(sceneJournals()))
-watch(selectedId, (v) => scene?.setSelected(v))
-
-function select(id: string, ev: Event) {
-  ev.stopPropagation()
-  selectedId.value = selectedId.value === id ? null : id
+function openJournalMenu(id: string) {
+  menuJournalId.value = id
+  menuOn.value = true
 }
 
 function requestDelete(id: string, ev: Event) {
   ev.stopPropagation()
+  menuOn.value = false
   deleteTarget.value = id
 }
 
@@ -276,28 +246,47 @@ function confirmDeleteJournal() {
   const id = deleteTarget.value
   if (!id) return
   deleteJournal(id)
-  if (selectedId.value === id) selectedId.value = null
+  if (menuJournalId.value === id) menuJournalId.value = null
   deleteTarget.value = null
 }
 
 async function rename() {
-  if (!selected.value) return
+  const journal = menuJournal.value
+  if (!journal) return
+  menuOn.value = false
   const title = await prompt({
     title: t('shelf.rename'),
-    value: selected.value.title,
+    value: journal.title,
     placeholder: t('shelf.renamePrompt'),
   })
-  if (title) renameJournal(selected.value.id, title)
+  if (title) renameJournal(journal.id, title)
 }
 
 function exportJournal() {
-  const json = selected.value && journalToJson(selected.value.id)
+  const journal = menuJournal.value
+  const json = journal && journalToJson(journal.id)
   if (!json) return
-  saveFile(`${selected.value!.title}.paper.json`, new Blob([json], { type: 'application/json' }))
+  menuOn.value = false
+  saveFile(`${journal!.title}.paper.json`, new Blob([json], { type: 'application/json' }))
+}
+
+function openCoverPicker() {
+  menuOn.value = false
+  coverOn.value = true
+}
+
+function openCoverTexturePicker() {
+  menuOn.value = false
+  coverTextureOn.value = true
+}
+
+function applyCoverTexture(texture: CoverTexture) {
+  if (menuJournalId.value) setCoverTexture(menuJournalId.value, texture)
+  coverTextureOn.value = false
 }
 
 function applyCover(src: string | null) {
-  if (selectedId.value) setCoverImage(selectedId.value, src)
+  if (menuJournalId.value) setCoverImage(menuJournalId.value, src)
   coverOn.value = false
 }
 
@@ -349,9 +338,9 @@ async function onCoverPicked(e: Event) {
     </nav>
 
     <header>
-      <h1>{{ selected?.title ?? t('shelf.title') }}</h1>
+      <h1>{{ t('shelf.title') }}</h1>
       <p class="count">
-        {{ selected ? t('journal.count', selected.pages.length) : t('shelf.count', store.journals.length) }}
+        {{ t('shelf.count', store.journals.length) }}
       </p>
     </header>
 
@@ -373,29 +362,6 @@ async function onCoverPicked(e: Event) {
         class="book-title gl-label"
         :class="{ delayed: !showGlLabels }"
       >{{ j.title }}</span>
-      <button
-        v-for="b in delBtns"
-        :key="b.id"
-        class="del gl-del"
-        :style="{ left: `${b.x}px`, top: `${b.y}px` }"
-        :aria-label="t('shelf.delete')"
-        :title="t('shelf.delete')"
-        @pointerenter="uiHold = true"
-        @pointerleave="uiHold = false"
-        @click="requestDelete(b.id, $event)"
-      >
-        ×
-      </button>
-      <button
-        v-for="b in selBtns"
-        :key="b.id"
-        class="sel gl-sel"
-        :class="{ on: b.on }"
-        :style="{ left: `${b.x}px`, top: `${b.y}px` }"
-        @pointerenter="uiHold = true"
-        @pointerleave="uiHold = false"
-        @click="select(b.id, $event)"
-      >⋯</button>
       <EmptyState v-if="glFailed" class="webgl-error" :title="t('shelf.webglError')">
         <template #icon>
           <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -421,27 +387,74 @@ async function onCoverPicked(e: Event) {
     </div>
 
     <footer>
-      <template v-if="selected">
-        <button class="round small" @click="rename" :title="t('shelf.rename')">
-          <svg viewBox="0 0 24 24" width="17" height="17"><path d="M4 20 L4.8 16.2 L15.9 5.1 L18.9 8.1 L7.8 19.2 Z M13.9 7.1 L16.9 10.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-        </button>
-        <button class="round small" @click="exportJournal" :title="t('shelf.export')">
-          <svg viewBox="0 0 24 24" width="17" height="17"><path d="M12 4 L12 15 M7.5 10.5 L12 15 L16.5 10.5 M5.5 19 L18.5 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-        <button class="round small cover-btn" @click="coverOn = true" :title="t('shelf.cover')">
-          <svg viewBox="0 0 24 24" width="17" height="17"><rect x="4.5" y="5" width="15" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="9.5" cy="10" r="1.5" fill="currentColor"/><path d="M5.5 16.5 L10.5 11.5 L14 15 L16.5 12.5 L19 15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-        <button class="round small danger" @click="requestDelete(selected.id, $event)" :title="t('shelf.delete')">
-          <svg viewBox="0 0 24 24" width="17" height="17"><path d="M4.5 6.5 L19.5 6.5 M9.2 6.5 L9.7 4.5 L14.3 4.5 L14.8 6.5 M6.5 6.5 L7.4 19.5 L16.6 19.5 L17.5 6.5 M10 10 L10.4 16 M14 10 L13.6 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-      </template>
       <button class="round" @click="addJournal" :title="t('shelf.newJournal')">
         <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 5 L12 19 M5 12 L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </footer>
 
+    <MobileSlider v-model:open="menuOn" :title="menuJournal?.title ?? t('shelf.menu')" size="sm">
+      <div class="journal-actions">
+        <button class="journal-action" @click="rename">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l.8-3.8L16 5l3 3L7.8 19.2 4 20zM14 7l3 3" /></svg>
+          {{ t('shelf.rename') }}
+        </button>
+        <button class="journal-action" @click="exportJournal">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5.5 19h13" /></svg>
+          {{ t('shelf.export') }}
+        </button>
+        <button class="journal-action" @click="openCoverPicker">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5" width="15" height="14" rx="2" /><circle cx="9.5" cy="10" r="1.5" /><path d="m5.5 16.5 5-5 3.5 3.5 2.5-2.5 2.5 2.5" /></svg>
+          {{ t('shelf.cover') }}
+        </button>
+        <button class="journal-action" @click="openCoverTexturePicker">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h16M4 12h16M4 16.5h16" /><circle cx="8" cy="7.5" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="10" cy="16.5" r="1.5" /></svg>
+          {{ t('shelf.coverTexture') }}
+        </button>
+        <button
+          class="journal-action danger"
+          @click="menuJournal && requestDelete(menuJournal.id, $event)"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 6.5h15M9.2 6.5l.5-2h4.6l.5 2M6.5 6.5l.9 13h9.2l.9-13M10 10v6m4-6v6" /></svg>
+          {{ t('shelf.delete') }}
+        </button>
+      </div>
+    </MobileSlider>
+
+    <MobileSlider v-model:open="coverTextureOn" :title="t('shelf.coverTexture')" size="sm">
+      <p class="hint texture-hint">{{ menuJournal?.title }}</p>
+      <div class="texture-options" role="group" :aria-label="t('shelf.coverTexture')">
+        <button
+          v-for="texture in coverTextures"
+          :key="texture"
+          class="texture-option"
+          :class="[
+            `texture-${texture}`,
+            { selected: (menuJournal?.coverTexture ?? 'paper') === texture },
+          ]"
+          :aria-pressed="(menuJournal?.coverTexture ?? 'paper') === texture"
+          @click="applyCoverTexture(texture)"
+        >
+          <span class="texture-swatch" aria-hidden="true"></span>
+          <span class="texture-copy">
+            <span class="texture-name">{{ t(`shelf.texture.${texture}.title`) }}</span>
+            <span class="texture-description">{{ t(`shelf.texture.${texture}.hint`) }}</span>
+          </span>
+          <svg
+            v-if="(menuJournal?.coverTexture ?? 'paper') === texture"
+            class="texture-check"
+            viewBox="0 0 20 20"
+            width="20"
+            height="20"
+            aria-hidden="true"
+          >
+            <path d="m4 10 4 4 8-8" />
+          </svg>
+        </button>
+      </div>
+    </MobileSlider>
+
     <MobileSlider v-model:open="coverOn" :title="t('shelf.cover')" no-scrollbar>
-      <p class="hint cover-hint">{{ selected?.title }}</p>
+      <p class="hint cover-hint">{{ menuJournal?.title }}</p>
       <div class="cover-grid">
         <button
           v-for="c in presetCovers"
@@ -453,8 +466,28 @@ async function onCoverPicked(e: Event) {
         <button class="cover-option upload" @click="coverInput?.click()">
           {{ t('shelf.uploadCover') }}
         </button>
-        <button v-if="selected?.coverImg" class="cover-option plain" @click="applyCover(null)">
-          {{ t('shelf.removeCover') }}
+        <button
+          v-if="menuJournal?.coverImg"
+          class="cover-option plain remove-cover"
+          :aria-label="t('shelf.removeCover')"
+          :title="t('shelf.removeCover')"
+          @click="applyCover(null)"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="24"
+            height="24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <rect x="3.5" y="5" width="17" height="14" rx="2" />
+            <circle cx="9" cy="10" r="1.5" />
+            <path d="m5 17 5-5 3 3 2-2 4 4M4 4l16 16" />
+          </svg>
         </button>
       </div>
       <input ref="coverInput" type="file" accept="image/*" hidden @change="onCoverPicked" />
@@ -695,12 +728,6 @@ h1 {
   white-space: nowrap;
 }
 .gl-label.delayed { visibility: hidden; }
-.del.gl-del, .sel.gl-sel {
-  position: absolute;
-  opacity: 1;
-  transform: translate(-50%, -50%);
-  z-index: 20;
-}
 .pages-count {
   color: var(--paper-muted);
   font-size: 12px;
@@ -715,47 +742,6 @@ h1 {
   text-overflow: ellipsis;
 }
 .book-title.gl-label { margin: 0; }
-.del {
-  position: absolute;
-  top: -10px;
-  right: -10px;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: #4a4a4e;
-  color: #ccc;
-  font-size: 15px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.del.armed {
-  opacity: 1;
-  width: auto;
-  padding: 0 10px;
-  border-radius: 13px;
-  background: #a33;
-  font-size: 12px;
-}
-.sel {
-  position: absolute;
-  bottom: 26px;
-  right: -8px;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: #4a4a4e;
-  color: #ccc;
-  font-size: 15px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.sel.on { opacity: 1; background: #2a8097; color: #fff; }
 .shelf-empty {
   position: absolute;
   inset: 0;
@@ -801,13 +787,87 @@ footer {
     box-shadow: 0 16px 30px rgba(32,33,31,.22), 0 3px 7px rgba(32,33,31,.16);
   }
 }
-.round.small {
-  width: 40px;
-  height: 40px;
-  font-size: 17px;
-}
-.round.danger { color: #a33; }
 .round svg { display: block; }
+
+.journal-actions { display: grid; gap: 8px; }
+.journal-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 16px;
+  border-radius: 12px;
+  background: var(--chrome-control-bg);
+  color: var(--chrome-text);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
+}
+.journal-action svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.journal-action.danger { color: #c45c52; }
+
+.texture-hint { margin: -4px 0 14px; }
+.texture-options { display: grid; gap: 8px; }
+.texture-option {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 9px 12px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 12px;
+  color: var(--chrome-text);
+  text-align: left;
+  background: transparent;
+  transition: background .16s ease, border-color .16s ease;
+}
+.texture-option.selected {
+  border-color: var(--chrome-text);
+  background: var(--chrome-hover);
+}
+.texture-swatch {
+  width: 40px;
+  height: 50px;
+  flex: 0 0 40px;
+  border: 1px solid rgba(30, 27, 24, .18);
+  border-radius: 5px;
+  background-color: #b7a98e;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, .12);
+}
+.texture-smooth .texture-swatch { background-color: #718792; }
+.texture-comic .texture-swatch {
+  background-color: #dfb77e;
+  background-image: radial-gradient(rgba(32, 28, 24, .62) 1px, transparent 1.25px);
+  background-size: 5px 5px;
+}
+.texture-paper .texture-swatch {
+  background-image:
+    repeating-linear-gradient(12deg, rgba(255,255,255,.12) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(103deg, rgba(48,39,30,.08) 0 1px, transparent 1px 5px);
+}
+.texture-copy { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.texture-name { font-size: 14px; font-weight: 600; }
+.texture-description { color: var(--chrome-muted); font-size: 12px; }
+.texture-check {
+  flex: 0 0 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+@media (hover: hover) {
+  .texture-option:hover { background: var(--chrome-hover); }
+}
 
 .cover-hint { margin: -4px 0 14px; }
 .hint { color: var(--chrome-muted); font-size: 13px; }

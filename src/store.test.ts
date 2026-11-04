@@ -20,6 +20,7 @@ import {
   pageRev,
   renameJournal,
   setCoverImage,
+  setCoverTexture,
   journalToJson,
   migrateToPageSpace,
   addLayer,
@@ -178,6 +179,9 @@ describe('journals and pages', () => {
     expect(currentJournal()?.title).toBe('Field Notes')
     setCoverImage('j1', 'data:image/jpeg;base64,abc')
     expect(currentJournal()?.coverImg).toBe('data:image/jpeg;base64,abc')
+    setCoverTexture('j1', 'comic')
+    expect(currentJournal()?.coverTexture).toBe('comic')
+    expect(JSON.parse(journalToJson('j1')!).coverTexture).toBe('comic')
     expect(JSON.parse(journalToJson('j1')!).title).toBe('Field Notes')
     setCoverImage('j1', null)
     expect(currentJournal()?.coverImg).toBeUndefined()

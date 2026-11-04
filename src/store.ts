@@ -2,6 +2,7 @@ import { reactive, toRaw, watch } from 'vue'
 import type {
   BrushParams,
   BrushPreset,
+  CoverTexture,
   GuideMode,
   Journal,
   Layer,
@@ -453,6 +454,11 @@ export function setCoverImage(id: string, src: string | null) {
   if (!j) return
   if (src) j.coverImg = src
   else delete j.coverImg
+}
+
+export function setCoverTexture(id: string, texture: CoverTexture) {
+  const j = store.journals.find((x) => x.id === id)
+  if (j) j.coverTexture = texture
 }
 
 export function journalToJson(id: string): string | null {

@@ -17,6 +17,7 @@ import {
   PAGES_D,
   pagesOutline,
   boardOutline,
+  shelfEntrance,
   shelfPose,
   inHitBox,
   scrollLimit,
@@ -37,21 +38,17 @@ export interface ShelfJournal extends CoverInput {
 }
 
 // Screen-space anchors (canvas px) the view uses to pin its DOM overlay —
-// delete / select buttons, the page-count label and the title — onto the
-// 3D books.
+// page-count label and title onto the 3D books.
 export interface ShelfAnchor {
   id: string
   onScreen: boolean
-  hover: boolean
-  del: { x: number; y: number } | null
-  sel: { x: number; y: number } | null
   label: { x: number; y: number } | null
   title: { x: number; y: number } | null
-  actions: { x: number; y: number } | null
 }
 
 export interface ShelfEvents {
   onPick?: (id: string) => void
+  onLongPress?: (id: string) => void
   onOverlay?: (anchors: ShelfAnchor[]) => void
 }
 
@@ -61,11 +58,10 @@ const FOV = 36
 // picked per-viewport in resize() so a fixed number of books fits across.
 const CAM_Y = 4.85
 const CAM_Z = 0.6
-const ENTER_TIME = 0.62
-const ENTER_STAGGER = 0.055
+const ENTER_TIME = 0.38
+const ENTER_STAGGER = 0.04
 
 const damp = (rate: number, dt: number) => 1 - Math.exp(-rate * dt)
-const easeOut = (t: number) => 1 - (1 - t) ** 3
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
 // Paper block and cover boards are extruded from the rounded outlines —
@@ -99,18 +95,11 @@ function boardGeometry(): THREE.BufferGeometry {
   return g
 }
 
-// Selection tint for the unlit cover face — a warm >1 multiply stands
-// in for the emissive glow a lit material would get.
-const SELECT_TINT = new THREE.Color(1.45, 1.18, 0.85)
-
 interface BookEntry {
   id: string
   sig: string
   order: number
   group: THREE.Group
-  coverMat: THREE.MeshBasicMaterial
-  coverBase: THREE.Color
-  boardMat: THREE.MeshStandardMaterial
   fadeMats: THREE.Material[]
   canvas: HTMLCanvasElement | null
   ctx: CanvasRenderingContext2D | null
@@ -128,7 +117,6 @@ export class ShelfScene {
   private row = new THREE.Group()
   private books: BookEntry[] = []
   private hovered: BookEntry | null = null
-  private selectedId: string | null = null
   private scroll = 0
   private scrollTarget = 0
   private halfW = 1
@@ -148,6 +136,8 @@ export class ShelfScene {
   private trail: { x: number; t: number }[] = []
   private vel = 0 // flick momentum, world units/s
   private clickWasDrag = false
+  private holdTimer: ReturnType<typeof setTimeout> | undefined
+  private hold: { id: number; x: number; y: number; bookId: string } | null = null
   // Pinch zoom: 1 = the fit distance; the camera dollies along camDir by
   // 1/zoom. Horizontal travel stays on the row scroll (the pan limit is
   // far smaller than a long shelf), so the camera only pans vertically —
@@ -267,9 +257,6 @@ export class ShelfScene {
       sig,
       order: 0,
       group,
-      coverMat: face,
-      coverBase: face.color.clone(),
-      boardMat: board,
       fadeMats: [paper, board, face],
       canvas: cnv,
       ctx,
@@ -288,7 +275,7 @@ export class ShelfScene {
   }
 
   private static sig(j: ShelfJournal) {
-    return `${j.color}|${j.coverImg ? j.coverImg.slice(-24) : ''}`
+    return `${j.color}|${j.coverImg ? j.coverImg.slice(-24) : ''}|${j.coverTexture ?? 'paper'}`
   }
 
   // --- public API ---------------------------------------------------------
@@ -302,34 +289,35 @@ export class ShelfScene {
     list.forEach((j, i) => {
       const sig = ShelfScene.sig(j)
       let e = pool.get(j.id)
-      if (e && e.sig !== sig) {
-        this.disposeBook(e)
-        e = undefined
-      }
-      if (e) pool.delete(j.id)
-      else {
+      let created = false
+      if (e) {
+        pool.delete(j.id)
+        if (e.sig !== sig) {
+          this.disposeBook(e)
+          e = this.makeBook(j, sig)
+          created = true
+          // A cover refresh is not a new journal; don't replay the entrance.
+          e.enterT = 1
+        }
+      } else {
         e = this.makeBook(j, sig)
+        created = true
         e.enterT = -i * ENTER_STAGGER
       }
       e.order = i
+      if (created) {
+        const pose = shelfPose(i, list.length)
+        const entrance = shelfEntrance(e.enterT)
+        e.group.position.set(pose.x, pose.y + entrance.lift, pose.z)
+        e.group.rotation.set(pose.rotX, pose.rotY, pose.rotZ)
+        e.group.scale.setScalar(pose.scale * entrance.scale)
+      }
       next.push(e)
     })
     for (const e of pool.values()) this.disposeBook(e)
     this.books = next
     this.scrollTarget = this.clampScroll(this.scrollTarget)
-    this.setSelected(this.selectedId)
     if (this.hovered && !next.includes(this.hovered)) this.hovered = null
-  }
-
-  setSelected(id: string | null) {
-    this.pump.wake()
-    this.selectedId = id
-    for (const e of this.books) {
-      const on = e.id === id
-      e.coverMat.color.copy(e.coverBase)
-      if (on) e.coverMat.color.multiply(SELECT_TINT)
-      e.boardMat.emissive.setHex(on ? 0x4a3512 : 0x000000)
-    }
   }
 
   // Bounding rect of a book's front face in canvas px (morph source).
@@ -359,6 +347,7 @@ export class ShelfScene {
 
   dispose() {
     this.pump.stop()
+    this.cancelHold()
     this.ro.disconnect()
     this.unsubImages()
     const c = this.canvas
@@ -422,6 +411,7 @@ export class ShelfScene {
     this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
     this.canvas.setPointerCapture(e.pointerId)
     if (this.touches.size === 2) {
+      this.cancelHold()
       // A second finger converts any one-finger scroll into a pinch.
       this.drag = null
       this.trail = []
@@ -448,6 +438,21 @@ export class ShelfScene {
     this.trail = [{ x: e.clientX, t: e.timeStamp }]
     this.vel = 0
     this.clickWasDrag = false
+    const rect = this.canvas.getBoundingClientRect()
+    this.pick(e.clientX - rect.left, e.clientY - rect.top)
+    if (this.hovered) {
+      this.hold = {
+        id: e.pointerId,
+        x: e.clientX,
+        y: e.clientY,
+        bookId: this.hovered.id,
+      }
+      this.holdTimer = setTimeout(() => {
+        if (!this.hold || this.drag?.moved) return
+        this.clickWasDrag = true
+        this.events.onLongPress?.(this.hold.bookId)
+      }, 550)
+    }
   }
 
   private onPointerMove = (e: PointerEvent) => {
@@ -478,6 +483,9 @@ export class ShelfScene {
     const x = e.clientX - r.left
     const y = e.clientY - r.top
     if (this.drag && e.pointerId === this.drag.id && e.buttons) {
+      if (this.hold && Math.hypot(e.clientX - this.hold.x, e.clientY - this.hold.y) > 10) {
+        this.cancelHold()
+      }
       this.trail.push({ x: e.clientX, t: e.timeStamp })
       if (this.trail.length > 16) this.trail.shift()
       const dx = e.clientX - this.drag.x0
@@ -503,6 +511,7 @@ export class ShelfScene {
 
   private endDrag(e: PointerEvent, flick: boolean) {
     this.pump.wake()
+    this.cancelHold()
     this.touches.delete(e.pointerId)
     if (this.canvas.hasPointerCapture(e.pointerId)) this.canvas.releasePointerCapture(e.pointerId)
     if (this.pinch) {
@@ -541,6 +550,7 @@ export class ShelfScene {
   }
 
   private onPointerLeave = () => {
+    this.cancelHold()
     this.pump.wake()
     this.hovered = null
     this.canvas.style.cursor = ''
@@ -553,6 +563,12 @@ export class ShelfScene {
     }
     this.pick(e.offsetX, e.offsetY)
     if (this.hovered) this.events.onPick?.(this.hovered.id)
+  }
+
+  private cancelHold() {
+    if (this.holdTimer !== undefined) clearTimeout(this.holdTimer)
+    this.holdTimer = undefined
+    this.hold = null
   }
 
   private onWheel = (e: WheelEvent) => {
@@ -644,16 +660,11 @@ export class ShelfScene {
       e.group.updateWorldMatrix(true, false)
       const label = this.project(e, 0, BOOK_H / 2 + 0.18, 0)
       const title = this.project(e, 0, -BOOK_H / 2 - 0.04, 0)
-      const actions = this.project(e, 0, -BOOK_H / 2 - 0.05, 0)
       out.push({
         id: e.id,
         onScreen: !!label && label.x > -this.cw * 0.25 && label.x < this.cw * 1.25,
-        hover: e === this.hovered,
-        del: this.project(e, BOOK_W / 2, BOOK_H / 2, BOOK_D / 2),
-        sel: this.project(e, BOOK_W / 2, -BOOK_H / 2, BOOK_D / 2),
         label,
         title,
-        actions,
       })
     }
     this.events.onOverlay?.(out)
@@ -672,18 +683,16 @@ export class ShelfScene {
       let ty = base.y
       const tz = base.z
       const trx = base.rotX
-      let try_ = base.rotY
+      const try_ = base.rotY
       const trz = base.rotZ
       let ts = base.scale
       if (e === this.hovered) {
         ty += TILT_LIFT
       }
-      // Entrance: staggered, the books settle onto the table from slightly
-      // above with a small in-plane spin, fading in.
-      const en = easeOut(Math.max(0, e.enterT))
-      ty += (1 - en) * 0.55
-      try_ += (1 - en) * 0.22
-      ts *= 0.94 + 0.06 * en
+      // New books fade in and settle subtly; keep their cover orientation fixed.
+      const entrance = shelfEntrance(e.enterT)
+      ty += entrance.lift
+      ts *= entrance.scale
       const g = e.group
       const d =
         Math.abs(base.x - g.position.x) +
@@ -702,8 +711,8 @@ export class ShelfScene {
       g.rotation.z += (trz - g.rotation.z) * k
       g.scale.setScalar(g.scale.x + (ts - g.scale.x) * k)
       for (const m of e.fadeMats) {
-        m.opacity = en
-        m.transparent = en < 1
+        m.opacity = entrance.opacity
+        m.transparent = entrance.opacity < 1
       }
     }
 

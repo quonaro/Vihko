@@ -1,4 +1,5 @@
 import { getPhoto } from '../ink/ops'
+import type { CoverTexture } from '../types'
 
 // Rasterize a journal cover into a canvas texture: cover color or photo.
 // The title is not part of the texture — the shelf shows it as a DOM label
@@ -7,9 +8,61 @@ import { getPhoto } from '../ink/ops'
 export const COVER_W = 384
 export const COVER_H = Math.round(COVER_W / 0.735) // matches shelfLayout aspect
 
+const GRAIN_SIZE = 96
+let grainTile: HTMLCanvasElement | null | undefined
+
 export interface CoverInput {
   color: string // resolved cover color (hex)
   coverImg?: string | null // dataURL photo cover — wins over `color`
+  coverTexture?: CoverTexture
+}
+
+function paperGrain(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+  if (typeof ctx.createPattern !== 'function') return null
+  if (grainTile === undefined) {
+    const tile = document.createElement('canvas')
+    tile.width = tile.height = GRAIN_SIZE
+    const tileCtx = tile.getContext('2d')
+    if (!tileCtx) {
+      grainTile = null
+    } else {
+      const image = tileCtx.createImageData(GRAIN_SIZE, GRAIN_SIZE)
+      let seed = 0x51f15e
+      const random = () => {
+        seed = (seed * 1664525 + 1013904223) >>> 0
+        return seed
+      }
+      for (let y = 0; y < GRAIN_SIZE; y += 2) {
+        for (let x = 0; x < GRAIN_SIZE; x += 2) {
+          const light = random() & 1
+          const alpha = 10 + (random() % 13)
+          for (let dy = 0; dy < 2; dy++) {
+            for (let dx = 0; dx < 2; dx++) {
+              const i = ((y + dy) * GRAIN_SIZE + x + dx) * 4
+              image.data[i] = image.data[i + 1] = image.data[i + 2] = light ? 255 : 0
+              image.data[i + 3] = alpha
+            }
+          }
+        }
+      }
+      tileCtx.putImageData(image, 0, 0)
+      grainTile = tile
+    }
+  }
+  return grainTile ? ctx.createPattern(grainTile, 'repeat') : null
+}
+
+function comicHalftone(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  ctx.fillStyle = 'rgba(30,24,21,0.6)'
+  for (let y = Math.round(h * 0.58); y < h; y += 13) {
+    for (let x = 10; x < w; x += 13) {
+      ctx.globalAlpha = 0.16 + 0.16 * ((y - h * 0.58) / (h * 0.42))
+      ctx.beginPath()
+      ctx.arc(x, y, 1.8, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+  ctx.globalAlpha = 1
 }
 
 export function dominantColorFromPixels(data: Uint8ClampedArray): string {
@@ -76,14 +129,16 @@ export function paintCover(
     ctx.fillRect(0, 0, w, h)
   }
 
-  // Sheen like the DOM ::before gradient: gloss top-left, shade bottom-right.
-  const g = ctx.createLinearGradient(0, 0, w, h)
-  g.addColorStop(0, 'rgba(255,255,255,0.2)')
-  g.addColorStop(0.39, 'rgba(255,255,255,0.04)')
-  g.addColorStop(0.58, 'rgba(255,255,255,0)')
-  g.addColorStop(1, 'rgba(0,0,0,0.18)')
-  ctx.fillStyle = g
-  ctx.fillRect(0, 0, w, h)
+  const texture = input.coverTexture ?? 'paper'
+  if (texture === 'comic') comicHalftone(ctx, w, h)
+  else if (texture !== 'smooth') {
+    // Fine, low-contrast grain gives paper a printed finish without gloss.
+    const grain = paperGrain(ctx)
+    if (grain) {
+      ctx.fillStyle = grain
+      ctx.fillRect(0, 0, w, h)
+    }
+  }
 }
 
 // Offscreen canvas snapshot of a cover; null when 2D is unavailable (jsdom).

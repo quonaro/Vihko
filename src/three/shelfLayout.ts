@@ -86,6 +86,22 @@ export function shelfPose(i: number, total: number): ShelfPose {
   }
 }
 
+export interface ShelfEntrance {
+  lift: number
+  scale: number
+  opacity: number
+}
+
+export function shelfEntrance(t: number): ShelfEntrance {
+  const progress = Math.max(0, Math.min(1, t))
+  const eased = 1 - (1 - progress) ** 3
+  return {
+    lift: (1 - eased) * 0.12,
+    scale: 0.985 + 0.015 * eased,
+    opacity: eased,
+  }
+}
+
 // Hover lift: the flat look keeps books untilted — a hovered book just
 // rises a touch off the table.
 export const TILT_LIFT = 0.07

@@ -34,6 +34,9 @@ export type BrushTip = 'round' | 'noise' | 'airbrush' | 'marker'
 
 export const BRUSH_TIPS: BrushTip[] = ['round', 'noise', 'airbrush', 'marker']
 
+export type CoverTexture = 'paper' | 'smooth' | 'comic'
+export const COVER_TEXTURES: CoverTexture[] = ['paper', 'smooth', 'comic']
+
 // Per-tool brush parameters (store.brush). A full snapshot lands on each
 // stroke at draw time so replay never depends on current settings.
 export interface BrushParams {
@@ -189,6 +192,7 @@ export interface Journal {
   title: string
   cover: number // cover color index
   coverImg?: string // custom cover photo (dataURL) — wins over `cover`
+  coverTexture?: CoverTexture // absent in older saves; defaults to paper
   pages: Page[]
   createdAt: number
 }
