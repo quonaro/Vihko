@@ -267,7 +267,7 @@ Shelf and journal organization: tap the `⋯` journal control to select it,
 then rename/export/delete or change its cover from a preset/uploaded photo.
 Shelf search opens a modal listing matching journals by title (tap a result
 to open it). Journal view toggles between the fan and
-book spread; `⋯` offers rename/export/delete and the search icon jumps to a page.
+book spread.
 
 ## MCP
 

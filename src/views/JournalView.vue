@@ -1,31 +1,18 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import {
-  store,
-  currentJournal,
-  addPage,
-  deletePage,
-  openPage,
-  closeToShelf,
-  renameJournal,
-  deleteJournal,
-  journalToJson,
-} from '../store'
+import { store, currentJournal, addPage, deletePage, openPage, closeToShelf } from '../store'
 import { useI18n } from 'vue-i18n'
 import { initInk } from '../ink/engine'
-import { usePrompt } from '../composables/usePrompt'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
-import MobileSlider from '../components/MobileSlider.vue'
+import PageSizePicker from '../components/PageSizePicker.vue'
 import { pageSize, PAGE_SIZE_PRESETS } from '../pageSpace'
 import EmptyState from '../components/EmptyState.vue'
-import { saveFile } from '../saveFile'
 import type { JournalScene } from '../three/journalScene'
 import { canTurnStack } from '../three/layout'
 
 const { t } = useI18n()
-const { prompt } = usePrompt()
 const journal = computed(() => currentJournal())
-const deleteTarget = ref<{ type: 'page' | 'journal'; id: string } | null>(null)
+const deleteTarget = ref<string | null>(null)
 const mode = computed({
   get: () => store.journalMode,
   set: (value) => {
@@ -49,7 +36,6 @@ const currentPageSizeId = computed(() => {
   )
 })
 const pageSizePickerOpen = ref(false)
-const menuOn = ref(false)
 const glCanvas = ref<HTMLCanvasElement>()
 const glOk = ref(false)
 const glFailed = ref(false)
@@ -61,29 +47,12 @@ let sceneRequest = 0
 
 function requestDeletePage(id: string, ev: Event) {
   ev.stopPropagation()
-  deleteTarget.value = { type: 'page', id }
-}
-
-function selectPageSize(id: (typeof PAGE_SIZE_PRESETS)[number]['id']) {
-  store.pageSize = id
-  pageSizePickerOpen.value = false
-}
-
-function requestDeleteJournal() {
-  if (!journal.value) return
-  menuOn.value = false
-  deleteTarget.value = { type: 'journal', id: journal.value.id }
+  deleteTarget.value = id
 }
 
 function confirmDeletion() {
-  const target = deleteTarget.value
-  if (!target) return
-  if (target.type === 'page') {
-    deletePage(target.id)
-  } else {
-    deleteJournal(target.id)
-    closeToShelf()
-  }
+  if (!deleteTarget.value) return
+  deletePage(deleteTarget.value)
   deleteTarget.value = null
 }
 
@@ -162,43 +131,6 @@ watch(
 watch(pageIdx, (v) => {
   if (scene && !scene.busy) scene.setPage(v)
 })
-
-async function rename() {
-  menuOn.value = false
-  const j = journal.value
-  if (!j) return
-  const title = await prompt({
-    title: t('shelf.rename'),
-    value: j.title,
-    placeholder: t('shelf.renamePrompt'),
-  })
-  if (title) renameJournal(j.id, title)
-}
-
-function exportJournal() {
-  const j = journal.value
-  const json = j && journalToJson(j.id)
-  if (!json) return
-  saveFile(`${j!.title}.paper.json`, new Blob([json], { type: 'application/json' }))
-  menuOn.value = false
-}
-
-async function goToPage() {
-  const j = journal.value
-  if (!j) return
-  const raw = await prompt({
-    title: t('journal.goto'),
-    value: String(pageIdx.value + 1),
-    placeholder: t('journal.gotoPrompt'),
-    inputMode: 'numeric',
-    confirmText: t('journal.goto'),
-  })
-  const n = Number(raw)
-  if (!raw || !Number.isInteger(n) || n < 1 || n > j.pages.length) return
-  if (mode.value === 'stack') pageIdx.value = n - 1
-  const id = j.pages[n - 1].id
-  openPage(id)
-}
 </script>
 
 <template>
@@ -225,35 +157,6 @@ async function goToPage() {
         <svg viewBox="0 0 24 24" width="19" height="19"><rect x="4" y="4" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="4" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="4" y="13" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="13" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
       </button>
     </nav>
-
-    <nav class="right-actions">
-      <button class="icon-btn" @click="goToPage" :title="t('journal.goto')">
-        <svg viewBox="0 0 24 24" width="19" height="19"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5 L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      </button>
-      <button class="icon-btn" @click="menuOn = !menuOn" :title="t('shelf.menu')">⋯</button>
-    </nav>
-
-    <div v-if="menuOn" class="menu-shield" @click="menuOn = false" />
-    <div v-if="menuOn" class="menu-pop">
-      <button class="menu-item" @click="rename">
-        <svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16">
-          <path d="m12.8 3.2 4 4M3.5 16.5l3.8-.8L16 7a1.8 1.8 0 0 0-2.5-2.5l-8.7 8.7-.8 3.3Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        {{ t('shelf.rename') }}
-      </button>
-      <button class="menu-item" @click="exportJournal">
-        <svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16">
-          <path d="M5 2.8h6l4 4v4.5M11 2.8v4h4M5 2.8v14.4h5M12 14v-5m-2 3 2-2 2 2M11 17.2h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        {{ t('shelf.export') }}
-      </button>
-      <button class="menu-item danger" @click="requestDeleteJournal">
-        <svg aria-hidden="true" viewBox="0 0 20 20" width="16" height="16">
-          <path d="M3.5 5.5h13M8 5.5V3.2h4v2.3m3.2 0-.7 11.2H5.5L4.8 5.5m3.2 3v5.2m4-5.2v5.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        {{ t('shelf.delete') }}
-      </button>
-    </div>
 
     <header>
       <h1>{{ journal.title }}</h1>
@@ -335,38 +238,14 @@ async function goToPage() {
         </svg>
       </button>
       <button class="round" @click="addPage" :title="t('journal.newPage')">
-        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 5 L12 19 M5 12 L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5 L12 19 M5 12 L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </footer>
-    <MobileSlider
-      :open="pageSizePickerOpen"
-      :title="t('journal.pageSize')"
-      size="sm"
-      @update:open="pageSizePickerOpen = $event"
-    >
-      <div class="page-size-options" role="group" :aria-label="t('journal.pageSize')">
-        <button
-          v-for="s in PAGE_SIZE_PRESETS"
-          :key="s.id"
-          class="page-size-option"
-          :class="{ selected: store.pageSize === s.id }"
-          :aria-pressed="store.pageSize === s.id"
-          @click="selectPageSize(s.id)"
-        >
-          <span class="size-preview" :style="{ width: `${36 * s.w / s.h}px` }" aria-hidden="true"></span>
-          <span class="size-label">{{ t(`journal.size.${s.id}`) }}</span>
-          <svg v-if="store.pageSize === s.id" class="size-check" viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
-            <path d="m4 10 4 4 8-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-      </div>
-    </MobileSlider>
+    <PageSizePicker v-model:open="pageSizePickerOpen" />
     <ConfirmDialog
       :open="deleteTarget !== null"
-      :title="deleteTarget?.type === 'page' ? t('dlg.deletePageTitle') : t('dlg.deleteJournalTitle')"
-      :message="deleteTarget?.type === 'page'
-        ? t('dlg.deletePageMessage')
-        : t('dlg.deleteJournalMessage', { title: journal.title })"
+      :title="t('dlg.deletePageTitle')"
+      :message="t('dlg.deletePageMessage')"
       @confirm="confirmDeletion"
       @cancel="deleteTarget = null"
     />
@@ -408,14 +287,6 @@ async function goToPage() {
   gap: 4px;
   z-index: 10;
 }
-.right-actions {
-  position: absolute;
-  top: 20px;
-  right: 26px;
-  display: flex;
-  gap: 4px;
-  z-index: 10;
-}
 .icon-btn {
   width: 40px;
   height: 40px;
@@ -430,40 +301,6 @@ async function goToPage() {
   .icon-btn:hover { color: var(--paper-text); background: var(--paper-hover); }
 }
 .icon-btn.on { color: var(--paper-text); background: var(--paper-hover); }
-.menu-shield {
-  position: fixed;
-  inset: 0;
-  z-index: 39;
-}
-.menu-pop {
-  position: absolute;
-  top: 56px;
-  right: 26px;
-  background: var(--chrome-bg);
-  color: var(--chrome-text);
-  border: 1px solid var(--chrome-border);
-  border-radius: 10px;
-  padding: 6px;
-  z-index: 40;
-  box-shadow: var(--chrome-shadow);
-}
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 9px 16px;
-  color: var(--chrome-text);
-  border-radius: 7px;
-  text-align: left;
-  font-size: 14px;
-  white-space: nowrap;
-}
-.menu-item svg { flex: 0 0 16px; }
-@media (hover: hover) {
-  .menu-item:hover { background: var(--chrome-hover); }
-}
-.menu-item.danger { color: #e07070; }
 header {
   position: relative;
   z-index: 10;
@@ -596,48 +433,9 @@ footer {
   font-size: 12px;
   backdrop-filter: blur(6px);
 }
-.page-size-options {
-  display: grid;
-  gap: 8px;
-  padding-bottom: 2px;
-}
-.page-size-option {
-  min-height: 64px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 14px;
-  border: 1px solid var(--chrome-border);
-  border-radius: 12px;
-  color: var(--chrome-text);
-  text-align: left;
-  background: transparent;
-  transition: background .16s ease, border-color .16s ease;
-}
-.page-size-option.selected {
-  border-color: var(--chrome-text);
-  background: var(--chrome-hover);
-}
-@media (hover: hover) {
-  .page-size-option:hover { background: var(--chrome-hover); }
-}
-.size-preview {
-  flex: 0 0 auto;
-  height: 36px;
-  max-width: 58px;
-  border: 1.5px solid currentColor;
-  border-radius: 3px;
-  opacity: .8;
-}
-.size-label {
-  flex: 1;
-  font-size: 14px;
-  font-weight: 500;
-}
-.size-check { color: var(--chrome-text); }
 .round {
-  width: 48px;
-  height: 48px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: #191a18;
   color: #fff;
@@ -657,7 +455,6 @@ footer {
 .round svg { display: block; }
 @media (max-width: 600px) {
   .back { left: 10px; top: 10px; min-height: 44px; padding: 0 8px; }
-  .right-actions { right: 8px; top: 10px; }
   .icon-btn { width: 44px; height: 44px; }
   header { padding-top: 54px; }
   h1 { font-size: clamp(20px, 6vw, 25px); }

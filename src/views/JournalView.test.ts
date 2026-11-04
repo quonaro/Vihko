@@ -251,43 +251,6 @@ describe('JournalView', () => {
     expect(w.findAll('footer .round')).toHaveLength(1)
   })
 
-  it('closes the ⋯ menu on an outside click', async () => {
-    const w = mountJournal()
-    await w.findAll('.right-actions .icon-btn')[1].trigger('click')
-    expect(w.find('.menu-pop').exists()).toBe(true)
-    await w.find('.menu-shield').trigger('click')
-    expect(w.find('.menu-pop').exists()).toBe(false)
-    expect(w.find('.menu-shield').exists()).toBe(false)
-  })
-
-  it('shows an icon beside each journal menu action', async () => {
-    const w = mountJournal()
-    await w.findAll('.right-actions .icon-btn')[1].trigger('click')
-    const items = w.findAll('.menu-item')
-    expect(items).toHaveLength(3)
-    expect(items.every((item) => item.find('svg[aria-hidden="true"]').exists())).toBe(true)
-  })
-
-  it('requires modal confirmation before deleting a journal', async () => {
-    const w = mountJournal()
-    await w.findAll('.right-actions .icon-btn')[1].trigger('click')
-    await w.find('.menu-item.danger').trigger('click')
-
-    expect(store.journals).toHaveLength(1)
-    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Field Notes')
-    document.body.querySelector<HTMLButtonElement>('.confirm-cancel')!.click()
-    await w.vm.$nextTick()
-    expect(store.journals).toHaveLength(1)
-
-    await w.findAll('.right-actions .icon-btn')[1].trigger('click')
-    await w.find('.menu-item.danger').trigger('click')
-    document.body.querySelector<HTMLButtonElement>('.confirm-delete')!.click()
-    await w.vm.$nextTick()
-    expect(store.journals).toHaveLength(0)
-    expect(store.view).toBe('shelf')
-    w.unmount()
-  })
-
   // The scene is only constructed for a canvas attached to the document, so
   // these mount into the body to exercise the real busy/onFlipDone wiring.
   describe('page delete button', () => {

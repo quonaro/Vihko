@@ -65,8 +65,6 @@ const messages = {
       overview: 'Overview',
       previousPage: 'Previous page',
       nextPage: 'Next page',
-      goto: 'Go to page',
-      gotoPrompt: 'Page number',
       webglError: '3D rendering is unavailable on this device.',
     },
     canvas: {
@@ -273,8 +271,6 @@ const messages = {
       overview: 'Обзор',
       previousPage: 'Предыдущая страница',
       nextPage: 'Следующая страница',
-      goto: 'Перейти к странице',
-      gotoPrompt: 'Номер страницы',
       webglError: 'На этом устройстве недоступен 3D-режим.',
     },
     canvas: {
