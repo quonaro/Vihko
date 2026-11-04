@@ -68,11 +68,11 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
     @update:open="emit('update:open', $event)"
   >
     <div class="set-row">
-      <span class="set-label">{{ t('shelf.version') }}</span>
+      <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V4h9l8.6 8.6a2 2 0 0 1 0 .8Z"/><path d="M7.5 7.5h.01"/></svg>{{ t('shelf.version') }}</span>
       <span class="set-value">v{{ appVersion }}</span>
     </div>
     <div class="set-row">
-      <span class="set-label">{{ t('shelf.theme') }}</span>
+      <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/></svg>{{ t('shelf.theme') }}</span>
       <div class="seg">
         <button
           class="seg-btn"
@@ -89,14 +89,14 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
       </div>
     </div>
     <div class="set-row">
-      <span class="set-label">{{ t('shelf.language') }}</span>
+      <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c-3.8 4.2-3.8 13.8 0 18"/><path d="M12 3c3.8 4.2 3.8 13.8 0 18"/></svg>{{ t('shelf.language') }}</span>
       <div class="seg">
         <button class="seg-btn" :class="{ on: locale === 'en' }" @click="setLocale('en')">English</button>
         <button class="seg-btn" :class="{ on: locale === 'ru' }" @click="setLocale('ru')">Русский</button>
       </div>
     </div>
     <div class="set-row set-col">
-      <span class="set-label">{{ t('shelf.renderQuality') }}</span>
+      <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 16.5a8.5 8.5 0 1 1 15 0"/><path d="M12 14l4-5"/><circle cx="12" cy="14" r="1.2" fill="currentColor" stroke="none"/></svg>{{ t('shelf.renderQuality') }}</span>
       <div class="seg">
         <button
           v-for="q in QUALITY_LEVELS"
@@ -109,7 +109,7 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
       </div>
     </div>
     <div class="set-row set-col">
-      <span class="set-label">{{ t('shelf.coverQuality') }}</span>
+      <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5" width="15" height="14" rx="2"/><circle cx="9.5" cy="10" r="1.5"/><path d="m5.5 16.5 5-5 3.5 3.5 2.5-2.5 2.5 2.5"/></svg>{{ t('shelf.coverQuality') }}</span>
       <div class="seg">
         <button
           v-for="q in QUALITY_LEVELS"
@@ -122,7 +122,7 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
       </div>
     </div>
     <div class="set-row">
-      <span class="set-label">{{ t('shelf.updates') }}</span>
+      <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 3v5h-5"/></svg>{{ t('shelf.updates') }}</span>
       <button
         class="set-action"
         :class="{ accent: update.status === 'available' }"
@@ -136,14 +136,14 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
     </div>
     <template v-if="showPerms">
       <div class="set-row">
-        <span class="set-label">{{ t('shelf.permNotif') }}</span>
+        <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8.5a6 6 0 1 0-12 0c0 6.5-2.5 6.5-2.5 8.5h17c0-2-2.5-2-2.5-8.5"/><path d="M10.5 20.5a1.8 1.8 0 0 0 3 0"/></svg>{{ t('shelf.permNotif') }}</span>
         <span v-if="perms.notifications === 'granted'" class="set-value">{{ t('shelf.permGranted') }}</span>
         <button v-else class="set-action" @click="grantNotificationPermission()">{{
           perms.notifications === 'denied' ? t('shelf.permOpenSettings') : t('shelf.permGrant')
         }}</button>
       </div>
       <div class="set-row">
-        <span class="set-label">{{ t('shelf.permInstall') }}</span>
+        <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 4.5 7.5v9L12 20.5l7.5-4v-9L12 3.5Z"/><path d="M4.5 7.5 12 11.5l7.5-4M12 11.5v9"/></svg>{{ t('shelf.permInstall') }}</span>
         <span v-if="perms.install === 'granted'" class="set-value">{{ t('shelf.permGranted') }}</span>
         <button v-else class="set-action" @click="grantInstallPermission()">{{ t('shelf.permOpenSettings') }}</button>
       </div>
@@ -166,7 +166,24 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
   gap: 8px;
 }
 .set-col .seg-btn { flex: 1; padding: 7px 0; }
-.set-label { color: var(--chrome-text); font-size: 14px; }
+.set-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--chrome-text);
+  font-size: 14px;
+}
+.set-label svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--chrome-muted);
+}
 .seg {
   display: flex;
   gap: 3px;
@@ -188,6 +205,7 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
   font-variant-numeric: tabular-nums;
 }
 .set-action {
+  min-height: 36px;
   padding: 7px 16px;
   border-radius: 8px;
   background: var(--chrome-control-bg);
