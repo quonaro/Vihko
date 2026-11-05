@@ -119,6 +119,30 @@ describe('saveJournalEntries (localStorage path)', () => {
     expect(localStorage.getItem('vihko:v1:page:gone')).toBeNull()
   })
 
+  it('warns once per streak when localStorage writes fail', async () => {
+    localStorage.clear()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError')
+    })
+    const batch = {
+      journals: [{ id: 'a', json: '{}' }],
+      pages: [],
+      deleteJournals: [],
+      deletePages: [],
+    }
+
+    await saveJournalEntries(batch)
+    await saveJournalEntries(batch)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0][1]).toBe('localStorage save failed (quota?)')
+    expect(warn.mock.calls[0][3]).toEqual({ key: 'vihko:v1:journal:a', bytes: 2 })
+
+    setItem.mockRestore()
+    await saveJournalEntries(batch)
+    expect(localStorage.getItem('vihko:v1:journal:a')).toBe('{}')
+  })
+
   it('assembleJournals reassembles split rows', () => {
     const rows = v2Rows(saved)
     const journals = assembleJournals({ v: 2, order: ['saved'] }, (key) => rows[key])

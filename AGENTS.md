@@ -213,8 +213,12 @@ screens.
   rows, so a stroke edit serializes a single page; v1 whole-blob saves are
   split into rows on load. Native Android/iOS store the rows in SQLite
   (`app_state` KV table, WAL + checkpoint/VACUUM on open, one-time migration
-  from the prior localStorage save); browser development uses the same row
-  layout under `vihko:v1[:journal:<id>|:page:<id>]` localStorage keys.
+  from the prior localStorage save); browsers use the same row layout in
+  IndexedDB (`vihko` db, `app_state` store via an IDB→`JournalDatabase`
+  adapter, hydrate + splice at init like the native path, one-time migration
+  from `vihko:v1[:journal:<id>|:page:<id>]` localStorage rows which are then
+  removed). Where `indexedDB` is missing or fails to open — jsdom tests,
+  locked-down browsers — the code falls back to those localStorage keys.
 - `src/covers.ts` — generated, local cover-art presets for the cover picker.
 - `src/router.ts` — tiny history-API router: two-way sync between the URL and
   `store.view`/`journalId`/`pageId`/`journalMode` (`/` shelf,

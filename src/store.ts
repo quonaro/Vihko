@@ -16,10 +16,14 @@ import type {
   ToolId,
 } from './types'
 import { i18n } from './i18n'
+import { logger } from './log'
+
+const log = logger('store')
 import { PAGE_W, PAGE_H, pageSize, pageSizePreset, spreadRect } from './pageSpace'
 import type { PageSizeId } from './pageSpace'
 import {
   assembleJournals,
+  loadOrCreateBrowserJournals,
   loadOrCreateNativeJournals,
   saveJournalEntries,
   usesNativeSqlite,
@@ -107,7 +111,10 @@ function journalRow(j: Journal) {
 
 function flushSave() {
   saveTimer = null
-  if (!persistenceReady) return
+  if (!persistenceReady) {
+    log.debug('save deferred: persistence not ready yet')
+    return
+  }
   const rawJournals = store.journals.map((j) => toRaw(j))
   const byId = new Map(rawJournals.map((j) => [j.id, j]))
   const batch: JournalSaveBatch = {
@@ -163,9 +170,16 @@ function flushSave() {
     !batch.deletePages.length
   )
     return
+  log.debug('flushing save batch', {
+    order: !!batch.order,
+    journals: batch.journals.length,
+    pages: batch.pages.length,
+    deleteJournals: batch.deleteJournals.length,
+    deletePages: batch.deletePages.length,
+  })
   saveQueue = saveQueue
     .then(() => saveJournalEntries(batch))
-    .catch((error: unknown) => console.error('Could not save journals', error))
+    .catch((error: unknown) => log.error('Could not save journals', error))
 }
 const LEGACY_KEYS: [string, string][] = [
   ['paper-port:v1', STORAGE_KEY],
@@ -178,6 +192,7 @@ const LEGACY_KEYS: [string, string][] = [
 export function migrateToPageSpace(journals: Journal[], cssW: number, cssH: number) {
   const kx = PAGE_W / cssW
   const ky = PAGE_H / cssH
+  log.info('migrating legacy screen-px saves to page space', { cssW, cssH, kx, ky })
   for (const j of journals) {
     for (const p of j.pages) {
       touchPage(p)
@@ -269,12 +284,16 @@ function load(): Journal[] {
   try {
     for (const [from, to] of LEGACY_KEYS) {
       const v = localStorage.getItem(from)
-      if (v !== null && localStorage.getItem(to) === null) localStorage.setItem(to, v)
+      if (v !== null && localStorage.getItem(to) === null) {
+        localStorage.setItem(to, v)
+        log.debug('migrated legacy storage key', { from, to })
+      }
     }
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as Journal[] | JournalIndex
       if (Array.isArray(parsed) && parsed.length) {
+        log.debug('loaded v1 whole-blob save', parsed.length)
         if (localStorage.getItem(SPACE_KEY) !== '1' && typeof window !== 'undefined') {
           migrateToPageSpace(parsed, window.innerWidth, window.innerHeight)
           try {
@@ -296,12 +315,15 @@ function load(): Journal[] {
           return v ?? undefined
         })
         storageV2Ready = true
+        log.debug('assembled v2 rows into journals', journals.length)
         return journals
       }
     }
   } catch {
     /* corrupted state -> reseed */
+    log.warn('stored state unreadable, reseeding defaults')
   }
+  log.debug('seeding default journals')
   return seed()
 }
 
@@ -515,6 +537,7 @@ export function currentPage(): Page | null {
 }
 
 export function openJournal(id: string) {
+  log.debug('openJournal', id)
   store.journalId = id
   store.pageId = null
   store.journalMode = 'stack'
@@ -524,6 +547,7 @@ export function openJournal(id: string) {
 }
 
 export function openPage(id: string) {
+  log.debug('openPage', id)
   const pageIndex = currentJournal()?.pages.findIndex((p) => p.id === id) ?? -1
   if (pageIndex >= 0) {
     store.journalPageIdx = pageIndex
@@ -534,6 +558,7 @@ export function openPage(id: string) {
 }
 
 export function closeToJournal() {
+  log.debug('closeToJournal', store.journalId)
   store.view = store.journalId ? 'journal' : 'shelf'
   store.pageId = null
 }
@@ -552,6 +577,7 @@ export function addJournal() {
   store.journals.push(j)
   markJournalDirty(j.id)
   markOrderDirty()
+  log.debug('journal added', j.id)
   return j
 }
 
@@ -561,6 +587,7 @@ export function addPage() {
   const p = newPage(pageSizePreset(store.pageSize))
   j.pages.push(p)
   markJournalDirty(j.id)
+  log.debug('page added', { journal: j.id, page: p.id })
   return p
 }
 
@@ -574,6 +601,7 @@ export function deletePage(id: string) {
     markJournalDirty(j.id)
   }
   if (!j.pages.length) {
+    log.debug('last page deleted, inserting a fresh page')
     j.pages.push(newPage())
     markJournalDirty(j.id)
   }
@@ -582,6 +610,7 @@ export function deletePage(id: string) {
 export function deleteJournal(id: string) {
   const i = store.journals.findIndex((j) => j.id === id)
   if (i < 0) return
+  log.debug('journal deleted', id)
   const [j] = store.journals.splice(i, 1)
   removedJournals.add(id)
   for (const p of j.pages) removedPages.add(p.id)
@@ -665,7 +694,10 @@ export function ensurePageLayers(p: Page): Layer[] {
     p.activeLayerId = p.layers[p.layers.length - 1].id
     changed = true
   }
-  if (changed) markPageDirty(p.id)
+  if (changed) {
+    log.debug('ensurePageLayers repaired legacy assignments', p.id)
+    markPageDirty(p.id)
+  }
   return p.layers
 }
 
@@ -761,8 +793,12 @@ export function pushStroke(stroke: Stroke) {
   stroke.layerId ??= p.activeLayerId ?? ensurePageLayers(p)[0].id
   p.strokes.push(stroke)
   touchPage(p)
-  if (p.strokes.length > 400) p.strokes.shift()
+  if (p.strokes.length > 400) {
+    p.strokes.shift()
+    log.warn('page stroke cap reached, dropped the oldest stroke', p.id)
+  }
   undone.length = 0
+  log.debug('stroke pushed', { page: p.id, tool: stroke.tool, pts: stroke.pts.length })
 }
 
 // Raster ops (fill/cut/photo/clear) interleave with strokes via `after`.
@@ -774,6 +810,7 @@ export function pushOp(op: PageOp) {
   p.ops.push(op)
   touchPage(p)
   undone.length = 0
+  log.debug('op pushed', { page: p.id, kind: op.kind })
 }
 
 type Action = { kind: 'stroke'; stroke: Stroke } | { kind: 'op'; op: PageOp }
@@ -799,8 +836,10 @@ export function undoStroke(): boolean {
   if (!p || !canUndo()) return false
   if (newestIsOp(p)) {
     undone.push({ kind: 'op', op: p.ops!.pop()! })
+    log.debug('undid op')
   } else {
     undone.push({ kind: 'stroke', stroke: p.strokes.pop()! })
+    log.debug('undid stroke')
   }
   touchPage(p)
   if (undone.length > MAX_UNDO) undone.shift()
@@ -816,6 +855,7 @@ export function redoStroke(): boolean {
     p.ops.push(a.op)
   } else p.strokes.push(a.stroke)
   touchPage(p)
+  log.debug('redid', a.kind)
   return true
 }
 
@@ -836,11 +876,36 @@ export function clearPage() {
 export const undone = reactive<Action[]>([])
 
 export async function initializeStorePersistence(): Promise<void> {
-  if (!usesNativeSqlite()) return
+  if (!usesNativeSqlite()) {
+    if (typeof indexedDB === 'undefined') {
+      log.debug('browser storage path (localStorage rows)')
+      return
+    }
+    // Same async hydrate as the native path below: the sync load() output is
+    // the first paint (and the migration source); IndexedDB is the truth.
+    persistenceReady = false
+    try {
+      const journals = await loadOrCreateBrowserJournals(store.journals)
+      if (journals) {
+        store.journals.splice(0, store.journals.length, ...journals)
+        storageV2Ready = true // init already seeded/migrated every row
+        log.info('indexeddb persistence ready', journals.length)
+      }
+    } catch (e) {
+      log.warn('indexeddb persistence failed, staying on localStorage', e)
+    } finally {
+      persistenceReady = true
+      // Flush whatever was dirtied while hydrating (migrations, early edits).
+      scheduleSave()
+    }
+    return
+  }
+  log.info('native sqlite persistence initializing')
   const journals = await loadOrCreateNativeJournals(store.journals)
   store.journals.splice(0, store.journals.length, ...journals)
   persistenceReady = true
   storageV2Ready = true // init already seeded/migrated every row
+  log.info('native sqlite persistence ready', journals.length)
 }
 
 // Structural safety net: array-level mutations not routed through the
