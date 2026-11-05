@@ -1,4 +1,7 @@
 import { ref } from 'vue'
+import { logger } from './log'
+
+const log = logger('quality')
 
 // User-facing quality settings (settings sheet on the shelf). Kept out of
 // the three chunk so the dialog doesn't pull WebGL into the main bundle.
@@ -23,11 +26,13 @@ export const glQuality = ref<Quality>(readQuality(GL_QUALITY_KEY, 'medium'))
 export const coverQuality = ref<Quality>(readQuality(COVER_QUALITY_KEY, 'medium'))
 
 export function setGlQuality(q: Quality) {
+  log.debug('gl quality set', q)
   glQuality.value = q
   localStorage.setItem(GL_QUALITY_KEY, q)
 }
 
 export function setCoverQuality(q: Quality) {
+  log.debug('cover quality set', q)
   coverQuality.value = q
   localStorage.setItem(COVER_QUALITY_KEY, q)
 }

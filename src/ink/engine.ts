@@ -1,4 +1,7 @@
+import { logger } from '../log'
 import type { InkEngine, Sample } from '../types'
+
+const log = logger('ink')
 
 declare global {
   interface Window {
@@ -112,6 +115,7 @@ const profile = (tool: string): Profile => {
     case 'eraser':
       return { dia: 26, thinning: 0, streamline: 0.4, taperStart: 0, taperEnd: 0, alpha: 1.0 }
     default:
+      log.debug('profile: unknown tool, using defaults', tool)
       return { dia: 5, thinning: 0.5, streamline: 0.5, taperStart: 0, taperEnd: 0, alpha: 1 }
   }
 }
@@ -162,7 +166,10 @@ const newStroke = (tool: string, size: number, stab: number): Stroke => {
 const minLen = (s: Stroke) => Math.min(Math.max(s.dia * 0.5, 1.5), 10)
 
 const pressureFor = (s: Stroke, p: Pt, dist: number) => {
-  if (!s.realP && Math.abs(p.p - s.firstP) > REAL_PRESSURE_DELTA) s.realP = true
+  if (!s.realP && Math.abs(p.p - s.firstP) > REAL_PRESSURE_DELTA) {
+    s.realP = true
+    log.debug('real stylus pressure detected, switching off speed simulation')
+  }
   if (s.realP) {
     s.prevP += (p.p - s.prevP) * 0.6
     return s.prevP
@@ -216,6 +223,7 @@ const feed = (s: Stroke, p: Pt, last: boolean, out: Sample[]) => {
   s.rl += dist
   if (!s.minOK && !last && s.rl < minLen(s)) return
   s.minOK = true
+  log.debug('stroke passed the min-length noise gate')
 
   const pr = pressureFor(s, p, dist)
   const w = widthFor(s, pr)
@@ -259,6 +267,7 @@ const flush = (s: Stroke): Sample[] => {
   }
   s.buf = []
   if (s.hasPrev && s.rl < minLen(s)) {
+    log.debug('stroke below min length, emitting a tap dot')
     const w = s.prof.dia * (0.5 - s.prof.thinning * (0.5 - s.prevP))
     out.length = 0
     out.push({ x: s.prev.x, y: s.prev.y, w: Math.max(MIN_W, w), a: s.prof.alpha })
@@ -577,15 +586,20 @@ function pxEraseColor(
 export function jsEngine(): InkEngine {
   const strokes = new Map<number, Stroke>()
   let nextId = 1
+  log.info('JS fallback engine active')
   return {
     begin: (tool, size = 1, stab = -1) => {
       const id = nextId++
       strokes.set(id, newStroke(tool, size, stab))
+      log.debug('begin', { id, tool, size, stab })
       return id
     },
     addPoint: (id, x, y, t, p) => {
       const s = strokes.get(id)
-      if (!s) return []
+      if (!s) {
+        log.debug('addPoint for unknown stroke', id)
+        return []
+      }
       const pt = { x, y, t, p }
       s.pts.push(pt)
       const out: Sample[] = []
@@ -602,9 +616,13 @@ export function jsEngine(): InkEngine {
     },
     end: (id) => {
       const s = strokes.get(id)
-      if (!s) return []
+      if (!s) {
+        log.debug('end for unknown stroke', id)
+        return []
+      }
       const out = flush(s)
       strokes.delete(id)
+      log.debug('end', { id, samples: out.length })
       return out
     },
     tail: (id) => {
@@ -637,9 +655,10 @@ export function initInk(): Promise<InkEngine> {
         )
         void go.run(result.instance)
         if (!window.Ink) throw new Error('Ink global missing after wasm init')
+        log.info('wasm engine loaded')
         return window.Ink as InkEngine
       } catch (err) {
-        console.warn('[ink] wasm engine unavailable, using JS fallback:', err)
+        log.warn('wasm engine unavailable, using JS fallback:', err)
         return jsEngine()
       }
     })()

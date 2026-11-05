@@ -1,6 +1,9 @@
 import { toRaw } from 'vue'
+import { logger } from '../log'
 import type { InkEngine, Layer, Page, PageOp, Sample, Stroke } from '../types'
 import { PAGE_H, PAGE_W, pageSize } from '../pageSpace'
+
+const log = logger('ink:layers')
 import { applyOp, applyPhoto, hexToRgb, pathTo } from './ops'
 import { renderSamples } from './renderer'
 
@@ -96,6 +99,7 @@ export function cutOpForLayer(
 
 export function clearLayerRasterCache(pageId?: string, layerId?: string) {
   const prefix = pageId && layerId ? `${pageId}|${layerId}` : pageId ? `${pageId}|` : ''
+  log.debug('raster cache cleared', prefix || 'all')
   for (const key of rasterCache.keys()) {
     if (!prefix || key.startsWith(prefix)) rasterCache.delete(key)
   }
@@ -133,7 +137,11 @@ function layerSignature(
 // then takes the normal replay path.
 export function adoptLayerRasterTail(page: Page, layer: Layer, canvas: HTMLCanvasElement): boolean {
   const entry = rasterCache.get(`${page.id}|${layer.id}`)
-  if (!entry || entry.canvas !== canvas) return false
+  if (!entry || entry.canvas !== canvas) {
+    log.debug('adoptLayerRasterTail missed, taking the replay path', layer.id)
+    return false
+  }
+  log.debug('adopted live-painted raster tail', layer.id)
   const { ops, local: layerOps } = layerLocalOps(page, layer)
   entry.signature = layerSignature(
     layerStrokes(page, layer),
@@ -478,6 +486,7 @@ function paintLayer(
   if (paintLayerState.clip && mask) {
     const scratch = clipCtx(target)
     if (!scratch) {
+      log.debug('clipped layer without scratch, compositing unmasked', layer.id)
       compositeLayer(
         ctx,
         content,
@@ -593,6 +602,7 @@ function ensureLayerRaster(
     rasterCache.set(key, entry!)
     return entry!
   }
+  log.debug('layer raster rebuild', { key, force })
   // Fast path for appended content: when the cached signature is a strict
   // prefix of the new one, only the new tail entries need painting — a full
   // replay re-renders every stroke of the layer on each commit.
@@ -607,6 +617,10 @@ function ensureLayerRaster(
   if (extending && entry) {
     const rc = entry.canvas.getContext('2d', { willReadFrequently: true })
     if (rc) {
+      log.debug('layer raster extended in place', {
+        key,
+        added: signature.length - oldSignature!.length,
+      })
       const scale = entry.canvas.width / pageSize(page).w
       for (const item of signature.slice(oldSignature!.length)) {
         if (typeof (item as PageOp).kind === 'string') {
@@ -645,6 +659,7 @@ function ensureLayerRaster(
     const oldest = rasterCache.keys().next().value
     if (oldest === undefined) break
     rasterCache.delete(oldest)
+    log.debug('raster cache evicted', oldest)
   }
   return entry
 }
@@ -673,6 +688,7 @@ function ensureLayerMask(page: Page, ink: InkEngine, layer: Layer): RasterEntry 
     oldSignature.length === signature.length &&
     signature.every((item, i) => item === oldSignature[i])
   if (cacheHit) return entry!
+  log.debug('layer mask raster rebuild', key)
   const raster = entry?.canvas ?? document.createElement('canvas')
   const newW = Math.min(
     LAYER_RASTER_MAX_W,
@@ -827,6 +843,7 @@ function replayStroke(
   ) {
     const dabs: number[] = []
     for (const s of memoSamples(ink, stroke)) dabs.push(s.x, s.y, s.w, s.a)
+    log.debug('replaying wet stroke', { dabs: dabs.length / 4, pickup: stroke.wet ?? 0.6 })
     wetStrokeDabs(raster, ctx, dabs, stroke.color, scale, ink, stroke.wet ?? 0.6, stroke.clip)
     return
   }

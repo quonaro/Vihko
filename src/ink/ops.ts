@@ -1,4 +1,7 @@
+import { logger } from '../log'
 import type { InkEngine, PageOp, PhotoItem } from '../types'
+
+const log = logger('ink:ops')
 
 const PAPER = '#f6f1e6'
 
@@ -63,13 +66,19 @@ export function floodFill(
     const y0 = Math.max(0, Math.floor(rect.y))
     const x1 = Math.min(wDev, Math.ceil(rect.x + rect.w))
     const y1 = Math.min(hDev, Math.ceil(rect.y + rect.h))
-    if (x1 <= x0 || y1 <= y0) return
+    if (x1 <= x0 || y1 <= y0) {
+      log.debug('fill skipped: op rect misses the canvas')
+      return
+    }
     bx = x0
     by = y0
     bw = x1 - x0
     bh = y1 - y0
   }
-  if (ix < bx || iy < by || ix >= bx + bw || iy >= by + bh) return
+  if (ix < bx || iy < by || ix >= bx + bw || iy >= by + bh) {
+    log.debug('fill skipped: seed outside the region', { ix, iy })
+    return
+  }
   if (typeof ctx.getImageData !== 'function') return // no 2d backend (jsdom)
 
   const img = ctx.getImageData(bx, by, bw, bh)
@@ -81,25 +90,34 @@ export function floodFill(
 
   // Inverse fill: paint everything outside the seed's matching region.
   if (invert && ink?.inverseFill) {
-    if (ink.inverseFill(d, bw, bh, six, siy, tr, tg, tb, tol, pr, pg, pb, 128) > 0)
-      ctx.putImageData(img, bx, by)
+    const n = ink.inverseFill(d, bw, bh, six, siy, tr, tg, tb, tol, pr, pg, pb, 128)
+    if (n > 0) ctx.putImageData(img, bx, by)
+    log.debug('inverse fill via engine kernel', n)
     return
   }
-  if (invert) return // no kernel — leave the canvas untouched
+  if (invert) {
+    log.debug('inverse fill skipped: no engine kernel')
+    return
+  }
 
   // WASM/engine kernel when present — the per-pixel loop runs natively.
   if (ink?.floodFill) {
     const n = ink.floodFill(d, bw, bh, six, siy, tr, tg, tb, tol, pr, pg, pb, 128)
     if (n > 0) ctx.putImageData(img, bx, by)
+    log.debug('fill via engine kernel', n)
     return
   }
+  log.debug('fill via JS scanline fallback')
   const si = (siy * bw + six) * 4
   const sr = d[si + 3] < 128 ? pr : d[si]
   const sg = d[si + 3] < 128 ? pg : d[si + 1]
   const sb = d[si + 3] < 128 ? pb : d[si + 2]
 
   // no-op if the seed pixel is already the target color
-  if (Math.abs(sr - tr) + Math.abs(sg - tg) + Math.abs(sb - tb) < 3) return
+  if (Math.abs(sr - tr) + Math.abs(sg - tg) + Math.abs(sb - tb) < 3) {
+    log.debug('fill skipped: seed already has the target color')
+    return
+  }
 
   const tol3 = tol * 3
   // Erased pixels read as paper, so their match result is a constant.
@@ -184,7 +202,10 @@ export function extractRegion(
   oy: number,
   clearColor: string | null = PAPER,
 ): HTMLCanvasElement | null {
-  if (path.length < 3) return null
+  if (path.length < 3) {
+    log.debug('extractRegion skipped: degenerate path', path.length)
+    return null
+  }
   const piece = document.createElement('canvas')
   piece.width = canvas.width
   piece.height = canvas.height
@@ -235,11 +256,13 @@ export function onImageLoaded(fn: () => void) {
 export function getPhoto(src: string): HTMLImageElement | null {
   let img = imageCache.get(src)
   if (!img) {
+    log.debug('photo cache miss, decoding', src.slice(0, 32))
     img = new Image()
     img.onload = () =>
       loadListeners.forEach((f) => {
         f()
       })
+    img.onerror = () => log.warn('photo failed to decode', src.slice(0, 32))
     img.src = src
     imageCache.set(src, img)
   }
@@ -272,6 +295,7 @@ export function applyOp(
   oy = 0,
   ink?: InkEngine | null,
 ) {
+  log.debug('applyOp', op.kind)
   switch (op.kind) {
     case 'fill': {
       const region = opRegion(canvas, op, scale, ox, oy)
@@ -390,9 +414,13 @@ export function imageFileToPhoto(
           break
         }
       }
+      log.debug('photo imported', { w, h, hasAlpha })
       resolve({ src: imageDataURL(c, hasAlpha), w, h })
     }
-    img.onerror = reject
+    img.onerror = (e) => {
+      log.warn('photo file failed to decode', e)
+      reject(e)
+    }
     img.src = URL.createObjectURL(file)
   })
 }
@@ -403,5 +431,7 @@ export function imageFileToPhoto(
 export function imageDataURL(c: HTMLCanvasElement, hasAlpha: boolean, quality = 0.92): string {
   const webp = c.toDataURL('image/webp', quality)
   if (webp.startsWith('data:image/webp')) return webp
+  const format = hasAlpha ? 'png' : 'jpeg'
+  log.debug('webp unsupported, serializing as', format)
   return hasAlpha ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', quality)
 }

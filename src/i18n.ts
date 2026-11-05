@@ -1,4 +1,7 @@
 import { createI18n } from 'vue-i18n'
+import { logger } from './log'
+
+const log = logger('i18n')
 
 export type AppLocale = 'en' | 'ru'
 
@@ -439,6 +442,7 @@ const messages = {
 const saved = localStorage.getItem('vihko:locale') as AppLocale | null
 const nav = (navigator.language || '').toLowerCase()
 const initial: AppLocale = saved ?? (nav.startsWith('ru') ? 'ru' : 'en')
+log.debug('locale resolved', { saved, nav, initial })
 
 export const i18n = createI18n({
   legacy: false,
@@ -448,6 +452,7 @@ export const i18n = createI18n({
 })
 
 export function setLocale(l: AppLocale) {
+  log.debug('locale set', l)
   i18n.global.locale.value = l
   localStorage.setItem('vihko:locale', l)
 }

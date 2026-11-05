@@ -1,5 +1,8 @@
 import { reactive } from 'vue'
 import { i18n } from '../i18n'
+import { logger } from '../log'
+
+const log = logger('prompt')
 
 export interface PromptOptions {
   title: string
@@ -38,6 +41,7 @@ let resolver: ((value: string | null) => void) | null = null
 export function usePrompt() {
   function prompt(options: PromptOptions): Promise<string | null> {
     resolver?.(null)
+    log.debug('prompt opened', options.title)
     const t = i18n.global.t
     Object.assign(state, {
       open: true,

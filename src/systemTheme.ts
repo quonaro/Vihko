@@ -5,6 +5,9 @@ import {
   SystemBarsStyle,
   SystemBarType,
 } from '@capacitor/core'
+import { logger } from './log'
+
+const log = logger('theme')
 
 type Theme = 'light' | 'dark'
 
@@ -31,6 +34,7 @@ export function getSystemBarSettings(theme: Theme) {
 
 export async function syncSystemBarsTheme(theme: Theme) {
   if (!Capacitor.isNativePlatform()) return
+  log.debug('syncing system bars', theme)
 
   const settings = getSystemBarSettings(theme)
   await SystemBars.setStyle({

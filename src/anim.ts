@@ -1,3 +1,7 @@
+import { logger } from './log'
+
+const log = logger('anim')
+
 // Lightweight shared-element morph: clones the source element's look into a
 // fixed-position overlay, animates it to `target`, then removes itself.
 // Call the real view switch ~100-150ms in so the morph overlaps the incoming view.
@@ -22,6 +26,7 @@ export function morphTo(
 ) {
   const r = source.getBoundingClientRect()
   const cs = getComputedStyle(source)
+  log.debug('morphTo', { from: r, to: target, opts })
 
   const clone = document.createElement('div')
   clone.className = 'morph'

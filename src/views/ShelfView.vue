@@ -27,6 +27,9 @@ import { saveFile } from '../saveFile'
 import { enterAnim } from '../enterAnim'
 import type { CoverTexture, Journal } from '../types'
 import type { ShelfAnchor, ShelfJournal, ShelfScene } from '../three/shelfScene'
+import { logger } from '../log'
+
+const log = logger('shelf')
 
 const { t } = useI18n()
 const { prompt } = usePrompt()
@@ -151,6 +154,7 @@ function coverDiv(j: Journal, rect?: Rect) {
 function enterDone(id: string, kind: 'dive' | 'open') {
   const j = store.journals.find((x) => x.id === id)
   if (!j) {
+    log.debug('enter done for a missing journal, opening directly', id)
     openJournal(id)
     return
   }
@@ -173,9 +177,11 @@ function openFromScene(id: string) {
   }
   const kind = enterAnim.value
   if (kind !== 'morph' && scene.beginEnter(id, kind, () => enterDone(id, kind))) {
+    log.debug('3d enter transition', { id, kind })
     entering.value = true
     return
   }
+  log.debug('flat morph enter', { id, kind })
   // Flat morph — the chosen 'morph' style and the fallback when the scene
   // can't run the 3D move (book gone or a transition already running).
   const r = scene.screenRect(id)
@@ -218,7 +224,8 @@ async function startScene() {
     labelTimer = window.setTimeout(() => {
       if (request === sceneRequest && scene) showGlLabels.value = true
     }, 500)
-  } catch {
+  } catch (e) {
+    log.warn('shelf scene failed to start, showing the unavailable message', e)
     scene = null
     if (request === sceneRequest && canvas.isConnected) glFailed.value = true
   }

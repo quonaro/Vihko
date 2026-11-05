@@ -4,6 +4,9 @@ import { useI18n } from 'vue-i18n'
 import { palette, store } from '../store'
 import { hexToHsv, hsvToHex, mixColors } from '../ink/mix'
 import MobileSlider from './MobileSlider.vue'
+import { logger } from '../log'
+
+const log = logger('color')
 
 // Arbitrary color picker: saturation/value square + hue strip + hex field.
 // Commits to store.color live while dragging.
@@ -36,6 +39,7 @@ function apply() {
   store.color = color.value
   hexText.value = color.value
   hexBad.value = false
+  log.debug('color applied', color.value)
 }
 
 function selectColor(hex: string) {
@@ -71,6 +75,7 @@ function onPaletteUp(e: PointerEvent) {
   if (!dragColor) return
   const target = document.elementFromPoint(e.clientX, e.clientY)
   if (target?.classList.contains('new')) {
+    log.debug('palette drop blends into the swatch', dragColor)
     selectColor(mixColors(store.color, dragColor, 0.35))
   } else if (Math.abs(e.movementY) < 40) {
     selectColor(dragColor)

@@ -37,6 +37,9 @@ import {
 } from './gesture'
 import { coverCanvas, paintCover, type CoverInput } from './coverTexture'
 import { onImageLoaded } from '../ink/ops'
+import { logger } from '../log'
+
+const log = logger('shelf3d')
 
 export interface ShelfJournal extends CoverInput {
   id: string
@@ -227,6 +230,7 @@ export class ShelfScene {
     this.ro = new ResizeObserver(() => this.resize())
     this.ro.observe(canvas)
     this.resize()
+    log.info('shelf scene created', { quality: q })
   }
 
   // --- construction -------------------------------------------------------
@@ -321,6 +325,7 @@ export class ShelfScene {
   // unchanged keep their textures (search filtering doesn't repaint).
   setJournals(list: ShelfJournal[]) {
     this.pump.wake()
+    log.debug('setJournals', list.length)
     const pool = new Map(this.books.map((b) => [b.id, b]))
     const next: BookEntry[] = []
     list.forEach((j, i) => {
@@ -330,6 +335,7 @@ export class ShelfScene {
       if (e) {
         pool.delete(j.id)
         if (e.sig !== sig) {
+          log.debug('cover signature changed, rebuilding book', j.id)
           this.disposeBook(e)
           e = this.makeBook(j, sig)
           created = true
@@ -370,7 +376,11 @@ export class ShelfScene {
   // when the book is gone or a transition is already running.
   beginEnter(id: string, kind: 'dive' | 'open', cb: () => void): boolean {
     const e = this.books.find((b) => b.id === id)
-    if (!e || this.enter) return false
+    if (!e || this.enter) {
+      log.debug('beginEnter rejected', { id, busy: !!this.enter })
+      return false
+    }
+    log.debug('enter transition started', { id, kind })
     this.hovered = null
     this.vel = 0
     this.drag = null
@@ -420,6 +430,7 @@ export class ShelfScene {
   }
 
   dispose() {
+    log.debug('shelf scene disposed')
     this.pump.stop()
     this.cancelHold()
     this.ro.disconnect()
@@ -525,6 +536,7 @@ export class ShelfScene {
       this.holdTimer = setTimeout(() => {
         if (!this.hold || this.drag?.moved) return
         this.clickWasDrag = true
+        log.debug('long press', this.hold.bookId)
         this.events.onLongPress?.(this.hold.bookId)
       }, 550)
     }
@@ -639,7 +651,10 @@ export class ShelfScene {
       return
     }
     this.pick(e.offsetX, e.offsetY)
-    if (this.hovered) this.events.onPick?.(this.hovered.id)
+    if (this.hovered) {
+      log.debug('book picked', this.hovered.id)
+      this.events.onPick?.(this.hovered.id)
+    }
   }
 
   private cancelHold() {
@@ -725,6 +740,7 @@ export class ShelfScene {
 
   private refreshCovers() {
     this.pump.wake()
+    log.debug('repainting photo covers after image load')
     for (const e of this.books) {
       if (!e.input.coverImg || !e.canvas || !e.ctx || !e.tex) continue
       paintCover(e.canvas, e.ctx, e.input)
@@ -780,6 +796,7 @@ export class ShelfScene {
       moving = true
       if (en.t >= 1 && !en.done) {
         en.done = true
+        log.debug('enter transition done', en.kind)
         en.cb()
       }
     }

@@ -6,6 +6,9 @@ import { store, currentPage, activeLayer, pushOp } from '../store'
 import { pageSize, spreadRect } from '../pageSpace'
 import { FILTER_KINDS } from '../types'
 import type { FilterKind } from '../types'
+import { logger } from '../log'
+
+const log = logger('filter')
 
 defineProps<{ open: boolean }>()
 
@@ -22,6 +25,7 @@ function applyFilter() {
   const p = currentPage()
   if (!p) return
   const layer = activeLayer()
+  log.debug('filter op committed', { kind: filterKind.value, amount: filterAmount.value })
   // A focused spread half confines the filter's pixels to it.
   const size = pageSize(p)
   const rect = spreadRect(store.spreadMode, size.w, size.h)

@@ -7,6 +7,9 @@ import ConfirmDialog from '../components/ConfirmDialog.vue'
 import PageSizePicker from '../components/PageSizePicker.vue'
 import { pageSize, PAGE_SIZE_PRESETS } from '../pageSpace'
 import EmptyState from '../components/EmptyState.vue'
+import { logger } from '../log'
+
+const log = logger('journal')
 import type { JournalScene } from '../three/journalScene'
 import { canTurnStack } from '../three/layout'
 
@@ -63,7 +66,10 @@ function flip(dir: 1 | -1) {
     return
   }
   const total = journal.value?.pages.length ?? 0
-  if (canTurnStack(dir, pageIdx.value, total)) pageIdx.value += dir
+  if (canTurnStack(dir, pageIdx.value, total)) {
+    log.debug('flip without scene', { dir, page: pageIdx.value })
+    pageIdx.value += dir
+  }
 }
 
 async function startScene() {
@@ -99,7 +105,8 @@ async function startScene() {
     s.ready.then(() => {
       if (scene === s) glOk.value = true
     })
-  } catch {
+  } catch (e) {
+    log.warn('journal scene failed to start, showing the unavailable message', e)
     scene = null
     if (request === sceneRequest && canvas.isConnected) glFailed.value = true
   }

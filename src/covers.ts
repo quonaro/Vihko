@@ -1,6 +1,9 @@
 // Preset cover art for the cover picker — small generative designs baked
 // to dataURLs once at startup (no external assets).
 import { imageDataURL } from './ink/ops'
+import { logger } from './log'
+
+const log = logger('covers')
 
 const W = 340
 const H = 480
@@ -14,7 +17,10 @@ function bake(draw: (c: CanvasRenderingContext2D) => void): string {
   el.width = W * SCALE
   el.height = H * SCALE
   const ctx = el.getContext('2d')
-  if (!ctx) return FALLBACK_COVER // no canvas backend (e.g. jsdom tests)
+  if (!ctx) {
+    log.debug('no canvas backend, using the fallback cover')
+    return FALLBACK_COVER // no canvas backend (e.g. jsdom tests)
+  }
   ctx.scale(SCALE, SCALE)
   draw(ctx)
   return imageDataURL(el, false, 0.9)

@@ -41,6 +41,7 @@ func FloodFill(
 		sr, sg, sb = buf[si], buf[si+1], buf[si+2]
 	}
 	if absI(int(r)-int(sr))+absI(int(g)-int(sg))+absI(int(b)-int(sb)) < 3 {
+		dlog("floodFill: seed already has the target color")
 		return 0 // seed pixel already carries the fill color
 	}
 	tol3 := tol * 3

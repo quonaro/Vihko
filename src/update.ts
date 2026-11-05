@@ -2,7 +2,10 @@ import { reactive } from 'vue'
 import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Directory, Filesystem } from '@capacitor/filesystem'
 import { i18n } from './i18n'
+import { logger } from './log'
 import pkg from '../package.json'
+
+const log = logger('update')
 
 // Release builds get the tag via VITE_APP_VERSION (see release.yml);
 // local builds fall back to `git describe` (see vite.config.ts), then package.json.
@@ -50,14 +53,17 @@ export async function refreshPermissions(): Promise<void> {
   try {
     perms.notifications = ((await ApkInstaller.checkPermissions()).notifications ||
       'unknown') as PermState
-  } catch {
+  } catch (e) {
     perms.notifications = 'unknown'
+    log.debug('checkPermissions failed', e)
   }
   try {
     perms.install = (await ApkInstaller.installState()).granted ? 'granted' : 'denied'
-  } catch {
+  } catch (e) {
     perms.install = 'unknown'
+    log.debug('installState failed', e)
   }
+  log.debug('permissions', { ...perms })
 }
 
 // Called once on app start: asks for the notification runtime permission.
@@ -77,10 +83,13 @@ export async function requestStartupPermissions(): Promise<void> {
 // app settings page instead of calling requestPermissions into the void.
 export async function grantNotificationPermission(): Promise<void> {
   try {
-    if (perms.notifications === 'denied') await ApkInstaller.openAppSettings()
-    else await ApkInstaller.requestPermissions()
-  } catch {
+    if (perms.notifications === 'denied') {
+      log.debug('notifications hard-denied, opening app settings')
+      await ApkInstaller.openAppSettings()
+    } else await ApkInstaller.requestPermissions()
+  } catch (e) {
     /* non-fatal */
+    log.debug('notification permission request failed', e)
   }
   await refreshPermissions()
 }
@@ -126,6 +135,7 @@ export function isNewerVersion(latest: string, current: string = appVersion): bo
 export async function checkForUpdate(): Promise<UpdateStatus> {
   if (update.busy) return update.status
   update.busy = true
+  log.debug('checking for updates', { current: appVersion })
   try {
     const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
       headers: { Accept: 'application/vnd.github+json' },
@@ -133,6 +143,7 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
     // No published releases (or draft-only) reads as "nothing newer".
     if (res.status === 404) {
       update.status = 'uptodate'
+      log.debug('no published releases')
       return update.status
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -150,8 +161,14 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
     update.dl = 'idle'
     update.progress = 0
     update.apkPath = ''
-  } catch {
+    log.info('update check done', {
+      status: update.status,
+      latest: update.latest,
+      apkUrl: !!update.apkUrl,
+    })
+  } catch (e) {
     update.status = 'error'
+    log.warn('update check failed', e)
   } finally {
     update.busy = false
   }
@@ -163,14 +180,17 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
 export async function downloadUpdate(): Promise<void> {
   const openReleasePage = () => window.open(update.url, '_blank', 'noopener')
   if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') {
+    log.debug('non-Android platform, opening the release page')
     openReleasePage()
     return
   }
   if (update.dl === 'downloading') return
   if (!update.apkUrl) {
+    log.debug('no apk asset in the release, opening the release page')
     openReleasePage()
     return
   }
+  log.info('downloading update apk', update.apkUrl)
   try {
     if (!update.apkPath) {
       update.dl = 'downloading'
@@ -216,9 +236,10 @@ export async function downloadUpdate(): Promise<void> {
       )
     }
     update.dl = 'ready'
+    log.info('apk ready, firing the install intent', update.apkPath)
     await ApkInstaller.install({ path: update.apkPath })
   } catch (e) {
-    console.error('[update] downloadUpdate failed', e)
+    log.error('downloadUpdate failed', e)
     update.dl = 'error'
     update.apkPath = ''
     notify(

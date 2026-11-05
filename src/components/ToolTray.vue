@@ -8,7 +8,9 @@ import BrushPanel from './BrushPanel.vue'
 import FilterPanel from './FilterPanel.vue'
 import type { ToolId } from '../types'
 import { useI18n } from 'vue-i18n'
+import { logger } from '../log'
 
+const log = logger('tray')
 const { t } = useI18n()
 const emit = defineEmits<{ photo: [file: File] }>()
 
@@ -39,6 +41,7 @@ function selectTool(id: ToolId) {
     store.tool = 'filter'
     brushPanelOpen.value = false
     shapeMenuOpen.value = false
+    log.debug('filter panel toggled', filterPanelOpen.value)
     return
   }
   filterPanelOpen.value = false
@@ -46,15 +49,18 @@ function selectTool(id: ToolId) {
   if (store.tool === id && id === 'fill') {
     const modes = ['normal', 'invert', 'erase'] as const
     store.fillMode = modes[(modes.indexOf(store.fillMode) + 1) % modes.length]
+    log.debug('fill mode cycled', store.fillMode)
     return
   }
   // Second tap on the active ink tool opens its brush settings.
   if (store.tool === id && INK_TOOLS.includes(id)) {
     brushPanelOpen.value = !brushPanelOpen.value
     shapeMenuOpen.value = false
+    log.debug('brush panel toggled', brushPanelOpen.value)
     return
   }
   brushPanelOpen.value = false
+  log.debug('tool selected', id)
   store.tool = id
   if (id === 'shapes') shapeMenuOpen.value = !shapeMenuOpen.value
   else shapeMenuOpen.value = false

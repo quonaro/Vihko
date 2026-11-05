@@ -1,3 +1,7 @@
+import { logger } from '../log'
+
+const log = logger('turn')
+
 // Page-turn transition state machine for the journal spread — pure math with
 // no three.js/DOM imports, so it unit-tests like layout.ts/gesture.ts.
 //
@@ -137,6 +141,7 @@ export function createPageTurn(opts: PageTurnOptions = {}): PageTurn {
   }
 
   function emit(type: 'commit' | 'cancel') {
+    log.debug('turn settled', { type, dir, srcIndex, dstIndex })
     const r: TurnResult = {
       type,
       dir,
@@ -150,7 +155,11 @@ export function createPageTurn(opts: PageTurnOptions = {}): PageTurn {
 
   function begin(d: TurnDir, cur: number, t: number): boolean {
     if (phase !== 'idle') return false
-    if (!canTurn(d, cur, t)) return false
+    if (!canTurn(d, cur, t)) {
+      log.debug('turn begin rejected at the stack edge', { d, cur, t })
+      return false
+    }
+    log.debug('turn begin', { d, cur })
     phase = 'dragging'
     dir = d
     srcIndex = cur
@@ -185,6 +194,7 @@ export function createPageTurn(opts: PageTurnOptions = {}): PageTurn {
 
   function release(commit = progress >= commitAt) {
     if (phase !== 'dragging') return
+    log.debug('turn released', { commit, progress })
     startSettle(commit ? 1 : 0)
   }
 

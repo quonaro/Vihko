@@ -23,6 +23,7 @@ func jsBegin(this js.Value, args []js.Value) any {
 	id := nextID
 	nextID++
 	strokes[id] = newStroke(tool, size, stab)
+	dlog("begin id=%v tool=%q size=%v stab=%v", id, tool, size, stab)
 	return js.ValueOf(id)
 }
 
@@ -66,6 +67,7 @@ func jsEnd(this js.Value, args []js.Value) any {
 	}
 	out := s.flush()
 	delete(strokes, id)
+	dlog("end id=%v samples=%d", id, len(out))
 	return samplesToJS(out)
 }
 
@@ -177,6 +179,12 @@ func jsEraseColor(this js.Value, args []js.Value) any {
 	return js.ValueOf(n)
 }
 
+// setDebug(bool) — toggles decision-point logging in the engine.
+func jsSetDebug(this js.Value, args []js.Value) any {
+	Debug = len(args) > 0 && args[0].Bool()
+	return nil
+}
+
 func copyFromJS(v js.Value) []byte {
 	buf := make([]byte, v.Length())
 	js.CopyBytesToGo(buf, v)
@@ -201,6 +209,8 @@ func main() {
 	ink.Set("wetStroke", js.FuncOf(jsWetStroke))
 	ink.Set("inverseFill", js.FuncOf(jsInverseFill))
 	ink.Set("eraseColor", js.FuncOf(jsEraseColor))
+	ink.Set("setDebug", js.FuncOf(jsSetDebug))
 	js.Global().Set("Ink", ink)
+	js.Global().Get("console").Call("debug", "[ink] wasm engine initialized")
 	select {}
 }

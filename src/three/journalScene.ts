@@ -53,7 +53,10 @@ import {
 import { Line2 } from 'three/examples/jsm/lines/Line2.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import { onImageLoaded } from '../ink/ops'
+import { logger } from '../log'
 import { shouldClearHoverOnCanvasLeave } from './hover'
+
+const log = logger('journal3d')
 
 export interface SceneEvents {
   onPageClick?: (id: string) => void
@@ -258,6 +261,7 @@ export class JournalScene {
     this.ro = new ResizeObserver(() => this.resize())
     this.ro.observe(canvas)
     this.resize()
+    log.info('journal scene created', { quality: q })
   }
 
   // --- construction -------------------------------------------------------
@@ -458,7 +462,10 @@ export class JournalScene {
     const hit = this.texCache.get(key)
     if (hit) return hit.tex
     const canvas = pageCanvas(page, this.ink, TEX_W, fold, edgeShade)
-    if (!canvas) return null
+    if (!canvas) {
+      log.debug('page texture raster unavailable', page.id)
+      return null
+    }
     const tex = new THREE.CanvasTexture(canvas)
     tex.colorSpace = THREE.SRGBColorSpace
     tex.anisotropy = Math.min(16, this.renderer.capabilities.getMaxAnisotropy())
@@ -469,6 +476,7 @@ export class JournalScene {
   // Photos inside stroke ops may finish loading after the first paint.
   private refreshTextures() {
     this.pump.wake()
+    log.debug('refreshing page textures after image load', this.texCache.size)
     const refreshed = new Set<string>()
     for (const e of this.texCache.values()) {
       const key = `${e.page.id}|${e.tex.image.width}`
@@ -491,6 +499,7 @@ export class JournalScene {
 
   setMode(mode: 'stack' | 'overview') {
     this.pump.wake()
+    log.debug('scene mode', mode)
     this.mode = mode
     this.turn.reset()
     this.hoveredLeaf = this.hoveredCard = null
@@ -530,6 +539,7 @@ export class JournalScene {
   setPages(pages: Page[]) {
     this.pump.wake()
     this.turn.reset()
+    log.debug('setPages', pages.length)
     this.pages = pages
     this.cur = Math.max(0, Math.min(pages.length - 1, this.cur))
     this.stackPos = Math.max(0, Math.min(pages.length - 1, this.stackPos))
@@ -562,6 +572,7 @@ export class JournalScene {
       if (entry.page && !alive.has(entry.page.id)) {
         entry.tex.dispose()
         this.texCache.delete(key)
+        log.debug('evicted texture of a removed page', key)
       }
     }
 
@@ -617,7 +628,11 @@ export class JournalScene {
   // forward lifts the first upcoming leaf off the right pile, backward
   // pulls the boundary leaf back off the left pile.
   flip(dir: 1 | -1): boolean {
-    if (this.mode !== 'stack' || !this.turn.flip(dir, this.cur, this.pages.length)) return false
+    if (this.mode !== 'stack' || !this.turn.flip(dir, this.cur, this.pages.length)) {
+      log.debug('flip rejected', { dir, mode: this.mode, cur: this.cur })
+      return false
+    }
+    log.debug('flip', { dir, from: this.cur })
     this.pump.wake()
     return true
   }
@@ -627,6 +642,7 @@ export class JournalScene {
   }
 
   dispose() {
+    log.debug('journal scene disposed')
     this.texJobs = []
     this.pump.stop()
     this.ro.disconnect()
@@ -821,6 +837,7 @@ export class JournalScene {
       if (Math.abs(dx) > 12 && Math.abs(dx) > ady * 1.3) {
         const dir = dx < 0 ? 1 : -1
         drag.turnDir = this.turn.begin(dir, this.cur, this.pages.length) ? dir : 2
+        log.debug('drag turn grabbed', { dir, grabbed: drag.turnDir === dir })
       }
     }
     if (this.turn.phase === 'dragging') {
@@ -888,7 +905,11 @@ export class JournalScene {
     if (this.turn.phase === 'dragging') {
       // Past half-way — or a fast enough flick — completes the turn.
       if (!flick) this.turn.cancel()
-      else this.turn.release(this.turn.progress >= 0.45 || pv * this.turn.dir < -400)
+      else {
+        const commit = this.turn.progress >= 0.45 || pv * this.turn.dir < -400
+        log.debug('drag turn released', { commit, progress: this.turn.progress })
+        this.turn.release(commit)
+      }
     }
     this.drag = null
     this.trail = []
@@ -915,7 +936,10 @@ export class JournalScene {
     }
     this.pick(e.offsetX, e.offsetY)
     const id = this.mode === 'stack' ? this.hoveredLeafPageId() : (this.hoveredCard?.id ?? null)
-    if (id) this.events.onPageClick?.(id)
+    if (id) {
+      log.debug('page picked', id)
+      this.events.onPageClick?.(id)
+    }
   }
 
   private onWheel = (e: WheelEvent) => {
@@ -1019,6 +1043,7 @@ export class JournalScene {
     }
     if (!this.readyDone && this.compiled && !this.texJobs.length) {
       this.readyDone = true
+      log.debug('scene ready: shaders compiled, textures attached')
       this.readyResolve()
     }
     if (!this.readyDone) moving = true

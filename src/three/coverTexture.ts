@@ -1,5 +1,8 @@
 import { getPhoto } from '../ink/ops'
+import { logger } from '../log'
 import { COVER_QUALITY_KEY, readQuality } from '../quality'
+
+const log = logger('coverTex')
 import type { Quality } from '../quality'
 import type { CoverTexture } from '../types'
 
@@ -113,14 +116,18 @@ export function dominantCoverColor(input: CoverInput): string {
   const canvas = document.createElement('canvas')
   canvas.width = canvas.height = size
   const ctx = canvas.getContext('2d')
-  if (!ctx) return input.color
+  if (!ctx) {
+    log.debug('no 2d context for dominant color probe')
+    return input.color
+  }
   const scale = Math.max(size / img.naturalWidth, size / img.naturalHeight)
   const w = img.naturalWidth * scale
   const h = img.naturalHeight * scale
   try {
     ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h)
     return dominantColorFromPixels(ctx.getImageData(0, 0, size, size).data)
-  } catch {
+  } catch (e) {
+    log.debug('dominant color probe failed', e)
     return input.color
   }
 }
@@ -164,7 +171,11 @@ export function coverCanvas(input: CoverInput, width = coverWidth()): HTMLCanvas
   c.width = width
   c.height = Math.round(width / 0.735)
   const ctx = c.getContext('2d')
-  if (!ctx) return null
+  if (!ctx) {
+    log.debug('no 2d context for cover raster')
+    return null
+  }
+  log.debug('cover painted', { w: c.width, photo: !!input.coverImg, texture: input.coverTexture })
   paintCover(c, ctx, input)
   return c
 }

@@ -59,6 +59,9 @@ import type {
   SymmetryMode,
 } from '../types'
 import { SPREAD_MODES } from '../types'
+import { logger } from '../log'
+
+const log = logger('canvas')
 
 export function useCanvasView() {
   const PAPER = '#f6f1e6'
@@ -1057,6 +1060,7 @@ export function useCanvasView() {
       snap = { c, ctx: c2 }
     }
     if (!snapDirty && (gestureActive || snapScale >= want * 0.999)) return
+    log.debug('page snapshot rebuilding', { want, maxScale, snapDirty })
     snapScale = Math.min(Math.max(want, snapScale), maxScale)
     const { c, ctx: sc } = snap
     c.width = Math.round(pw() * snapScale)
@@ -1205,13 +1209,17 @@ export function useCanvasView() {
   function beginStroke(pt: Pt) {
     if (!ink) return
     strokeOut = !inWork(pt.x, pt.y)
-    if (strokeOut) return // the focused half is a hard edge
+    if (strokeOut) {
+      log.debug('stroke rejected: outside the focused spread half')
+      return // the focused half is a hard edge
+    }
     const layer = activeLayer()
     if (!layer) return
     curLayerId = layer.id
     curStrokeSize = brushOf(store.tool).size
     curStab = INK_TOOLS.includes(store.tool) ? brushOf(store.tool).stab : -1
     strokeId = ink.begin(store.tool, curStrokeSize, curStab)
+    log.debug('stroke begin', { tool: store.tool, layer: layer.id, mask: store.maskEdit })
     const q = toLayerSnapped(pt, curLayerId)
     curPts = [q]
     curSamples = []
@@ -1260,6 +1268,7 @@ export function useCanvasView() {
     if (!inWork(pt.x, pt.y)) {
       // Off the focused half: park the stroke — its committed part ends at
       // the fold and can't paint or erase the hidden half.
+      log.debug('pointer crossed the fold, committing the stroke')
       if (drawing) finishStroke(true)
       strokeOut = true
       return
@@ -1294,6 +1303,12 @@ export function useCanvasView() {
       mask: toMask || undefined,
       alphaLock: !toMask && strokeLayer?.alphaLock && store.tool !== 'eraser' ? true : undefined,
     }
+    log.debug('stroke finished', {
+      commit,
+      tool: stroke.tool,
+      mask: !!stroke.mask,
+      alphaLock: !!stroke.alphaLock,
+    })
     const strokePts = curPts
     if (stroke.tool === 'eraser') {
       drawSamples(stroke, tail, seed)
@@ -1471,6 +1486,7 @@ export function useCanvasView() {
 
     if (pointers.size === 2) {
       // second finger down -> cancel stroke, start rewind/pinch gesture
+      log.debug('second finger down: gesture begins, stroke cancelled')
       if (drawing) finishStroke(false)
       if (shapeDrag) {
         shapeDrag = null
@@ -1535,6 +1551,7 @@ export function useCanvasView() {
     }
     const gHit = guideHit({ x: toPageX(x), y: toPageY(y) })
     if (gHit) {
+      log.debug('guide handle grabbed', gHit)
       guideDrag = gHit
       return
     }
@@ -1632,17 +1649,20 @@ export function useCanvasView() {
   function cycleSymmetry() {
     const order: SymmetryMode[] = ['none', 'v', 'h', 'xy']
     store.symmetry = order[(order.indexOf(store.symmetry) + 1) % order.length]
+    log.debug('symmetry', store.symmetry)
   }
 
   function cycleGuide() {
     const order: GuideMode[] = ['off', 'line', 'arc']
     store.guide = order[(order.indexOf(store.guide) + 1) % order.length]
+    log.debug('guide', store.guide)
     reRender()
   }
 
   function cycleSpread() {
     store.spreadMode =
       SPREAD_MODES[(SPREAD_MODES.indexOf(store.spreadMode) + 1) % SPREAD_MODES.length]
+    log.debug('spread focus', store.spreadMode)
   }
 
   function onPointerMove(e: PointerEvent) {
@@ -1795,6 +1815,7 @@ export function useCanvasView() {
     const page = currentPage()
     const layer = pageLayers().find((item) => item.id === layerId)
     if (!layerId || !page || !layer?.visible || !ink) {
+      log.debug('cut selection aborted: no visible layer', { layerId, visible: layer?.visible })
       cutPath = []
       reRender()
       return
@@ -1884,9 +1905,11 @@ export function useCanvasView() {
         : false
     if (piece && hasPixels) {
       // Lift only the active layer; other layers stay visible in the base preview.
+      log.debug('cut piece lifted', { layer: layerId, points: path.length })
       cutPending = { piece, base, path, layerId, dx: 0, dy: 0 }
       drawPendingCut()
     } else {
+      log.debug('cut selection lifted nothing')
       reRender()
     }
     cutPath = []
@@ -1902,6 +1925,7 @@ export function useCanvasView() {
     const rect = workHalved() ? workRect() : undefined
     // 'erase' mode is the magic-wand background removal; 'invert' is the
     // inverse/background fill — both run on the layer raster like 'fill'.
+    log.debug('fill committed', { mode: store.fillMode, alphaLock: !!alphaLock, rect: !!rect })
     if (store.fillMode === 'erase') {
       pushOp({ kind: 'erase', x: toPageX(x), y: toPageY(y), after, alphaLock, rect })
     } else {
@@ -1976,6 +2000,7 @@ export function useCanvasView() {
           // swipe from edge: left edge + swipe right = previous page; right edge + left = next
           const dir = edgeDir === -1 ? (dx > 0 ? -1 : 0) : dx < 0 ? 1 : 0
           if (dir !== 0 && navPage(dir as 1 | -1)) {
+            log.debug('edge swipe navigated', dir)
             navClass.value = dir === 1 ? 'from-right' : 'from-left'
             reRender()
             setTimeout(() => {
@@ -2010,6 +2035,7 @@ export function useCanvasView() {
       const { dx, dy, path, layerId } = cutPending
       const p = currentPage()
       if (p && Math.hypot(dx, dy) > 3) {
+        log.debug('cut op committed', { dx, dy, layer: layerId })
         pushOp({ kind: 'cut', path, dx, dy, after: p.strokes.length, layerId })
       }
       cutPending = null
@@ -2065,6 +2091,7 @@ export function useCanvasView() {
   const redoOk = computed(() => canRedo())
 
   async function importPhoto(file: File) {
+    log.debug('importing photo', { name: file.name, size: file.size })
     const img = await imageFileToPhoto(file)
     const r0 = workRect()
     const scale = Math.min(1, (r0.w * 0.6) / img.w, (r0.h * 0.6) / img.h)

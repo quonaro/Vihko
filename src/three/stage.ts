@@ -10,6 +10,9 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { GL_QUALITY_KEY, readQuality } from '../quality'
 import type { Quality } from '../quality'
+import { logger } from '../log'
+
+const log = logger('stage')
 
 // Shared "studio" setup for the 3D views: a filmic renderer plus a
 // three-point lighting rig, IBL env map and a shadow-catching floor, so
@@ -98,10 +101,12 @@ export class FramePump {
   // frame returns true while the scene is still animating.
   constructor(private frame: (now: number) => boolean) {}
   start() {
+    log.debug('frame pump started')
     this.live = true
     this.wake()
   }
   stop() {
+    log.debug('frame pump stopped')
     this.live = false
     cancelAnimationFrame(this.raf)
     this.raf = 0
@@ -117,6 +122,7 @@ export class FramePump {
 
 export function createRenderer(canvas: HTMLCanvasElement, q: Quality = detectQuality()) {
   const t = TIER[q]
+  log.info('renderer created', { quality: q, ...t, dpr: window.devicePixelRatio })
   // Canvas MSAA is only worth paying for on tiers without the composer —
   // there it's the only AA. On composer tiers it would just burn resolve
   // bandwidth: the composer renders into its own multisampled target and
@@ -151,12 +157,14 @@ export function createComposer(
   q: Quality = detectQuality(),
 ) {
   if (!TIER[q].composer) {
+    log.debug('direct-render path (no HDR composer)', q)
     return {
       render: () => renderer.render(scene, camera),
       setSize: () => {},
       dispose: () => {},
     }
   }
+  log.debug('HDR composer pipeline enabled', q)
   const size = renderer.getDrawingBufferSize(new THREE.Vector2())
   const rt = new THREE.WebGLRenderTarget(size.x, size.y, {
     type: THREE.HalfFloatType,

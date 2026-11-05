@@ -14,6 +14,9 @@ import {
 } from '../store'
 import { BLEND_MODES } from '../types'
 import type { BlendMode } from '../types'
+import { logger } from '../log'
+
+const log = logger('layers')
 
 const props = defineProps<{
   open: boolean
@@ -32,6 +35,7 @@ const selectedLayer = computed(() => activeLayer())
 function toggleLayerMask(on: boolean) {
   const layer = selectedLayer.value
   if (!layer) return
+  log.debug('layer mask edit', { layer: layer.id, on })
   updateLayer(layer.id, { mask: on || undefined })
   store.maskEdit = on
 }
@@ -70,7 +74,10 @@ function finishLayerReorder(e: PointerEvent) {
   const id = draggingLayerId.value
   const displayIndex = layerDropIndex.value
   cancelLayerReorder()
-  if (id && displayIndex !== null) reorderLayer(id, displayLayers.value.length - 1 - displayIndex)
+  if (id && displayIndex !== null) {
+    log.debug('layer reordered', { id, displayIndex })
+    reorderLayer(id, displayLayers.value.length - 1 - displayIndex)
+  }
 }
 
 function cancelLayerReorder() {

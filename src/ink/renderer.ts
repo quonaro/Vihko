@@ -1,4 +1,7 @@
+import { logger } from '../log'
 import type { BrushParams, BrushTip, Sample, ToolId } from '../types'
+
+const log = logger('ink:render')
 
 // Brush options attached to a stroke at draw time; see Stroke/BrushParams.
 export type BrushOpts = Partial<
@@ -163,7 +166,10 @@ function stampSprite(tip: BrushTip, color: string): HTMLCanvasElement | null {
   c.width = 96
   c.height = 96
   const t = c.getContext('2d')
-  if (!t) return null
+  if (!t) {
+    log.warn('no 2d context for stamp sprite, stamped brushes fall back', tip)
+    return null
+  }
   const r = 44
   if (tip === 'airbrush') {
     const g = t.createRadialGradient(48, 48, 0, 48, 48, r)
@@ -199,7 +205,11 @@ function stampSprite(tip: BrushTip, color: string): HTMLCanvasElement | null {
   t.fillStyle = color
   t.fillRect(0, 0, 96, 96)
   stampCache.set(key, c)
-  if (stampCache.size > 64) stampCache.delete(stampCache.keys().next().value!)
+  if (stampCache.size > 64) {
+    stampCache.delete(stampCache.keys().next().value!)
+    log.debug('stamp sprite cache evicted the oldest entry')
+  }
+  log.debug('stamp sprite created', key)
   return c
 }
 

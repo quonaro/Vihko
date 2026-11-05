@@ -1,7 +1,10 @@
 import type { InkEngine, Page } from '../types'
 import { paintLayers } from '../ink/layers'
+import { logger } from '../log'
 import { PAGE_ASPECT, PAGE_UNIT, pageSize } from '../pageSpace'
 import { pageRev } from '../store'
+
+const log = logger('pageTex')
 
 // Stroke points live in page units (~1071 wide reference): the DOM previews
 // fit them into a 300px viewBox with a 0.28 factor. Same scale is reused here
@@ -138,6 +141,7 @@ function evictBases() {
     const oldest = baseCache.keys().next().value
     if (oldest === undefined) break
     baseCache.delete(oldest)
+    log.debug('base raster evicted', oldest)
   }
 }
 
@@ -164,8 +168,10 @@ export function baseCanvas(
   const ctx = hit?.ctx ?? canvas.getContext('2d', { willReadFrequently: true })
   if (!ctx) {
     baseCache.delete(key)
+    log.debug('no 2d context for page raster', key)
     return null
   }
+  log.debug('page base repainted', { key, rev, force })
   ctx.save()
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.clearRect(0, 0, canvas.width, canvas.height)

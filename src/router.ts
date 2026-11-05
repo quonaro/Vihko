@@ -1,6 +1,9 @@
 import { watch } from 'vue'
+import { logger } from './log'
 import { currentJournal, store } from './store'
 import type { JournalMode, ViewName } from './store'
+
+const log = logger('router')
 
 export interface NavState {
   view: ViewName
@@ -37,11 +40,17 @@ export function parseNav(pathname: string): NavState {
 // level at a time (canvas -> journal -> shelf).
 function resolveNav(nav: NavState): NavState {
   const j = store.journals.find((x) => x.id === nav.journalId)
-  if (!j) return { ...SHELF }
+  if (!j) {
+    log.debug('nav target journal missing, falling back to shelf', nav.journalId)
+    return { ...SHELF }
+  }
   if (nav.view === 'journal')
     return { view: 'journal', journalId: j.id, pageId: null, journalMode: nav.journalMode }
   const p = j.pages.find((x) => x.id === nav.pageId)
-  if (!p) return { view: 'journal', journalId: j.id, pageId: null, journalMode: nav.journalMode }
+  if (!p) {
+    log.debug('nav target page missing, falling back to journal', nav.pageId)
+    return { view: 'journal', journalId: j.id, pageId: null, journalMode: nav.journalMode }
+  }
   return { view: 'canvas', journalId: j.id, pageId: p.id, journalMode: nav.journalMode }
 }
 
@@ -105,6 +114,7 @@ let popping = false
 // always boots on "/") and a bare dev-server reload reopen where we left off.
 export function initRouter() {
   const initial = location.pathname === '/' ? loadNav() : parseNav(location.pathname)
+  log.debug('router init', { path: location.pathname, restored: initial })
   if (initial) applyNav(initial)
   syncUrl(true)
   persistNav()
@@ -119,6 +129,7 @@ export function initRouter() {
 
   window.addEventListener('popstate', () => {
     popping = true
+    log.debug('popstate', location.pathname)
     applyNav(parseNav(location.pathname))
     // The watcher is microtask-queued behind this, so the flag is still set
     // when it runs; clear it afterwards in case applyNav changed nothing.

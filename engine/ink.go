@@ -18,7 +18,20 @@
 
 package main
 
-import "math"
+import (
+	"log"
+	"math"
+)
+
+// Debug enables decision-point logging (window.Ink.setDebug(true) under wasm,
+// or set it directly in tests). Off by default — feed() runs per raw point.
+var Debug bool
+
+func dlog(format string, args ...any) {
+	if Debug {
+		log.Printf("[ink] "+format, args...)
+	}
+}
 
 type Point struct {
 	X, Y, T, P float64
@@ -62,6 +75,7 @@ func profile(tool string) toolProfile {
 	case "eraser":
 		return toolProfile{26, 0, 0.4, 0, 0, 1.0}
 	}
+	dlog("profile: unknown tool %q, using defaults", tool)
 	return toolProfile{5, 0.5, 0.5, 0, 0, 1}
 }
 
@@ -123,6 +137,7 @@ func (s *stroke) minLen() float64 {
 func (s *stroke) pressureFor(p Point, dist float64) float64 {
 	if !s.realP && math.Abs(p.P-s.firstP) > realPressureDelta {
 		s.realP = true
+		dlog("real stylus pressure detected, switching off speed simulation")
 	}
 	if s.realP {
 		s.prevP += (p.P - s.prevP) * 0.6
@@ -186,6 +201,7 @@ func (s *stroke) feed(p Point, last bool, out *[]Sample) {
 		return
 	}
 	s.minOK = true
+	dlog("stroke passed the min-length noise gate")
 
 	pr := s.pressureFor(p, dist)
 	w := s.widthFor(pr)
@@ -239,6 +255,7 @@ func (s *stroke) flush() []Sample {
 	s.buf = nil
 	if s.hasPrev && s.rl < s.minLen() {
 		// A tap or sub-min-length squiggle still leaves a full-size dot.
+		dlog("stroke below min length, emitting a tap dot")
 		w := s.prof.dia * (0.5 - s.prof.thinning*(0.5-s.prevP))
 		out = []Sample{{X: s.prev.X, Y: s.prev.Y, W: math.Max(minW, w), A: s.prof.alpha}}
 	}

@@ -1,6 +1,10 @@
 import { i18n } from './i18n'
+import { logger } from './log'
+
+const log = logger('app')
 
 export function showFatalError(root: HTMLElement) {
+  log.error('showing fatal storage error screen')
   const t = i18n.global.t
   root.innerHTML = `
     <div class="fatal">

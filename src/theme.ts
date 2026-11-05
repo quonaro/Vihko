@@ -1,5 +1,8 @@
 import { ref } from 'vue'
+import { logger } from './log'
 import { getSystemBarSettings, syncSystemBarsTheme } from './systemTheme'
+
+const log = logger('theme')
 
 export type AppTheme = 'light' | 'dark'
 
@@ -17,13 +20,14 @@ function applyTheme(value: AppTheme) {
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute('content', getSystemBarSettings(value).backgroundColor)
   void syncSystemBarsTheme(value).catch((error) =>
-    console.warn('Could not sync system bar theme', error),
+    log.warn('Could not sync system bar theme', error),
   )
 }
 
 applyTheme(theme.value)
 
 export function setTheme(value: AppTheme) {
+  log.debug('theme set', value)
   theme.value = value
   localStorage.setItem(storageKey, value)
   applyTheme(value)

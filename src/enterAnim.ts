@@ -1,4 +1,7 @@
 import { ref } from 'vue'
+import { logger } from './log'
+
+const log = logger('anim')
 
 // Journal-open transition picked in the settings sheet. 'dive' flies the
 // shelf camera into the tapped cover, 'open' lifts the book and hinges its
@@ -20,6 +23,7 @@ function readEnterAnim(): EnterAnim {
 export const enterAnim = ref<EnterAnim>(readEnterAnim())
 
 export function setEnterAnim(v: EnterAnim) {
+  log.debug('enter anim set', v)
   enterAnim.value = v
   localStorage.setItem(ENTER_ANIM_KEY, v)
 }
