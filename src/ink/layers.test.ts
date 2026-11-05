@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { PAGE_H, PAGE_W } from '../pageSpace'
 import type { InkEngine, Layer, Page } from '../types'
-import { clearLayerRasterCache, cutOpForLayer, layerRasterCanvas, paintLayers } from './layers'
+import {
+  adoptLayerRasterTail,
+  clearLayerRasterCache,
+  cutOpForLayer,
+  layerRasterCanvas,
+  paintLayers,
+} from './layers'
 
 describe('cutOpForLayer', () => {
   it('maps a world-space selection and drag into transformed layer coordinates', () => {
@@ -55,6 +61,9 @@ describe('cutOpForLayer', () => {
       save: () => {},
       restore: () => {},
       setTransform: () => {},
+      beginPath: () => {},
+      rect: () => {},
+      clip: () => {},
       clearRect: vi.fn(),
     } as unknown as CanvasRenderingContext2D
 
@@ -85,6 +94,9 @@ describe('cutOpForLayer', () => {
       save: () => {},
       restore: () => {},
       setTransform: () => {},
+      beginPath: () => {},
+      rect: () => {},
+      clip: () => {},
       clearRect: vi.fn(),
     } as unknown as CanvasRenderingContext2D
 
@@ -102,6 +114,9 @@ describe('cutOpForLayer', () => {
       save: vi.fn(),
       restore: vi.fn(),
       setTransform: vi.fn(),
+      beginPath: vi.fn(),
+      rect: vi.fn(),
+      clip: vi.fn(),
       translate: vi.fn(),
       rotate: vi.fn(),
       scale: vi.fn(),
@@ -188,6 +203,7 @@ const stubInk = (): InkEngine => ({
   begin: () => 1,
   addPoint: () => [{ x: 0, y: 0, w: 3, a: 1 }],
   predict: () => [],
+  tail: () => [],
   end: () => [{ x: 1, y: 1, w: 3, a: 1 }],
 })
 
@@ -277,6 +293,78 @@ describe('layer raster cache (fixed resolution)', () => {
     }
   })
 
+  it('adopts a stroke painted live into the raster without re-rendering it', () => {
+    const rasterCtx = stubCtx()
+    const compositeCtx = stubCtx()
+    const createElement = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation(() => stubCanvas(rasterCtx))
+    const layer = stubLayer('L')
+    const page: Page = {
+      id: 'adopt-page',
+      strokes: [
+        { tool: 'write', color: '#111', pts: [{ x: 0, y: 0, t: 0, p: 0.5 }], layerId: 'L' },
+      ],
+      layers: [layer],
+      createdAt: 0,
+    }
+    const ink = stubInk()
+    const beginSpy = vi.spyOn(ink, 'begin')
+
+    clearLayerRasterCache(page.id)
+    try {
+      const raster = layerRasterCanvas(page, ink, 'L')!
+      expect(beginSpy).toHaveBeenCalledTimes(1)
+
+      // A live stroke painted straight into the cached raster: push it to
+      // the model and adopt the signature — the next composite must not
+      // replay it through the engine.
+      page.strokes.push({
+        tool: 'write',
+        color: '#222',
+        pts: [{ x: 1, y: 1, t: 1, p: 0.5 }],
+        layerId: 'L',
+      })
+      expect(adoptLayerRasterTail(page, layer, raster)).toBe(true)
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, ink, 1)
+      expect(beginSpy).toHaveBeenCalledTimes(1)
+      expect(rasterCtx.clearRect).toHaveBeenCalledTimes(1)
+
+      // A different canvas means the entry was rebuilt under us — no adopt.
+      expect(adoptLayerRasterTail(page, layer, { width: 0 } as HTMLCanvasElement)).toBe(false)
+    } finally {
+      clearLayerRasterCache(page.id)
+      createElement.mockRestore()
+    }
+  })
+
+  it('clears a single layer raster when a layerId is given', () => {
+    const rasterCtx = stubCtx()
+    const compositeCtx = stubCtx()
+    const createElement = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation(() => stubCanvas(rasterCtx))
+    const page: Page = {
+      id: 'clear-one',
+      strokes: [],
+      layers: [stubLayer('A'), stubLayer('B')],
+      createdAt: 0,
+    }
+
+    clearLayerRasterCache(page.id)
+    try {
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, stubInk(), 1)
+      expect(rasterCtx.clearRect).toHaveBeenCalledTimes(2) // both layers rasterized
+
+      clearLayerRasterCache(page.id, 'A')
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, stubInk(), 1)
+      expect(rasterCtx.clearRect).toHaveBeenCalledTimes(3) // only A rebuilt
+    } finally {
+      clearLayerRasterCache(page.id)
+      createElement.mockRestore()
+    }
+  })
+
   it('exposes the cached layer raster for thumbnails', () => {
     const rasterCtx = stubCtx()
     const createElement = vi
@@ -312,6 +400,30 @@ describe('layer compositing', () => {
       .mockImplementation(() => stubCanvas(stubCtx({ gco, blends })))
     return { compositeCtx, createElement }
   }
+
+  it('clips composited layers to the page rect', () => {
+    const { compositeCtx, createElement } = mockCanvases([], [])
+    const page: Page = {
+      id: 'page-clip-bounds',
+      strokes: [],
+      layers: [stubLayer('L', { x: 400, rotation: 45 })],
+      createdAt: 0,
+    }
+
+    clearLayerRasterCache(page.id)
+    try {
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, stubInk(), 1)
+      // A transformed layer's raster would spill past the paper edge — the
+      // composite clips to the page rect (in page units under the display
+      // transform) so nothing paints on the backdrop.
+      expect(compositeCtx.beginPath).toHaveBeenCalled()
+      expect(compositeCtx.rect).toHaveBeenCalledWith(0, 0, PAGE_W, PAGE_H)
+      expect(compositeCtx.clip).toHaveBeenCalled()
+    } finally {
+      clearLayerRasterCache(page.id)
+      createElement.mockRestore()
+    }
+  })
 
   it('composites a layer with its blend mode', () => {
     const gco: string[] = []

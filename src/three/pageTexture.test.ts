@@ -34,6 +34,12 @@ function makeCtx(): CanvasRenderingContext2D & MockCtx {
     closePath() {
       ctx.ops.push({ name: 'closePath', args: [] })
     },
+    rect(...a: number[]) {
+      ctx.ops.push({ name: 'rect', args: a })
+    },
+    clip() {
+      ctx.ops.push({ name: 'clip', args: [] })
+    },
     moveTo(...a: number[]) {
       ctx.ops.push({ name: 'moveTo', args: a })
     },
@@ -168,6 +174,8 @@ describe('cached content rasters', () => {
       fillRect() {},
       beginPath() {},
       closePath() {},
+      rect() {},
+      clip() {},
       moveTo() {},
       lineTo() {},
       arc() {},
@@ -191,6 +199,7 @@ describe('cached content rasters', () => {
         addPoint: eng.addPoint,
         predict: eng.predict,
         end: eng.end,
+        tail: eng.tail,
       } as InkEngine,
     }
   }
@@ -217,7 +226,7 @@ describe('cached content rasters', () => {
       expect(spy.count()).toBe(1) // second variant reused the cached base
       pushStroke(line(0, 100))
       pageCanvas(p, spy.engine, 300)
-      expect(spy.count()).toBe(3) // content changed -> repaint of both strokes
+      expect(spy.count()).toBe(2) // repaint replays both, but the first stroke's samples are memoized
     } finally {
       unstubCanvas()
     }
@@ -237,7 +246,7 @@ describe('cached content rasters', () => {
       repaintInto(ctx, c, p, spy.engine)
       expect(spy.count()).toBe(1)
       repaintInto(ctx, c, p, spy.engine, undefined, undefined, true)
-      expect(spy.count()).toBe(2)
+      expect(spy.count()).toBe(1) // forced repaint reuses the stroke's memoized samples
     } finally {
       unstubCanvas()
     }

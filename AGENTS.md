@@ -250,6 +250,16 @@ screens.
   Drawing guides (`store.guide` line/arc, `snapToGuide`) snap ink points onto
   a straightedge or a circular french curve; the overlay draws in page space
   and its handles drag the anchor, the line angle, or the arc radius.
+- Spread focus (`store.spreadMode` full/left/right, cycled from the top bar,
+  landscape pages only): `spreadRect` crops the working rect to one half of
+  the sheet — the viewport fits it, paint/paper clip to it, and each side
+  keeps its own saved view (`pageId|mode` keys). The fold is a hard edge
+  for input too: a stroke can't start outside the rect and ends when the
+  pointer crosses it (re-entering starts a new stroke), shape drags and
+  cut paths clamp to it, and symmetry mirrors across the rect's axes.
+  Fill-family ops (fill/erase/filter/clear) committed while a half is
+  focused record that half as `op.rect` (page units) so their pixels
+  can't cross the fold on replay either.
 - Zoom/rotate: two-finger pinch zooms around its moving midpoint and pans
   freely (scale clamped to [half-size contain, cover·5]; offsets are
   unbounded); rotating the finger chord rotates the whole canvas

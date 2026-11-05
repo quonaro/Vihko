@@ -6,6 +6,20 @@ import { store, currentPage, pageLayers, addLayer, updateLayer, pageRev } from '
 import { PAGE_W, PAGE_H } from '../pageSpace'
 import type { Journal } from '../types'
 
+// jsdom can't decode images — the import pipeline is stubbed; the layer and
+// tool behavior around it is what these tests exercise.
+vi.mock('../ink/ops', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../ink/ops')>()
+  return {
+    ...mod,
+    imageFileToPhoto: vi.fn(async () => ({
+      src: 'data:image/png;base64,AAAA',
+      w: 200,
+      h: 120,
+    })),
+  }
+})
+
 const mountCanvas = async () => {
   const w = mount(CanvasView, { global: { plugins: [i18n] }, attachTo: document.body })
   await flushPromises() // onMounted awaits initInk()
@@ -77,6 +91,58 @@ function pev(type: string, props: Record<string, unknown> = {}) {
   return e
 }
 
+// jsdom has no canvas backend — hand each created canvas a stubbed 2d
+// context so paint/replay code paths run for real and we can observe them.
+const mockCanvasBackend = () => {
+  const stub2d = () =>
+    ({
+      save: vi.fn(),
+      restore: vi.fn(),
+      setTransform: vi.fn(),
+      beginPath: vi.fn(),
+      rect: vi.fn(),
+      clip: vi.fn(),
+      clearRect: vi.fn(),
+      fillRect: vi.fn(),
+      strokeRect: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      closePath: vi.fn(),
+      arc: vi.fn(),
+      fill: vi.fn(),
+      stroke: vi.fn(),
+      translate: vi.fn(),
+      rotate: vi.fn(),
+      scale: vi.fn(),
+      setLineDash: vi.fn(),
+      drawImage: vi.fn(),
+      createRadialGradient: () => ({ addColorStop: vi.fn() }),
+      createLinearGradient: () => ({ addColorStop: vi.fn() }),
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+    }) as unknown as CanvasRenderingContext2D
+  const realCreate = document.createElement.bind(document)
+  const canvases: HTMLCanvasElement[] = []
+  const ctxs = new Map<HTMLCanvasElement, CanvasRenderingContext2D>()
+  const spy = vi.spyOn(document, 'createElement').mockImplementation(((
+    tag: string,
+    ...rest: unknown[]
+  ) => {
+    const el = realCreate(tag as 'canvas', ...(rest as never[]))
+    if (tag === 'canvas') {
+      const stub = stub2d()
+      canvases.push(el as HTMLCanvasElement)
+      ctxs.set(el as HTMLCanvasElement, stub)
+      Object.defineProperty(el, 'getContext', { value: () => stub, configurable: true })
+    }
+    return el
+  }) as typeof document.createElement)
+  return { canvases, ctxs, restore: () => spy.mockRestore() }
+}
+
 const journal = (): Journal => ({
   id: 'j1',
   title: 'Field Notes',
@@ -94,6 +160,7 @@ beforeEach(() => {
   store.pageId = 'p1'
   store.view = 'canvas'
   store.tool = 'write'
+  store.spreadMode = 'full'
   localStorage.clear()
 })
 
@@ -165,6 +232,198 @@ describe('CanvasView', () => {
     expect(right.x).toBeLessThan(PAGE_W)
     expect(left.y).toBeCloseTo(PAGE_H / 2, 0)
     expect(right.y).toBeCloseTo(PAGE_H / 2, 0)
+    w.unmount()
+  })
+
+  it('spread focus cycles the working half and reframes the viewport', async () => {
+    const w = await mountSized(400, 800)
+    const btn = w.find('.spread-btn')
+    expect(btn.exists()).toBe(true)
+    const canvas = w.find('canvas').element
+
+    await btn.trigger('click')
+    expect(store.spreadMode).toBe('left')
+    tap(canvas, 200, 400) // canvas center -> left half's center
+    let point = currentPage()!.strokes[0].pts[0]
+    expect(point.x).toBeCloseTo(PAGE_W / 4, 0)
+    expect(point.y).toBeCloseTo(PAGE_H / 2, 0)
+
+    await btn.trigger('click')
+    expect(store.spreadMode).toBe('right')
+    tap(canvas, 200, 400)
+    point = currentPage()!.strokes[1].pts[0]
+    expect(point.x).toBeCloseTo((PAGE_W * 3) / 4, 0)
+    expect(point.y).toBeCloseTo(PAGE_H / 2, 0)
+
+    await btn.trigger('click')
+    expect(store.spreadMode).toBe('full')
+    w.unmount()
+  })
+
+  it('hides the spread button on non-landscape pages', async () => {
+    const w = await mountCanvas()
+    expect(w.find('.spread-btn').exists()).toBe(true)
+    currentPage()!.w = PAGE_W / 2 // portrait page
+    await w.vm.$nextTick()
+    expect(w.find('.spread-btn').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('splits a stroke at the fold — the eraser cannot touch the hidden half', async () => {
+    const w = await mountSized(400, 800)
+    await w.find('.spread-btn').trigger('click') // left half
+    store.tool = 'eraser'
+    const canvas = w.find('canvas').element
+    // In left mode on 400x800 the fold lands near canvas x≈360: a drag from
+    // 200 to 390 crosses it.
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 200,
+        clientY: 400,
+        timeStamp: 0,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 250,
+        clientY: 400,
+        timeStamp: 8,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 390,
+        clientY: 400,
+        timeStamp: 16,
+      }),
+    )
+    expect(currentPage()!.strokes).toHaveLength(1) // committed at the fold
+    // Re-entering the half resumes as a new stroke.
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 300,
+        clientY: 400,
+        timeStamp: 24,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 300,
+        clientY: 400,
+        timeStamp: 32,
+      }),
+    )
+    const strokes = currentPage()!.strokes
+    expect(strokes).toHaveLength(2)
+    for (const stroke of strokes)
+      for (const pt of stroke.pts) expect(pt.x).toBeLessThanOrEqual(PAGE_W / 2 + 0.01)
+    w.unmount()
+  })
+
+  it('keeps a stroke started outside the focused half from ever painting', async () => {
+    const w = await mountSized(400, 800)
+    await w.find('.spread-btn').trigger('click') // left half
+    store.tool = 'write'
+    const canvas = w.find('canvas').element
+    // x=390 lands on the hidden right half.
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 390,
+        clientY: 400,
+        timeStamp: 0,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 385,
+        clientY: 400,
+        timeStamp: 8,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 385,
+        clientY: 400,
+        timeStamp: 16,
+      }),
+    )
+    expect(currentPage()!.strokes).toHaveLength(0)
+    w.unmount()
+  })
+
+  it('clamps a shape drag to the focused half', async () => {
+    const w = await mountSized(400, 800)
+    await w.find('.spread-btn').trigger('click') // left half
+    store.tool = 'shapes'
+    store.shape = 'rectangle'
+    const canvas = w.find('canvas').element
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 200,
+        clientY: 300,
+        timeStamp: 0,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 390,
+        clientY: 500,
+        timeStamp: 16,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 390,
+        clientY: 500,
+        timeStamp: 24,
+      }),
+    )
+    const stroke = currentPage()!.strokes[0]
+    expect(stroke.tool).toBe('shapes')
+    for (const pt of stroke.pts) expect(pt.x).toBeLessThanOrEqual(PAGE_W / 2 + 0.01)
+    w.unmount()
+  })
+
+  it('confines committed fills to the focused spread half', async () => {
+    const w = await mountSized(400, 800)
+    store.tool = 'fill'
+    const canvas = w.find('canvas').element
+    const btn = w.find('.spread-btn')
+    const opRect = (i: number) => (currentPage()!.ops![i] as { rect?: object }).rect
+
+    tap(canvas, 200, 400) // full spread — unconfined
+    expect(currentPage()!.ops![0].kind).toBe('fill')
+    expect(opRect(0)).toBeUndefined()
+
+    await btn.trigger('click') // left half
+    tap(canvas, 200, 400)
+    expect(opRect(1)).toEqual({ x: 0, y: 0, w: PAGE_W / 2, h: PAGE_H })
+
+    await btn.trigger('click') // right half
+    tap(canvas, 200, 400)
+    expect(opRect(2)).toEqual({ x: PAGE_W / 2, y: 0, w: PAGE_W / 2, h: PAGE_H })
     w.unmount()
   })
 
@@ -258,6 +517,85 @@ describe('CanvasView', () => {
     expect(strokes[0].tool).toBe('shapes')
     expect(strokes[0].pts.length).toBe(5)
     expect(strokes[0].pts[0]).toMatchObject({ x: strokes[0].pts[4].x, y: strokes[0].pts[4].y })
+    w.unmount()
+  })
+
+  it('commits a drawn shape onto a new layer and activates the transform tool', async () => {
+    const w = await mountSized(400, 800)
+    store.tool = 'shapes'
+    store.shape = 'rectangle'
+    const baseLayerId = pageLayers()[0].id
+    const canvas = w.find('canvas').element
+    canvas.dispatchEvent(
+      pev('pointerdown', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 100,
+        clientY: 100,
+        timeStamp: 0,
+        pressure: 0.5,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointermove', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 170,
+        clientY: 150,
+        timeStamp: 16,
+        pressure: 0.5,
+      }),
+    )
+    canvas.dispatchEvent(
+      pev('pointerup', {
+        pointerId: 1,
+        pointerType: 'mouse',
+        clientX: 170,
+        clientY: 150,
+        timeStamp: 24,
+        pressure: 0.5,
+      }),
+    )
+
+    const layers = pageLayers()
+    expect(layers).toHaveLength(2)
+    const stroke = currentPage()!.strokes[0]
+    expect(stroke.tool).toBe('shapes')
+    expect(stroke.layerId).toBe(layers[1].id)
+    expect(stroke.layerId).not.toBe(baseLayerId)
+    expect(currentPage()!.activeLayerId).toBe(layers[1].id)
+    expect(store.tool).toBe('transform')
+    w.unmount()
+  })
+
+  it('does not create a layer for a shape tap that never drags', async () => {
+    const w = await mountSized(400, 800)
+    store.tool = 'shapes'
+    store.shape = 'rectangle'
+    tap(w.find('canvas').element, 200, 300)
+    expect(currentPage()!.strokes).toHaveLength(0)
+    expect(pageLayers()).toHaveLength(1)
+    expect(store.tool).toBe('shapes')
+    w.unmount()
+  })
+
+  it('imports a photo onto a new layer and activates the transform tool', async () => {
+    const w = await mountCanvas()
+    const baseLayerId = pageLayers()[0].id
+    const input = w.find('input[type="file"]').element as HTMLInputElement
+    const file = new File(['x'], 'photo.png', { type: 'image/png' })
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    input.dispatchEvent(new Event('change'))
+    await flushPromises()
+
+    const layers = pageLayers()
+    expect(layers).toHaveLength(2)
+    const op = currentPage()!.ops![currentPage()!.ops!.length - 1]
+    expect(op.kind).toBe('photo')
+    expect(op.layerId).toBe(layers[1].id)
+    expect(op.layerId).not.toBe(baseLayerId)
+    expect(currentPage()!.activeLayerId).toBe(layers[1].id)
+    expect(store.tool).toBe('transform')
     w.unmount()
   })
 
@@ -894,6 +1232,130 @@ describe('CanvasView', () => {
     // p1 restored its zoomed view: the same tap lands further right
     expect(currentPage()!.strokes[0].pts[0].x).toBeGreaterThan(onP2)
     w.unmount()
+  })
+
+  it('the live eraser repaints only the touched region, not the whole page', async () => {
+    const backend = mockCanvasBackend()
+    try {
+      const w = await mountSized(400, 800)
+      const canvas = w.find('canvas').element as HTMLCanvasElement
+      const ctx = backend.ctxs.get(canvas)!
+      tap(canvas, 200, 400) // give the eraser something to erase
+      store.tool = 'eraser'
+      vi.mocked(ctx.clip).mockClear()
+
+      canvas.dispatchEvent(
+        pev('pointerdown', {
+          pointerId: 1,
+          pointerType: 'mouse',
+          clientX: 180,
+          clientY: 380,
+          timeStamp: 0,
+          pressure: 0.5,
+        }),
+      )
+      canvas.dispatchEvent(
+        pev('pointermove', {
+          pointerId: 1,
+          pointerType: 'mouse',
+          clientX: 220,
+          clientY: 420,
+          timeStamp: 16,
+          pressure: 0.5,
+        }),
+      )
+      await new Promise((r) => setTimeout(r, 0)) // let the scheduled rAF fire
+
+      // A clipped dirty-region repaint — a full snapshot rebuild never clips
+      // the display context.
+      expect(ctx.clip).toHaveBeenCalled()
+      canvas.dispatchEvent(
+        pev('pointerup', {
+          pointerId: 1,
+          pointerType: 'mouse',
+          clientX: 220,
+          clientY: 420,
+          timeStamp: 24,
+        }),
+      )
+      expect(currentPage()!.strokes.at(-1)!.tool).toBe('eraser')
+      w.unmount()
+    } finally {
+      backend.restore()
+    }
+  })
+
+  it('cancelling a live erase with a second finger restores the raster, not replays it', async () => {
+    const backend = mockCanvasBackend()
+    try {
+      const w = await mountSized(400, 800)
+      const canvas = w.find('canvas').element as HTMLCanvasElement
+      tap(canvas, 200, 400) // content to erase
+      store.tool = 'eraser'
+      // The layer raster is the first canvas grown to the 3072px raster width.
+      const raster = backend.canvases.find((c) => c.width === 3072)!
+      const rctx = backend.ctxs.get(raster)!
+      vi.mocked(rctx.clearRect).mockClear()
+      vi.mocked(rctx.drawImage).mockClear()
+
+      // Finger 1 starts erasing, finger 2 begins the pinch -> cancel.
+      canvas.dispatchEvent(
+        pev('pointerdown', {
+          pointerId: 1,
+          pointerType: 'touch',
+          clientX: 180,
+          clientY: 380,
+          timeStamp: 0,
+          pressure: 0.5,
+        }),
+      )
+      canvas.dispatchEvent(
+        pev('pointermove', {
+          pointerId: 1,
+          pointerType: 'touch',
+          clientX: 200,
+          clientY: 400,
+          timeStamp: 8,
+          pressure: 0.5,
+        }),
+      )
+      canvas.dispatchEvent(
+        pev('pointerdown', {
+          pointerId: 2,
+          pointerType: 'touch',
+          clientX: 220,
+          clientY: 420,
+          timeStamp: 9,
+        }),
+      )
+
+      expect(currentPage()!.strokes).toHaveLength(1) // the cancelled stroke is not committed
+      // The pre-stroke copy is drawn back — the raster is NOT rebuilt from a
+      // full layer replay (which is what made pinch-start stutter).
+      expect(rctx.drawImage).toHaveBeenCalled()
+      expect(rctx.clearRect).not.toHaveBeenCalled()
+      canvas.dispatchEvent(
+        pev('pointerup', {
+          pointerId: 1,
+          pointerType: 'touch',
+          clientX: 200,
+          clientY: 400,
+          timeStamp: 20,
+        }),
+      )
+      canvas.dispatchEvent(
+        pev('pointerup', {
+          pointerId: 2,
+          pointerType: 'touch',
+          clientX: 220,
+          clientY: 420,
+          timeStamp: 21,
+        }),
+      )
+      w.unmount()
+    } finally {
+      backend.restore()
+    }
   })
 
   it('each page remembers its own rotation', async () => {

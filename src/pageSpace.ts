@@ -1,3 +1,5 @@
+import type { SpreadMode } from './types'
+
 // Canonical page coordinate space. Stroke points, raster-op coordinates and
 // photo placements are all stored in page units: a fixed-size landscape sheet
 // (a two-page spread, fold down the middle) that the journal stack/overview
@@ -31,6 +33,19 @@ export const PAGE_SIZE_PRESETS = [
 export type PageSizeId = (typeof PAGE_SIZE_PRESETS)[number]['id']
 export function pageSizePreset(id: string): PageSize {
   return PAGE_SIZE_PRESETS.find((p) => p.id === id) ?? PAGE_SIZE_PRESETS[0]
+}
+
+// The editor's working rect in page units. A landscape sheet under the
+// 'left'/'right' spread focus crops to that half; anything else gets the
+// whole sheet. Strokes keep full page coordinates — the rect only bounds
+// the viewport framing and the paint clip.
+export function spreadRect(
+  mode: SpreadMode,
+  w: number,
+  h: number,
+): { x: number; y: number; w: number; h: number } {
+  if (w <= h || mode === 'full') return { x: 0, y: 0, w, h }
+  return { x: mode === 'right' ? w / 2 : 0, y: 0, w: w / 2, h }
 }
 
 export interface Viewport {

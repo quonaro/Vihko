@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { PAGE_W, PAGE_H, PAGE_UNIT, PAGE_ASPECT, coverViewport } from './pageSpace'
+import { PAGE_W, PAGE_H, PAGE_UNIT, PAGE_ASPECT, coverViewport, spreadRect } from './pageSpace'
 
 describe('page dimensions', () => {
   it('match the 600x380 landscape spread at factor 0.28', () => {
@@ -31,5 +31,36 @@ describe('coverViewport', () => {
     const v = coverViewport(600, 380)
     expect(v.ox).toBeCloseTo(0)
     expect(v.oy).toBeCloseTo(0)
+  })
+})
+
+describe('spreadRect', () => {
+  it('returns the whole sheet in full mode', () => {
+    expect(spreadRect('full', PAGE_W, PAGE_H)).toEqual({ x: 0, y: 0, w: PAGE_W, h: PAGE_H })
+  })
+
+  it('crops a landscape sheet to the left or right half', () => {
+    expect(spreadRect('left', PAGE_W, PAGE_H)).toEqual({
+      x: 0,
+      y: 0,
+      w: PAGE_W / 2,
+      h: PAGE_H,
+    })
+    expect(spreadRect('right', PAGE_W, PAGE_H)).toEqual({
+      x: PAGE_W / 2,
+      y: 0,
+      w: PAGE_W / 2,
+      h: PAGE_H,
+    })
+  })
+
+  it('ignores the focus on portrait and square sheets', () => {
+    expect(spreadRect('left', PAGE_W / 2, PAGE_H)).toEqual({
+      x: 0,
+      y: 0,
+      w: PAGE_W / 2,
+      h: PAGE_H,
+    })
+    expect(spreadRect('right', PAGE_H, PAGE_H)).toEqual({ x: 0, y: 0, w: PAGE_H, h: PAGE_H })
   })
 })

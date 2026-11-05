@@ -172,6 +172,16 @@ describe('jsEngine sampling', () => {
     expect(real).toEqual(prev)
   })
 
+  it('tail() previews the flush without ending the stroke', () => {
+    const ink = jsEngine()
+    const id = ink.begin('draw')
+    for (let i = 0; i <= 30; i++) ink.addPoint(id, 2 * i, 0, 16 * i, 0.5)
+    const preview = ink.tail(id)
+    expect(preview.length).toBeGreaterThan(0)
+    expect(ink.tail(id)).toEqual(preview) // repeatable — the stroke stays open
+    expect(ink.end(id)).toEqual(preview)
+  })
+
   it('keeps parallel strokes isolated', () => {
     const ink = jsEngine()
     const a = ink.begin('draw')

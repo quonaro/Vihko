@@ -20,6 +20,8 @@ const {
   onPointerUp,
   cycleSymmetry,
   cycleGuide,
+  cycleSpread,
+  spreadCapable,
   undoOk,
   redoOk,
   importPhoto,
@@ -53,7 +55,8 @@ const {
     </button>
 
     <div class="page-badge" v-if="journal">
-      {{ journal.title }} — {{ pageIndex + 1 }}/{{ journal.pages.length }}
+      {{ journal.title }} — {{ pageIndex + 1 }}/{{ journal.pages.length
+      }}{{ store.spreadMode === 'full' ? '' : ` · ${t(`canvas.side.${store.spreadMode}`)}` }}
     </div>
 
     <div class="top-actions">
@@ -71,6 +74,14 @@ const {
       </button>
       <button class="round-btn" :class="{ selected: store.guide !== 'off' }" @click="cycleGuide" :title="t('canvas.guide')">
         <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path v-if="store.guide === 'arc'" d="M4 18a8 8 0 0 1 16 0"/><path v-else d="M4 18 20 6"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <button v-if="spreadCapable" class="round-btn spread-btn" :class="{ selected: store.spreadMode !== 'full' }" @click="cycleSpread" :title="t('canvas.spread')">
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
+          <rect x="4" y="6" width="16" height="12" rx="1"/>
+          <path d="M12 6v12"/>
+          <rect v-if="store.spreadMode === 'left'" x="4.8" y="6.8" width="6.6" height="10.4" fill="currentColor" stroke="none"/>
+          <rect v-else-if="store.spreadMode === 'right'" x="12.6" y="6.8" width="6.6" height="10.4" fill="currentColor" stroke="none"/>
+        </svg>
       </button>
     </div>
 

@@ -40,6 +40,41 @@ export function layerPoint(
   }
 }
 
+// Page-space point -> layer-local coordinates (inverse of layerPoint).
+export function pagePtToLayer(
+  layer: Pick<Layer, 'x' | 'y' | 'scale' | 'rotation'>,
+  point: LayerPoint,
+  pageW: number,
+  pageH: number,
+): LayerPoint {
+  const angle = (layer.rotation * Math.PI) / 180
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  const scale = layer.scale || 1
+  const dx = point.x - pageW / 2 - layer.x
+  const dy = point.y - pageH / 2 - layer.y
+  return {
+    x: pageW / 2 + (dx * cos + dy * sin) / scale,
+    y: pageH / 2 + (-dx * sin + dy * cos) / scale,
+  }
+}
+
+// Page-space rect -> layer-local polygon (its 4 corners remapped). Under a
+// rotated layer the result is a parallelogram — clip by path, not by rect.
+export function pageRectToLayer(
+  layer: Pick<Layer, 'x' | 'y' | 'scale' | 'rotation'>,
+  r: { x: number; y: number; w: number; h: number },
+  pageW: number,
+  pageH: number,
+): LayerPoint[] {
+  return [
+    pagePtToLayer(layer, { x: r.x, y: r.y }, pageW, pageH),
+    pagePtToLayer(layer, { x: r.x + r.w, y: r.y }, pageW, pageH),
+    pagePtToLayer(layer, { x: r.x + r.w, y: r.y + r.h }, pageW, pageH),
+    pagePtToLayer(layer, { x: r.x, y: r.y + r.h }, pageW, pageH),
+  ]
+}
+
 export function frameLocalPoints(bounds: LayerBounds): Record<ResizeHandle, LayerPoint> {
   const cx = (bounds.left + bounds.right) / 2
   const cy = (bounds.top + bounds.bottom) / 2
@@ -177,16 +212,17 @@ export function layerRectToPage(
   return { x: left, y: top, w: right - left, h: bottom - top }
 }
 
-// Mirrored variants of live samples under the current symmetry mode.
+// Mirrored variants of live samples under the current symmetry mode,
+// mirrored across the axes through `rect`'s center (the whole sheet, or a
+// focused spread half).
 export function mirroredSamples(
   samples: Sample[],
   symmetry: SymmetryMode,
-  pageW: number,
-  pageH: number,
+  rect: { x: number; y: number; w: number; h: number },
 ): Sample[] {
   const sets: Sample[][] = []
-  const mv = (s: Sample) => ({ ...s, x: pageW - s.x })
-  const mh = (s: Sample) => ({ ...s, y: pageH - s.y })
+  const mv = (s: Sample) => ({ ...s, x: 2 * rect.x + rect.w - s.x })
+  const mh = (s: Sample) => ({ ...s, y: 2 * rect.y + rect.h - s.y })
   if (symmetry === 'v' || symmetry === 'xy') sets.push(samples.map(mv))
   if (symmetry === 'h' || symmetry === 'xy') sets.push(samples.map(mh))
   if (symmetry === 'xy') sets.push(samples.map((s) => mh(mv(s))))

@@ -61,6 +61,9 @@ export interface Stroke {
   stab?: number // brush stabilizer 0..1 at draw time; -1/absent = tool default
   layerId?: string
   alphaLock?: boolean // painted while the layer's alpha lock was on
+  // Layer-local clip polygon confining the stroke's pixels — recorded when a
+  // spread half was focused so brush/eraser width can't bleed past the fold.
+  clip?: { x: number; y: number }[]
   // Brush snapshot (see BrushParams); absent fields use renderer defaults.
   opacity?: number
   blend?: BlendMode
@@ -88,14 +91,26 @@ export interface PhotoItem {
   h: number
 }
 
+// A rect in page units (the op's coordinate space). Ops committed while a
+// spread half was focused carry one so their pixels stay inside that half —
+// replay is deterministic and the fill can't flood across the fold.
+export interface PageRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 // Raster/page ops replayed in order relative to strokes. `after` is the number
 // of strokes already drawn when the op ran, so replay can interleave them.
-// `alphaLock` marks ops committed while the layer's alpha lock was on.
+// `alphaLock` marks ops committed while the layer's alpha lock was on;
+// `rect` confines the op's effect to a focused spread half.
 export type PageOp =
   | ({ kind: 'fill'; x: number; y: number; color: string; after: number } & {
       layerId?: string
       alphaLock?: boolean
       invert?: boolean // background fill: paint the complement of the region
+      rect?: PageRect
     })
   | ({ kind: 'cut'; path: { x: number; y: number }[]; dx: number; dy: number; after: number } & {
       layerId?: string
@@ -105,11 +120,16 @@ export type PageOp =
       layerId?: string
       alphaLock?: boolean
     })
-  | ({ kind: 'clear'; after: number } & { layerId?: string; alphaLock?: boolean })
+  | ({ kind: 'clear'; after: number } & {
+      layerId?: string
+      alphaLock?: boolean
+      rect?: PageRect
+    })
   // Magic-wand background removal: clears the contiguous color region at (x,y).
   | ({ kind: 'erase'; x: number; y: number; after: number } & {
       layerId?: string
       alphaLock?: boolean
+      rect?: PageRect
     })
   // Pixel filters applied to the layer raster at this point in the op stream.
   | ({
@@ -123,6 +143,7 @@ export type PageOp =
     } & {
       layerId?: string
       alphaLock?: boolean
+      rect?: PageRect
     })
 
 export type FilterKind = 'blur' | 'sharpen' | 'adjust'
@@ -133,6 +154,11 @@ export type SymmetryMode = 'none' | 'v' | 'h' | 'xy'
 export const SYMMETRY_MODES: SymmetryMode[] = ['none', 'v', 'h', 'xy']
 export type GuideMode = 'off' | 'line' | 'arc'
 export const GUIDE_MODES: GuideMode[] = ['off', 'line', 'arc']
+
+// Spread focus: the canvas editor can work on just one half of a landscape
+// sheet ('left'/'right'); 'full' shows the whole two-page spread.
+export type SpreadMode = 'full' | 'left' | 'right'
+export const SPREAD_MODES: SpreadMode[] = ['full', 'left', 'right']
 
 // Layer blend modes — the globalCompositeOperation values offered in the
 // layer panel. 'source-over' is the default ("Normal") and is not stored.
@@ -201,6 +227,7 @@ export interface InkEngine {
   begin(tool: string, size?: number, stab?: number): number
   addPoint(id: number, x: number, y: number, t: number, p: number): Sample[]
   predict(id: number, x: number, y: number, t: number, p: number): Sample[]
+  tail(id: number): Sample[]
   end(id: number): Sample[]
   // Pixel kernels (engine/px.go) operating on ImageData buffers in place.
   floodFill?(

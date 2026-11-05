@@ -2,7 +2,8 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MobileSlider from './MobileSlider.vue'
-import { currentPage, activeLayer, pushOp } from '../store'
+import { store, currentPage, activeLayer, pushOp } from '../store'
+import { pageSize, spreadRect } from '../pageSpace'
 import { FILTER_KINDS } from '../types'
 import type { FilterKind } from '../types'
 
@@ -21,6 +22,9 @@ function applyFilter() {
   const p = currentPage()
   if (!p) return
   const layer = activeLayer()
+  // A focused spread half confines the filter's pixels to it.
+  const size = pageSize(p)
+  const rect = spreadRect(store.spreadMode, size.w, size.h)
   pushOp({
     kind: 'filter',
     filter: filterKind.value,
@@ -28,6 +32,7 @@ function applyFilter() {
     ...(filterKind.value === 'adjust' ? filterAdjust.value : null),
     after: p.strokes.length,
     alphaLock: layer?.alphaLock ? true : undefined,
+    rect: rect.w !== size.w ? rect : undefined,
   })
 }
 </script>

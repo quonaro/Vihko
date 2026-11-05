@@ -607,6 +607,12 @@ export function jsEngine(): InkEngine {
       strokes.delete(id)
       return out
     },
+    tail: (id) => {
+      const s = strokes.get(id)
+      if (!s) return []
+      const c: Stroke = { ...s, prev: { ...s.prev }, buf: s.buf.map((e) => ({ ...e })) }
+      return flush(c)
+    },
     floodFill: pxFloodFill,
     boxBlur: pxBoxBlur,
     sharpen: pxSharpen,

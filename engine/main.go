@@ -69,6 +69,17 @@ func jsEnd(this js.Value, args []js.Value) any {
 	return samplesToJS(out)
 }
 
+// tail(id) -> the samples a flush would emit if the stroke ended now
+// (live-repaint preview of the end taper). The stroke stays open.
+func jsTail(this js.Value, args []js.Value) any {
+	id := args[0].Float()
+	s := strokes[id]
+	if s == nil {
+		return js.ValueOf([]any{})
+	}
+	return samplesToJS(s.tail())
+}
+
 func samplesToJS(samples []Sample) js.Value {
 	arr := make([]any, len(samples))
 	for i, sm := range samples {
@@ -182,6 +193,7 @@ func main() {
 	ink.Set("addPoint", js.FuncOf(jsAddPoint))
 	ink.Set("predict", js.FuncOf(jsPredict))
 	ink.Set("end", js.FuncOf(jsEnd))
+	ink.Set("tail", js.FuncOf(jsTail))
 	ink.Set("floodFill", js.FuncOf(jsFloodFill))
 	ink.Set("boxBlur", js.FuncOf(jsBoxBlur))
 	ink.Set("sharpen", js.FuncOf(jsSharpen))

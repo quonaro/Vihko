@@ -17,21 +17,23 @@ import {
   canRedo,
   pageLayers,
   activeLayer,
+  addLayer,
   updateLayer,
 } from '../store'
 import { initInk } from '../ink/engine'
-import { newRenderCont, renderSamples } from '../ink/renderer'
-import type { RenderCont } from '../ink/renderer'
+import { renderSamples } from '../ink/renderer'
 import {
+  adoptLayerRasterTail,
   clearLayerRasterCache,
   layerMaskRasterCanvas,
   layerRasterCanvas,
   paintLayers,
+  setRasterScaleHint,
 } from '../ink/layers'
-import { extractRegion, onImageLoaded, imageFileToPhoto } from '../ink/ops'
+import { extractRegion, onImageLoaded, imageFileToPhoto, pathTo } from '../ink/ops'
 import { rdp } from '../ink/path'
 import { shapePoints } from '../ink/shapes'
-import { pageSize, coverViewport } from '../pageSpace'
+import { pageSize, coverViewport, spreadRect } from '../pageSpace'
 import { INK_TOOLS } from '../ink/tools'
 import {
   buildTransformFrame,
@@ -41,7 +43,7 @@ import {
   layerRectToPage as layerRectToPageMath,
   mirroredSamples,
   oppositeHandle,
-  sampleBounds,
+  pageRectToLayer,
 } from '../views/canvasMath'
 import type { LayerBounds, LayerPoint, TransformHandle } from '../views/canvasMath'
 import { buildLayerThumb, getLayerBounds as findLayerBounds } from '../views/canvasLayerInfo'
@@ -56,6 +58,7 @@ import type {
   Stroke,
   SymmetryMode,
 } from '../types'
+import { SPREAD_MODES } from '../types'
 
 export function useCanvasView() {
   const PAPER = '#f6f1e6'
@@ -141,6 +144,45 @@ export function useCanvasView() {
   // Current page's size in page units (custom sizes come from page.w/h).
   const pw = () => pageSize(currentPage()).w
   const ph = () => pageSize(currentPage()).h
+  // The working rect the viewport frames and paint clips to: the whole
+  // sheet, or one half when the spread focus picks a side. Portrait and
+  // square pages always use the full sheet.
+  const workRect = () => spreadRect(store.spreadMode, pw(), ph())
+  const workHalved = () => workRect().w !== pw()
+  const spreadCapable = computed(() => pw() > ph())
+  // A focused half is a hard edge for painting too: strokes can't start
+  // outside it, and a pointer leaving it ends the stroke at the fold.
+  const inWorkPage = (p: { x: number; y: number }) => {
+    const r = workRect()
+    return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
+  }
+  const inWork = (x: number, y: number) =>
+    !workHalved() || inWorkPage({ x: toPageX(x), y: toPageY(y) })
+  // Clamps a canvas-px point so its page position stays inside the rect.
+  const clampWork = (pt: { x: number; y: number }) => {
+    if (!workHalved()) return pt
+    const r = workRect()
+    const p = {
+      x: Math.min(Math.max(toPageX(pt.x), r.x), r.x + r.w),
+      y: Math.min(Math.max(toPageY(pt.y), r.y), r.y + r.h),
+    }
+    return { x: p.x * view.s + view.ox, y: p.y * view.s + view.oy }
+  }
+  const clampWorkPage = (p: { x: number; y: number }) => {
+    const r = workRect()
+    return {
+      x: Math.min(Math.max(p.x, r.x), r.x + r.w),
+      y: Math.min(Math.max(p.y, r.y), r.y + r.h),
+    }
+  }
+  // The focused half as a clip polygon in a layer's local space — strokes
+  // committed under a spread focus carry it, so brush/eraser width can't
+  // bleed past the fold on live paint or on replay.
+  function workClip(layer: Layer) {
+    if (!workHalved()) return null
+    const r = workRect()
+    return pageRectToLayer(layer, { x: r.x, y: r.y, w: r.w, h: r.h }, pw(), ph())
+  }
   function toLayerPt(pt: Pt, layerId: string): Pt {
     const pagePt = { ...pt, x: toPageX(pt.x), y: toPageY(pt.y) }
     const layer = pageLayers().find((item) => item.id === layerId)
@@ -163,29 +205,36 @@ export function useCanvasView() {
     sheet > 0 ? (o - (css - sheet) / 2) / sheet : 0
   const unfrac = (f: number, css: number, sheet: number) => (css - sheet) / 2 + f * sheet
 
+  // Saved views are per page AND per spread focus: each side of the sheet
+  // remembers its own framing.
+  const viewKey = () => `${store.pageId ?? ''}|${store.spreadMode}`
+
   function applyViewport() {
     const { w, h } = canvasSize()
-    const cover = coverViewport(w, h, pageSize(currentPage()))
-    const saved = views.get(store.pageId ?? '')
-    view.s = saved ? cover.s * saved.zoom : Math.min(w / pw(), h / ph()) * INITIAL_FIT
+    const r = workRect()
+    const cover = coverViewport(w, h, { w: r.w, h: r.h })
+    const saved = views.get(viewKey())
+    view.s = saved ? cover.s * saved.zoom : Math.min(w / r.w, h / r.h) * INITIAL_FIT
     view.angle = saved?.angle ?? 0
-    view.ox = saved ? unfrac(saved.fx, w, pw() * view.s) : (w - pw() * view.s) / 2
-    view.oy = saved ? unfrac(saved.fy, h, ph() * view.s) : (h - ph() * view.s) / 2
+    view.ox = (saved ? unfrac(saved.fx, w, r.w * view.s) : (w - r.w * view.s) / 2) - r.x * view.s
+    view.oy = (saved ? unfrac(saved.fy, h, r.h * view.s) : (h - r.h * view.s) / 2) - r.y * view.s
     syncZoomState()
   }
 
   function syncZoomState() {
     const { w, h } = canvasSize()
-    const cover = coverViewport(w, h, pageSize(currentPage()))
+    const r = workRect()
+    const cover = coverViewport(w, h, { w: r.w, h: r.h })
     zoom.value = cover.s ? view.s / cover.s : 1
   }
 
   function saveView() {
     const { w, h } = canvasSize()
-    views.set(store.pageId ?? '', {
+    const r = workRect()
+    views.set(viewKey(), {
       zoom: zoom.value,
-      fx: frac(view.ox, w, pw() * view.s),
-      fy: frac(view.oy, h, ph() * view.s),
+      fx: frac(view.ox + r.x * view.s, w, r.w * view.s),
+      fy: frac(view.oy + r.y * view.s, h, r.h * view.s),
       angle: view.angle,
     })
   }
@@ -440,13 +489,44 @@ export function useCanvasView() {
     { x: number; y: number; t: number; type: string; gx: number; gy: number }
   >()
   let drawing = false
+  // The pointer left the focused half mid-stroke: the stroke was committed
+  // at the fold, and re-entering the half starts a fresh one.
+  let strokeOut = false
   let strokeId = -1
   let curPts: Pt[] = []
   let curSamples: Sample[] = [] // emitted so far, for repaints
-  let predRect: { x: number; y: number; w: number; h: number } | null = null // page units
+  // Page-space region the live stroke currently paints over — restored from
+  // the snapshot before each whole-stroke repaint.
+  let liveDirty: { x: number; y: number; w: number; h: number } | null = null
   let liveStroke: Stroke | null = null
-  let renderCont = newRenderCont() // live stroke's batch-to-batch continuity
   let repaintRaf = 0 // pending rAF for the live-eraser composite repaint
+  // Region the live eraser touched, in page units — the scheduled repaint
+  // recomposites only this rect instead of rebuilding the page snapshot.
+  let eraseDirty: { x: number; y: number; w: number; h: number } | null = null
+  let eraseDirtyView: { s: number; ox: number; oy: number; angle: number } | null = null
+  // Pre-stroke copy of the raster the live eraser mutates — a cancelled
+  // stroke (the second finger of a pinch) restores it instead of dropping
+  // the cache and re-replaying the whole layer through the ink engine.
+  let eraseBackup: {
+    raster: HTMLCanvasElement | null
+    c: HTMLCanvasElement
+    ctx: CanvasRenderingContext2D
+  } | null = null
+  // Live-into-raster strokes: deterministic ink tools paint emitted samples
+  // straight into the layer raster during the stroke (same painter output
+  // as the commit replay), so pointerup only adopts the cache signature
+  // instead of re-rendering the whole stroke at raster resolution — that
+  // replay was the multi-hundred-ms freeze after each brush stroke.
+  let liveRaster: {
+    canvas: HTMLCanvasElement
+    ctx: CanvasRenderingContext2D
+    scale: number
+    layerId: string
+    last: Sample | null
+  } | null = null
+  // Set around pushStroke calls whose raster already contains the stroke —
+  // the strokes watcher skips the synchronous rebuild it would otherwise do.
+  let suppressStrokeRebuild = false
   let seed = 1
   let penActive = false
   let curStrokeSize = 1
@@ -549,22 +629,42 @@ export function useCanvasView() {
     const { w, h } = { w: el.clientWidth, h: el.clientHeight }
     el.width = Math.round(w * dpr)
     el.height = Math.round(h * dpr)
-    // floodFill reads pixels back on every replay — opt into the CPU path.
-    ctx = el.getContext('2d', { willReadFrequently: true })
+    // No willReadFrequently here: pixel reads (floodFill, filters, bounds
+    // scans) run on the snapshot/layer rasters, never this context — opting
+    // in would force CPU compositing of every blit.
+    ctx = el.getContext('2d')
     applyViewport()
     reRender()
   }
 
   function paintPaper(c: CanvasRenderingContext2D) {
     const { w, h } = canvasSize()
+    const r = workRect()
     c.save()
     c.setTransform(dpr, 0, 0, dpr, 0, 0)
     c.fillStyle = BACKDROP
     c.fillRect(0, 0, w, h)
     c.fillStyle = PAPER
     setPageTransform(c)
-    c.fillRect(0, 0, pw(), ph())
+    c.fillRect(r.x, r.y, r.w, r.h)
     c.restore()
+  }
+
+  // Spread-half focus: clips the target to the working rect so nothing
+  // paints onto the hidden half. Returns true when a clip was pushed (the
+  // caller restores); the whole-sheet mode skips it entirely.
+  function clipWork(c: CanvasRenderingContext2D): boolean {
+    const r = workRect()
+    if (r.x === 0 && r.y === 0 && r.w === pw() && r.h === ph()) return false
+    c.save()
+    setPageTransform(c)
+    c.beginPath()
+    c.rect(r.x, r.y, r.w, r.h)
+    c.clip()
+    // Keep painting in device px — the clip path was recorded under the
+    // page transform, so it tracks the rotated view.
+    c.setTransform(1, 0, 0, 1, 0, 0)
+    return true
   }
 
   // Scratch canvases for live alpha-lock clipping, sized to the view canvas.
@@ -615,23 +715,24 @@ export function useCanvasView() {
     stroke: Stroke,
     samples: ReturnType<InkEngine['end']>,
     s: number,
-    cont: RenderCont | null = null,
     layerId = curLayerId,
     size = curStrokeSize,
   ) {
     if (!ctx || !ink) return
     if (stroke.tool === 'eraser') {
-      eraseLiveIntoRaster(stroke, samples, s, cont, layerId, size)
+      eraseLiveIntoRaster(stroke, samples, s, layerId, size)
       return
     }
     const layer = pageLayers().find((item) => item.id === layerId)
     const paintInto = (c: CanvasRenderingContext2D) => {
       c.save()
       setPageTransform(c)
-      // Paint never leaves the sheet: clip to the page rect in page space so
-      // the layer transform below can't push ink past the paper edge.
+      // Paint never leaves the working rect: clip in page space so the
+      // layer transform below can't push ink past the paper edge — or past
+      // the fold while a spread half is focused.
+      const r = workRect()
       c.beginPath()
-      c.rect(0, 0, pw(), ph())
+      c.rect(r.x, r.y, r.w, r.h)
       c.clip()
       if (layer) {
         c.globalAlpha *= layer.opacity
@@ -640,7 +741,7 @@ export function useCanvasView() {
         c.scale(layer.scale, layer.scale)
         c.translate(-pw() / 2, -ph() / 2)
       }
-      renderSamples(c, stroke.tool, stroke.color, samples, s, size, stroke, cont ?? undefined)
+      renderSamples(c, stroke.tool, stroke.color, samples, s, size, stroke)
       const mirrored = mirroredSampleSets(samples)
       if (mirrored.length) renderSamples(c, stroke.tool, stroke.color, mirrored, s, size, stroke)
       c.restore()
@@ -672,8 +773,132 @@ export function useCanvasView() {
     if (repaintRaf || typeof requestAnimationFrame !== 'function') return
     repaintRaf = requestAnimationFrame(() => {
       repaintRaf = 0
-      reRender()
+      if (eraseDirty) repaintEraseRegion()
+      else reRender()
     })
+  }
+
+  // Repaint only the region the live eraser touched: clip the display canvas
+  // to the dirty rect and recomposite paper + cached layer rasters inside it.
+  // Rebuilding the full page snapshot every frame was what made the eraser
+  // lag; the snapshot stays stale until the stroke commits and refreshes it.
+  function repaintEraseRegion() {
+    const r = eraseDirty
+    const v = eraseDirtyView
+    eraseDirty = null
+    eraseDirtyView = null
+    if (!ctx || !ink || !r || !v) return
+    const el = canvas.value
+    // The view moved since the region was recorded — a clipped repaint would
+    // leave everything outside the rect stale, so fall back to a full paint.
+    if (!el || v.s !== view.s || v.ox !== view.ox || v.oy !== view.oy || v.angle !== view.angle) {
+      reRender()
+      return
+    }
+    // Page-space rect -> device px bbox (view rotation inflates it).
+    let l = Infinity,
+      t = Infinity,
+      rr = -Infinity,
+      b = -Infinity
+    for (const [px, py] of [
+      [r.x, r.y],
+      [r.x + r.w, r.y],
+      [r.x, r.y + r.h],
+      [r.x + r.w, r.y + r.h],
+    ]) {
+      const d = viewToDevice({ x: px, y: py })
+      if (d.x < l) l = d.x
+      if (d.x > rr) rr = d.x
+      if (d.y < t) t = d.y
+      if (d.y > b) b = d.y
+    }
+    const pad = 3 * dpr
+    l = Math.max(0, Math.floor(l - pad))
+    t = Math.max(0, Math.floor(t - pad))
+    rr = Math.min(el.width, Math.ceil(rr + pad))
+    b = Math.min(el.height, Math.ceil(b + pad))
+    if (rr <= l || b <= t) return
+    ctx.save()
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.beginPath()
+    ctx.rect(l, t, rr - l, b - t)
+    ctx.clip()
+    if (workHalved()) {
+      // Don't repaint the hidden half: its backdrop (and any floating
+      // overlays, like a lifted cut piece) stays untouched.
+      setPageTransform(ctx)
+      const wr = workRect()
+      ctx.beginPath()
+      ctx.rect(wr.x, wr.y, wr.w, wr.h)
+      ctx.clip()
+    }
+    paintPaper(ctx)
+    replayPageInto(el, ctx, dpr * view.s, dpr * view.ox, dpr * view.oy, viewRot())
+    ctx.restore()
+    // The clipped repaint wiped any overlay ink inside the rect.
+    drawSheetMarker()
+    drawTransformControls()
+    drawGuide()
+  }
+
+  // Snapshot a raster's pixels so a cancelled live-into-raster stroke can
+  // roll its incremental paint back.
+  function backupRaster(raster: HTMLCanvasElement) {
+    if (!eraseBackup) {
+      const c = document.createElement('canvas')
+      const bc = c.getContext('2d')
+      if (bc) eraseBackup = { raster: null, c, ctx: bc }
+    }
+    if (eraseBackup && eraseBackup.raster !== raster) {
+      const { c, ctx: bc } = eraseBackup
+      if (c.width !== raster.width || c.height !== raster.height) {
+        c.width = raster.width
+        c.height = raster.height
+      }
+      bc.drawImage(raster, 0, 0)
+      eraseBackup.raster = raster
+    }
+  }
+
+  function restoreRaster(raster: HTMLCanvasElement) {
+    if (eraseBackup?.raster !== raster) return
+    const rc = raster.getContext('2d', { willReadFrequently: true })
+    if (!rc) return
+    rc.setTransform(1, 0, 0, 1, 0, 0)
+    rc.drawImage(eraseBackup.c, 0, 0)
+  }
+
+  // Tools whose committed paint is identical when applied incrementally.
+  // Watercolor qualifies: every dab's position and alpha come from its own
+  // sample pair, so chained batches multiply out to the same pixels as the
+  // single-call replay. The others don't: solid painters take alpha from
+  // samples[0] (one uniform fill), pencil and stamped tips carry seeded
+  // rand/spacing state across calls, wet strokes run a whole-bbox kernel.
+  function rasterLiveTool(stroke: Stroke, layer: Layer): boolean {
+    if (stroke.tool !== 'color' || (stroke.wet ?? 0) > 0) return false
+    if (stroke.tip && stroke.tip !== 'round') return false
+    if (stroke.alphaLock || stroke.mask || layer.alphaLock) return false
+    if (store.symmetry !== 'none' || store.maskEdit) return false
+    return true
+  }
+
+  // Paint newly emitted samples into the layer raster, chaining the batch
+  // onto the last painted sample so stamp spacing and outline joins match
+  // the single-call replay.
+  function paintLiveRaster(samples: Sample[]) {
+    const lr = liveRaster
+    const stroke = liveStroke
+    if (!lr || !stroke || !samples.length) return
+    const batch = lr.last ? [lr.last, ...samples] : samples
+    lr.ctx.save()
+    lr.ctx.setTransform(lr.scale, 0, 0, lr.scale, 0, 0)
+    if (stroke.clip?.length) {
+      pathTo(lr.ctx, stroke.clip, lr.scale, 0, 0)
+      lr.ctx.clip()
+    }
+    renderSamples(lr.ctx, stroke.tool, stroke.color, batch, seed, curStrokeSize, stroke)
+    lr.ctx.restore()
+    lr.last = batch[batch.length - 1]
   }
 
   // Live eraser preview: erase straight into the layer's cached raster and
@@ -683,7 +908,6 @@ export function useCanvasView() {
     stroke: Stroke,
     samples: ReturnType<InkEngine['end']>,
     s: number,
-    cont: RenderCont | null,
     layerId: string,
     size: number,
   ) {
@@ -697,13 +921,50 @@ export function useCanvasView() {
     if (!raster) return
     const rc = raster.getContext('2d', { willReadFrequently: true })
     if (!rc) return
+    backupRaster(raster)
     const scale = raster.width / pw()
     rc.save()
     rc.setTransform(scale, 0, 0, scale, 0, 0)
-    renderSamples(rc, 'eraser', stroke.color, samples, s, size, stroke, cont ?? undefined)
+    // A focused-half stroke carries a clip polygon: the eraser's bite stops
+    // at the fold instead of nibbling the hidden half's pixels.
+    if (stroke.clip?.length) {
+      pathTo(rc, stroke.clip, scale, 0, 0)
+      rc.clip()
+    }
+    renderSamples(rc, 'eraser', stroke.color, samples, s, size, stroke)
     const mirrored = mirroredSampleSets(samples)
     if (mirrored.length) renderSamples(rc, 'eraser', stroke.color, mirrored, s, size, stroke)
     rc.restore()
+    // Record the erased region so the scheduled repaint can clip-composite
+    // just this area; stamped tips scatter paint beyond the sample radius.
+    const spread =
+      stroke.tip && stroke.tip !== 'round' ? (stroke.jitter ?? 0) + (stroke.scatter ?? 0) : 0
+    const addDirty = (set: Sample[]) => {
+      if (!set.length) return
+      let l = Infinity,
+        t = Infinity,
+        r = -Infinity,
+        b = -Infinity
+      for (const sm of set) {
+        const rad = sm.w * size * (1 + spread) + 2
+        if (sm.x - rad < l) l = sm.x - rad
+        if (sm.x + rad > r) r = sm.x + rad
+        if (sm.y - rad < t) t = sm.y - rad
+        if (sm.y + rad > b) b = sm.y + rad
+      }
+      const pr = layerRectToPage(layerId, { x: l, y: t, w: r - l, h: b - t })
+      if (!eraseDirty) eraseDirtyView = { ...view }
+      eraseDirty = eraseDirty
+        ? {
+            x: Math.min(eraseDirty.x, pr.x),
+            y: Math.min(eraseDirty.y, pr.y),
+            w: Math.max(eraseDirty.x + eraseDirty.w, pr.x + pr.w) - Math.min(eraseDirty.x, pr.x),
+            h: Math.max(eraseDirty.y + eraseDirty.h, pr.y + pr.h) - Math.min(eraseDirty.y, pr.y),
+          }
+        : pr
+    }
+    addDirty(samples)
+    addDirty(mirrored)
     // Only mark the snapshot dirty — callers schedule the repaint so repaint-
     // driven drawSamples calls (reRender's live repaint) can't loop forever.
     snapDirty = true
@@ -715,14 +976,25 @@ export function useCanvasView() {
     commit: boolean,
   ) {
     if (!ink) return
+    // The drag's far corner pins to the fold — a shape can't grow into the
+    // hidden half.
+    const e = clampWork(end)
     const startPoint = toLayerPt({ ...drag.start, t: 0, p: 0.5 }, drag.layerId)
-    const endPoint = toLayerPt({ ...end, t: 16, p: 0.5 }, drag.layerId)
+    const endPoint = toLayerPt({ ...e, t: 16, p: 0.5 }, drag.layerId)
     if (Math.hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y) < 3) {
       reRender()
       return
     }
 
-    const pts = shapePoints(drag.shape, startPoint, endPoint)
+    // A committed shape lands on its own new layer so the transform tool can
+    // grab it right away; the fresh layer has identity transform, so points
+    // map straight into its space from the on-screen drag.
+    const layerId = commit ? (addLayer()?.id ?? drag.layerId) : drag.layerId
+    const pts = shapePoints(
+      drag.shape,
+      toLayerPt({ ...drag.start, t: 0, p: 0.5 }, layerId),
+      toLayerPt({ ...e, t: 16, p: 0.5 }, layerId),
+    )
     const id = ink.begin('shapes', drag.size, -1)
     const samples = pts.flatMap((point) => ink!.addPoint(id, point.x, point.y, point.t, point.p))
     samples.push(...ink.end(id))
@@ -731,14 +1003,15 @@ export function useCanvasView() {
       color: drag.color,
       pts,
       size: drag.size,
-      layerId: drag.layerId,
-      alphaLock: pageLayers().find((item) => item.id === drag.layerId)?.alphaLock || undefined,
+      layerId,
+      alphaLock: pageLayers().find((item) => item.id === layerId)?.alphaLock || undefined,
     }
     reRender()
-    drawSamples(stroke, samples, seed, null, drag.layerId, drag.size)
+    drawSamples(stroke, samples, seed, layerId, drag.size)
     if (commit) {
       pushStroke(stroke)
       seed++
+      store.tool = 'transform'
     }
   }
 
@@ -766,7 +1039,7 @@ export function useCanvasView() {
   // and the high-res rebuild waits for the gesture to settle. Without that
   // gate every pointermove replays the whole page into an ever-larger bitmap.
   const SNAP_HEADROOM = 2 // build at 2x the needed device scale so zoom stays crisp
-  const SNAP_MAX_DIM = 3200 // px cap on the largest side; past it the blit upscales
+  const SNAP_MAX_DIM = 4096 // px cap on the largest side; past it the blit upscales
   let snap: { c: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null = null
   let snapScale = 0 // device px per page unit in the snapshot
   let snapDirty = true
@@ -789,15 +1062,19 @@ export function useCanvasView() {
     sc.setTransform(1, 0, 0, 1, 0, 0)
     sc.fillStyle = PAPER
     sc.fillRect(0, 0, c.width, c.height)
+    setRasterScaleHint(snapScale)
     replayPageInto(c, sc, snapScale, 0, 0)
     snapDirty = false
   }
 
   function reRender() {
-    if (!ctx || !ink) return
+    if (!ctx || !ink || !canvas.value) return
+    eraseDirty = null
+    eraseDirtyView = null
     ensureSnap()
     const el = canvas.value!
     paintPaper(ctx)
+    const clipped = clipWork(ctx)
     if (layerTransformDrag && layerPreview.value) {
       // Composite cached layer rasters during the gesture; commit and rebuild the snapshot only on release.
       const p = currentPage()
@@ -817,6 +1094,7 @@ export function useCanvasView() {
           new Map([[layerPreview.value.id, layerPreview.value]]),
           viewRot(),
         )
+        if (clipped) ctx.restore()
         drawTransformControls()
         return
       }
@@ -829,27 +1107,43 @@ export function useCanvasView() {
     } else {
       replayPageInto(el, ctx, dpr * view.s, dpr * view.ox, dpr * view.oy, viewRot())
     }
-    // Sheet center marker — a subtle cross in page space (pans/zooms with it).
-    ctx.save()
-    setPageTransform(ctx)
-    ctx.strokeStyle = 'rgba(60,60,60,0.28)'
-    ctx.lineWidth = 1 / view.s
-    ctx.beginPath()
-    const cs = 6 // page units half-length of the cross arms
-    ctx.moveTo(pw() / 2 - cs, ph() / 2)
-    ctx.lineTo(pw() / 2 + cs, ph() / 2)
-    ctx.moveTo(pw() / 2, ph() / 2 - cs)
-    ctx.lineTo(pw() / 2, ph() / 2 + cs)
-    ctx.stroke()
-    ctx.restore()
-    // A full repaint wipes the in-progress stroke (and any predicted paint) —
-    // put the committed samples back.
-    predRect = null
+    if (clipped) ctx.restore()
+    drawSheetMarker()
+    // A full repaint wipes the in-progress stroke — put it back in one fill.
     if (drawing && liveStroke && curSamples.length) {
       drawSamples(liveStroke, curSamples, seed)
+      liveDirty = livePaintBounds(liveStroke, curSamples)
     }
     drawTransformControls()
     drawGuide()
+  }
+
+  // Working-rect center marker — a subtle cross in page space (pans/zooms
+  // with it) — plus a faint fold line down the middle of a landscape sheet.
+  function drawSheetMarker() {
+    if (!ctx) return
+    const r = workRect()
+    const cx = r.x + r.w / 2
+    const cy = r.y + r.h / 2
+    ctx.save()
+    setPageTransform(ctx)
+    ctx.lineWidth = 1 / view.s
+    if (pw() > ph()) {
+      ctx.strokeStyle = 'rgba(60,60,60,0.14)'
+      ctx.beginPath()
+      ctx.moveTo(pw() / 2, 0)
+      ctx.lineTo(pw() / 2, ph())
+      ctx.stroke()
+    }
+    ctx.strokeStyle = 'rgba(60,60,60,0.28)'
+    ctx.beginPath()
+    const cs = 6 // page units half-length of the cross arms
+    ctx.moveTo(cx - cs, cy)
+    ctx.lineTo(cx + cs, cy)
+    ctx.moveTo(cx, cy - cs)
+    ctx.lineTo(cx, cy + cs)
+    ctx.stroke()
+    ctx.restore()
   }
 
   // Content changed: force a snapshot rebuild on the next paint.
@@ -877,6 +1171,7 @@ export function useCanvasView() {
 
   function drawCutSegment(a: { x: number; y: number }, b: { x: number; y: number }) {
     if (!ctx) return
+    const clipped = clipWork(ctx)
     ctx.save()
     setPageTransform(ctx)
     ctx.strokeStyle = 'rgba(50,50,55,0.8)'
@@ -887,6 +1182,7 @@ export function useCanvasView() {
     ctx.lineTo(b.x, b.y)
     ctx.stroke()
     ctx.restore()
+    if (clipped) ctx.restore()
   }
 
   // Pointer pt -> layer-local pt, snapped onto the drawing guide (line/arc)
@@ -897,13 +1193,17 @@ export function useCanvasView() {
     return toLayerPt({ ...pt, x: pg.x * view.s + view.ox, y: pg.y * view.s + view.oy }, layerId)
   }
 
-  // Mirrored variants of live samples under the current symmetry mode.
+  // Mirrored variants of live samples under the current symmetry mode —
+  // mirrored across the working rect's axes so a focused half mirrors
+  // inside itself instead of spilling onto the hidden half.
   function mirroredSampleSets(samples: Sample[]): Sample[] {
-    return mirroredSamples(samples, store.symmetry, pw(), ph())
+    return mirroredSamples(samples, store.symmetry, workRect())
   }
 
   function beginStroke(pt: Pt) {
     if (!ink) return
+    strokeOut = !inWork(pt.x, pt.y)
+    if (strokeOut) return // the focused half is a hard edge
     const layer = activeLayer()
     if (!layer) return
     curLayerId = layer.id
@@ -913,8 +1213,8 @@ export function useCanvasView() {
     const q = toLayerSnapped(pt, curLayerId)
     curPts = [q]
     curSamples = []
-    predRect = null
-    renderCont = newRenderCont()
+    liveDirty = null
+    if (eraseBackup) eraseBackup.raster = null
     // The live stroke carries the brush snapshot from the start so what the
     // user sees while drawing is exactly what the committed replay paints.
     liveStroke = {
@@ -924,32 +1224,67 @@ export function useCanvasView() {
       size: curStrokeSize,
       stab: curStab >= 0 ? curStab : undefined,
       layerId: curLayerId,
+      clip: workClip(layer) ?? undefined,
       ...(INK_TOOLS.includes(store.tool) ? brushSnapshot(store.tool) : null),
     }
     drawing = true
+    if (rasterLiveTool(liveStroke, layer)) {
+      const raster = currentPage() ? layerRasterCanvas(currentPage()!, ink, layer.id) : null
+      const rc = raster?.getContext('2d', { willReadFrequently: true })
+      if (raster && rc) {
+        backupRaster(raster)
+        liveRaster = {
+          canvas: raster,
+          ctx: rc,
+          scale: raster.width / pw(),
+          layerId: layer.id,
+          last: null,
+        }
+      }
+    }
     const s = ink.addPoint(strokeId, q.x, q.y, q.t, q.p)
     curSamples.push(...s)
-    drawSamples(liveStroke, s, seed, renderCont)
-    if (liveStroke.tool === 'eraser') scheduleRepaint()
+    paintLiveRaster(s)
+    if (liveStroke.tool === 'eraser') {
+      drawSamples(liveStroke, s, seed)
+      scheduleRepaint()
+    } else {
+      repaintLive()
+    }
   }
 
   function addStrokePoint(pt: Pt) {
-    if (!ink || !drawing) return
+    if (!ink) return
+    if (!inWork(pt.x, pt.y)) {
+      // Off the focused half: park the stroke — its committed part ends at
+      // the fold and can't paint or erase the hidden half.
+      if (drawing) finishStroke(true)
+      strokeOut = true
+      return
+    }
+    if (!drawing) {
+      if (!strokeOut) return
+      beginStroke(pt) // re-entering the half starts a new stroke
+      return
+    }
     const q = toLayerSnapped(pt, curLayerId)
     curPts.push(q)
     const s = ink.addPoint(strokeId, q.x, q.y, q.t, q.p)
     curSamples.push(...s)
-    if (liveStroke) {
-      drawSamples(liveStroke, s, seed, renderCont)
-      if (liveStroke.tool === 'eraser') scheduleRepaint()
+    paintLiveRaster(s)
+    // The live eraser paints incrementally into the layer raster; ink tools
+    // repaint the whole stroke once per event in repaintLive().
+    if (liveStroke?.tool === 'eraser') {
+      drawSamples(liveStroke, s, seed)
+      scheduleRepaint()
     }
   }
 
   function finishStroke(commit: boolean) {
     if (!ink || !drawing) return
-    predRect = null
     const tail = ink.end(strokeId)
     curSamples.push(...tail)
+    paintLiveRaster(tail)
     const strokeLayer = pageLayers().find((item) => item.id === curLayerId)
     const toMask = store.maskEdit && !!strokeLayer?.mask && INK_TOOLS.includes(store.tool)
     const stroke: Stroke = {
@@ -958,8 +1293,12 @@ export function useCanvasView() {
       alphaLock: !toMask && strokeLayer?.alphaLock && store.tool !== 'eraser' ? true : undefined,
     }
     const strokePts = curPts
-    drawSamples(stroke, tail, seed, renderCont)
-    if (stroke.tool === 'eraser') scheduleRepaint()
+    if (stroke.tool === 'eraser') {
+      drawSamples(stroke, tail, seed)
+      scheduleRepaint()
+    } else {
+      repaintLive(stroke)
+    }
     // Clear the live state before committing: the strokes watcher repaints
     // synchronously, and a still-live stroke would be painted twice.
     drawing = false
@@ -968,95 +1307,128 @@ export function useCanvasView() {
     curSamples = []
     liveStroke = null
     curLayerId = ''
-    renderCont = newRenderCont()
+    liveDirty = null
     if (stroke.tool === 'eraser') {
-      // The live preview erased into the cached raster — drop it so the
-      // committed stroke replays from a clean layer instead.
-      clearLayerRasterCache(store.pageId ?? undefined)
+      if (commit) {
+        // The live preview erased into the cached raster — drop it so the
+        // committed stroke replays from a clean layer instead.
+        clearLayerRasterCache(store.pageId ?? undefined, stroke.layerId || undefined)
+      } else if (eraseBackup?.raster) {
+        // Cancelled by the pinch's second finger: restore the raster the
+        // preview erased. The cache entry stays valid (same signature), so
+        // the next repaint composites instead of re-replaying the layer.
+        const bc2 = eraseBackup.raster.getContext('2d', { willReadFrequently: true })
+        if (bc2) {
+          bc2.setTransform(1, 0, 0, 1, 0, 0)
+          bc2.drawImage(eraseBackup.c, 0, 0)
+        }
+      }
+      if (eraseBackup) eraseBackup.raster = null
       snapDirty = true
     }
+    if (liveRaster) {
+      // A cancelled stroke (pinch's second finger) rolls its incremental
+      // paint back; a committed one is folded into the signature below.
+      if (!commit) restoreRaster(liveRaster.canvas)
+      if (eraseBackup) eraseBackup.raster = null
+    }
     if (commit && strokePts.length) {
-      pushStroke(stroke) // strokes watcher -> refresh() rebuilds the snapshot
-      for (const pts of mirroredPtSets(strokePts, pageSize(currentPage())))
-        pushStroke({ ...stroke, pts })
+      const p = currentPage()
+      if (liveRaster && p && strokeLayer) {
+        // The raster already holds this stroke — keep the strokes watcher
+        // from re-rendering it and adopt the live paint as the fresh tail.
+        // If the push evicted the oldest stroke (page cap) the raster's
+        // painted prefix is stale — fall back to a normal replay.
+        const first = p.strokes[0]
+        suppressStrokeRebuild = true
+        try {
+          pushStroke(stroke)
+        } finally {
+          suppressStrokeRebuild = false
+        }
+        // The raster didn't take the live paint (eviction or cache rebuild)
+        // — roll it back so the closing reRender's replay doesn't double up.
+        if (p.strokes[0] !== first || !adoptLayerRasterTail(p, strokeLayer, liveRaster.canvas))
+          restoreRaster(liveRaster.canvas)
+      } else {
+        pushStroke(stroke) // strokes watcher -> refresh() rebuilds the snapshot
+        for (const pts of mirroredPtSets(strokePts, workRect())) pushStroke({ ...stroke, pts })
+      }
       seed++
     }
+    liveRaster = null
     reRender()
   }
 
-  // Predicted pointer events are painted ahead of the real input to hide the
-  // last ~16ms of latency. Their paint is speculative: before the next batch
-  // the predicted region is re-blit from the snapshot and the committed live
-  // stroke is repainted inside it.
   function layerRectToPage(layerId: string, r: { x: number; y: number; w: number; h: number }) {
     const layer = pageLayers().find((item) => item.id === layerId)
     return layerRectToPageMath(layer, r, pw(), ph())
   }
 
-  function erasePredicted() {
-    if (!predRect) return
-    const r = predRect
-    predRect = null
-    if (!ctx || !snap) {
-      reRender()
-      return
-    }
-    ctx.save()
-    setPageTransform(ctx)
-    // Restore the clean committed content under the predicted paint.
-    ctx.drawImage(
-      snap.c,
-      r.x * snapScale,
-      r.y * snapScale,
-      r.w * snapScale,
-      r.h * snapScale,
-      r.x,
-      r.y,
-      r.w,
-      r.h,
-    )
-    // Repaint the live stroke inside the restored region only.
-    ctx.beginPath()
-    ctx.rect(r.x, r.y, r.w, r.h)
-    ctx.clip()
-    if (liveStroke && curSamples.length) {
-      drawSamples(liveStroke, curSamples, seed)
-    }
-    ctx.restore()
+  // Page-space bounds of everything a live repaint can touch: all samples
+  // (plus mirrored symmetry copies) inflated by the painted radius — brush
+  // size scales sample widths and stamped tips scatter beyond it — then
+  // mapped through the layer transform.
+  function livePaintBounds(stroke: Stroke, samples: Sample[]) {
+    if (!samples.length) return null
+    const spread =
+      stroke.tip && stroke.tip !== 'round' ? (stroke.jitter ?? 0) + (stroke.scatter ?? 0) : 0
+    let l = Infinity,
+      t = Infinity,
+      r = -Infinity,
+      b = -Infinity
+    for (const set of [samples, mirroredSampleSets(samples)])
+      for (const sm of set) {
+        const rad = sm.w * curStrokeSize * (1 + spread) + 2
+        if (sm.x - rad < l) l = sm.x - rad
+        if (sm.x + rad > r) r = sm.x + rad
+        if (sm.y - rad < t) t = sm.y - rad
+        if (sm.y + rad > b) b = sm.y + rad
+      }
+    return layerRectToPage(stroke.layerId ?? curLayerId, { x: l, y: t, w: r - l, h: b - t })
   }
 
-  function paintPredicted(e: PointerEvent) {
-    if (!ink || !drawing || !liveStroke || typeof e.getPredictedEvents !== 'function') return
-    // The eraser's preview mutates the layer raster — speculative paint
-    // there couldn't be rolled back, and it doesn't need latency hiding.
-    if (liveStroke.tool === 'eraser') return
-    const { left, top } = canvas.value!.getBoundingClientRect()
-    const predicted = e.getPredictedEvents()
-    if (!predicted.length) return
-    let acc: { x: number; y: number; w: number; h: number } | null = null
-    // Predicted batches stitch onto the real stroke (and each other) but
-    // must not advance the real render continuation.
-    const pcont = { ...renderCont }
-    for (const ev of predicted) {
-      const local = toLocalPoint({ x: ev.clientX - left, y: ev.clientY - top })
-      const q = toLayerPt(
-        { x: local.x, y: local.y, t: ev.timeStamp, p: ev.pressure || 0.5 },
-        curLayerId,
-      )
-      const s = ink.predict(strokeId, q.x, q.y, q.t, q.p)
-      if (!s.length) continue
-      drawSamples(liveStroke, s, seed, pcont)
-      const b = layerRectToPage(curLayerId, sampleBounds(s))
-      acc = acc
-        ? {
-            x: Math.min(acc.x, b.x),
-            y: Math.min(acc.y, b.y),
-            w: Math.max(acc.x + acc.w, b.x + b.w) - Math.min(acc.x, b.x),
-            h: Math.max(acc.y + acc.h, b.y + b.h) - Math.min(acc.y, b.y),
-          }
-        : b
+  // Repaint the in-progress stroke as one fill: restore the snapshot under
+  // the region it covers, then draw every emitted sample plus the tail the
+  // engine would flush if the stroke ended now (taper + final raw point) —
+  // the visible tip matches the committed stroke instead of snapping on
+  // release. Translucent tools can't be painted incrementally — overlapping
+  // batch joins double-darken — so the live stroke re-renders whole,
+  // exactly like committed replay does in layers.ts.
+  function repaintLive(stroke: Stroke | null = liveStroke) {
+    // The eraser's preview lives in the layer raster, not on the display —
+    // its repaint goes through repaintEraseRegion/scheduleRepaint instead.
+    if (!ctx || !stroke || stroke.tool === 'eraser') return
+    if (!snap) {
+      reRender() // rebuilds committed content and repaints the live stroke
+      return
     }
-    predRect = acc
+    const clipped = clipWork(ctx)
+    if (liveDirty) {
+      const r = liveDirty
+      ctx.save()
+      setPageTransform(ctx)
+      ctx.drawImage(
+        snap.c,
+        r.x * snapScale,
+        r.y * snapScale,
+        r.w * snapScale,
+        r.h * snapScale,
+        r.x,
+        r.y,
+        r.w,
+        r.h,
+      )
+      ctx.restore()
+      drawSheetMarker()
+    }
+    const tailSamples = ink && drawing && typeof ink.tail === 'function' ? ink.tail(strokeId) : []
+    const all = tailSamples.length ? curSamples.concat(tailSamples) : curSamples
+    if (all.length) drawSamples(stroke, all, seed)
+    liveDirty = livePaintBounds(stroke, all)
+    if (clipped) ctx.restore()
+    drawTransformControls()
+    drawGuide()
   }
 
   // ---- gestures ----
@@ -1170,12 +1542,12 @@ export function useCanvasView() {
     }
     if (store.tool === 'cut') {
       cutting = true
-      cutPath = [{ x: toPageX(x), y: toPageY(y) }]
+      cutPath = [clampWorkPage({ x: toPageX(x), y: toPageY(y) })]
       return
     }
     if (store.tool === 'shapes') {
       const layer = activeLayer()
-      if (layer) {
+      if (layer && inWork(x, y)) {
         shapeDrag = {
           start: { x, y },
           shape: store.shape,
@@ -1216,6 +1588,7 @@ export function useCanvasView() {
   function drawGuide() {
     const c = ctx
     if (!c || store.guide === 'off') return
+    const clipped = clipWork(c)
     c.save()
     setPageTransform(c)
     c.strokeStyle = 'rgba(42,128,151,0.75)'
@@ -1251,6 +1624,7 @@ export function useCanvasView() {
     dot(store.guideX, store.guideY, 9)
     dot(handle.x, handle.y, 9)
     c.restore()
+    if (clipped) c.restore()
   }
 
   function cycleSymmetry() {
@@ -1262,6 +1636,11 @@ export function useCanvasView() {
     const order: GuideMode[] = ['off', 'line', 'arc']
     store.guide = order[(order.indexOf(store.guide) + 1) % order.length]
     reRender()
+  }
+
+  function cycleSpread() {
+    store.spreadMode =
+      SPREAD_MODES[(SPREAD_MODES.indexOf(store.spreadMode) + 1) % SPREAD_MODES.length]
   }
 
   function onPointerMove(e: PointerEvent) {
@@ -1297,8 +1676,9 @@ export function useCanvasView() {
       const m = gestureMetrics()
       if (!m) return
       const { w, h } = canvasSize()
-      const cover = coverViewport(w, h, pageSize(currentPage()))
-      const minS = Math.min(w / pw(), h / ph()) * ZOOM_MARGIN
+      const wr = workRect()
+      const cover = coverViewport(w, h, { w: wr.w, h: wr.h })
+      const minS = Math.min(w / wr.w, h / wr.h) * ZOOM_MARGIN
       const nextS = Math.min(
         cover.s * ZOOM_MAX,
         Math.max(minS, (view.s * m.dist) / Math.max(gDist0, 1)),
@@ -1334,7 +1714,7 @@ export function useCanvasView() {
         edgeCandidate = false // vertical-ish -> it was a drawing stroke
         if (store.tool === 'cut') {
           cutting = true
-          cutPath = edgeBuf.map((p) => ({ x: toPageX(p.x), y: toPageY(p.y) }))
+          cutPath = edgeBuf.map((p) => clampWorkPage({ x: toPageX(p.x), y: toPageY(p.y) }))
         } else if (store.tool === 'shapes') {
           const layer = activeLayer()
           if (layer && edgeBuf.length) {
@@ -1381,7 +1761,7 @@ export function useCanvasView() {
     }
 
     if (cutting) {
-      const q = { x: toPageX(x), y: toPageY(y) }
+      const q = clampWorkPage({ x: toPageX(x), y: toPageY(y) })
       const last = cutPath[cutPath.length - 1]
       if (Math.hypot(q.x - last.x, q.y - last.y) > 2.5 / view.s) {
         cutPath.push(q)
@@ -1395,8 +1775,7 @@ export function useCanvasView() {
       return
     }
 
-    if (!drawing) return
-    erasePredicted()
+    if (!drawing && !strokeOut) return
     // getCoalescedEvents() is empty for synthetic events — fall back to [e]
     const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : null
     const events = coalesced?.length ? coalesced : [e]
@@ -1404,7 +1783,7 @@ export function useCanvasView() {
       const point = toLocalPoint({ x: ev.clientX - left, y: ev.clientY - top })
       addStrokePoint({ x: point.x, y: point.y, t: ev.timeStamp, p: ev.pressure || 0.5 })
     }
-    paintPredicted(e)
+    repaintLive()
   }
 
   function finishCutSelection() {
@@ -1448,6 +1827,7 @@ export function useCanvasView() {
     const displayOx = dpr * view.ox
     const displayOy = dpr * view.oy
     const rot = viewRot()
+    const srcClip = clipWork(sourceCtx)
     paintLayers(
       source,
       sourceCtx,
@@ -1463,10 +1843,12 @@ export function useCanvasView() {
       undefined,
       rot,
     )
+    if (srcClip) sourceCtx.restore()
     // extractRegion clips by device-px coordinates, so the page-space cut
     // path goes through the full view transform (including rotation).
     const piece = extractRegion(source, sourceCtx, path.map(viewToDevice), 1, 0, 0, null)
     paintPaper(baseCtx)
+    const baseClip = clipWork(baseCtx)
     const previewPage: Page = {
       ...page,
       ops: [
@@ -1489,6 +1871,7 @@ export function useCanvasView() {
       undefined,
       rot,
     )
+    if (baseClip) baseCtx.restore()
 
     const pieceCtx = piece?.getContext('2d', { willReadFrequently: true })
     const hasPixels =
@@ -1512,10 +1895,13 @@ export function useCanvasView() {
     if (!p) return
     const after = p.strokes.length
     const alphaLock = activeLayer()?.alphaLock || undefined
+    // A focused spread half confines the op's pixels to it — the flood
+    // can't cross the fold into the hidden half, now or on replay.
+    const rect = workHalved() ? workRect() : undefined
     // 'erase' mode is the magic-wand background removal; 'invert' is the
     // inverse/background fill — both run on the layer raster like 'fill'.
     if (store.fillMode === 'erase') {
-      pushOp({ kind: 'erase', x: toPageX(x), y: toPageY(y), after, alphaLock })
+      pushOp({ kind: 'erase', x: toPageX(x), y: toPageY(y), after, alphaLock, rect })
     } else {
       pushOp({
         kind: 'fill',
@@ -1525,6 +1911,7 @@ export function useCanvasView() {
         after,
         alphaLock,
         invert: store.fillMode === 'invert' || undefined,
+        rect,
       })
     }
     reRender()
@@ -1596,7 +1983,7 @@ export function useCanvasView() {
         } else if (store.tool === 'fill' && edgeBuf.length) {
           commitFill(edgeBuf[0].x, edgeBuf[0].y)
         } else if (store.tool === 'cut' && edgeBuf.length) {
-          cutPath = edgeBuf.map((p) => ({ x: toPageX(p.x), y: toPageY(p.y) }))
+          cutPath = edgeBuf.map((p) => clampWorkPage({ x: toPageX(p.x), y: toPageY(p.y) }))
           finishCutSelection()
         } else if (store.tool === 'shapes') {
           reRender()
@@ -1651,6 +2038,7 @@ export function useCanvasView() {
     }
 
     if (drawing && pointers.size === 0) finishStroke(true)
+    strokeOut = false
   }
 
   function closeLayerModal() {
@@ -1676,17 +2064,27 @@ export function useCanvasView() {
 
   async function importPhoto(file: File) {
     const img = await imageFileToPhoto(file)
-    const scale = Math.min(1, (pw() * 0.6) / img.w, (ph() * 0.6) / img.h)
+    const r0 = workRect()
+    const scale = Math.min(1, (r0.w * 0.6) / img.w, (r0.h * 0.6) / img.h)
     const photoW = img.w * scale
     const photoH = img.h * scale
     const p = currentPage()
     if (!p) return
+    const layer = addLayer()
+    const r = r0
     pushOp({
       kind: 'photo',
-      photo: { src: img.src, x: (pw() - photoW) / 2, y: (ph() - photoH) / 2, w: photoW, h: photoH },
+      photo: {
+        src: img.src,
+        x: r.x + (r.w - photoW) / 2,
+        y: r.y + (r.h - photoH) / 2,
+        w: photoW,
+        h: photoH,
+      },
       after: p.strokes.length,
-      alphaLock: activeLayer()?.alphaLock || undefined,
+      layerId: layer?.id,
     })
+    store.tool = 'transform'
     reRender()
   }
 
@@ -1708,7 +2106,15 @@ export function useCanvasView() {
     offImageLoad = onImageLoaded(() => {
       transformBoundsCache = null
       thumbRev.value++
-      clearLayerRasterCache(store.pageId ?? undefined)
+      // Invalidate only the layers that draw photo ops — a decoded image
+      // shouldn't drop every layer raster of the page.
+      const p = currentPage()
+      const layerIds = new Set(
+        (p?.ops ?? [])
+          .filter((op) => op.kind === 'photo')
+          .map((op) => op.layerId ?? p?.layers?.[0]?.id ?? 'legacy'),
+      )
+      for (const id of layerIds) clearLayerRasterCache(store.pageId ?? undefined, id)
       refresh()
     })
   })
@@ -1721,7 +2127,9 @@ export function useCanvasView() {
       transformBoundsCache = null
       thumbRev.value++
       snapDirty = true
-      reRender()
+      // Live-into-raster commits already painted the stroke — their
+      // caller's reRender recomposites without re-rendering it.
+      if (!suppressStrokeRebuild) reRender()
     },
     { flush: 'sync' },
   )
@@ -1760,6 +2168,14 @@ export function useCanvasView() {
     () => store.tool,
     () => {
       if (canvas.value) canvas.value.style.cursor = store.tool === 'move' ? 'grab' : 'default'
+      reRender()
+    },
+    { flush: 'sync' },
+  )
+  watch(
+    () => store.spreadMode,
+    () => {
+      applyViewport() // each side keeps its own saved framing
       reRender()
     },
     { flush: 'sync' },
@@ -1809,6 +2225,8 @@ export function useCanvasView() {
     onPointerUp,
     cycleSymmetry,
     cycleGuide,
+    cycleSpread,
+    spreadCapable,
     undoOk,
     redoOk,
     importPhoto,

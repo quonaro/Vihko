@@ -90,6 +90,8 @@ const messages = {
       stabilize: 'Brush stabilizer',
       symmetry: 'Symmetry (none / vertical / horizontal / both)',
       guide: 'Drawing guide (off / ruler / curve)',
+      spread: 'Spread focus (full / left half / right half)',
+      side: { left: 'left', right: 'right' },
     },
     layers: {
       title: 'Layers',
@@ -304,6 +306,8 @@ const messages = {
       stabilize: 'Стабилизатор кисти',
       symmetry: 'Симметрия (нет / вертикаль / горизонталь / обе)',
       guide: 'Направляющая (нет / линейка / кривая)',
+      spread: 'Разворот (целиком / левая половина / правая)',
+      side: { left: 'левая', right: 'правая' },
     },
     layers: {
       title: 'Слои',

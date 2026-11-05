@@ -257,3 +257,11 @@ func (s *stroke) predict(p Point) []Sample {
 	c.feed(p, false, &out)
 	return out
 }
+
+// tail returns the samples a flush would emit if the stroke ended now — the
+// held-back buffer shaped by the end taper — without ending the stroke.
+func (s *stroke) tail() []Sample {
+	c := *s
+	c.buf = append([]pendSample{}, s.buf...)
+	return c.flush()
+}

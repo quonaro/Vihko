@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { applyCut, floodFill, imageDataURL } from './ops'
+import { applyCut, applyOp, floodFill, imageDataURL } from './ops'
 
 // floodFill only needs ctx.getImageData/putImageData, so a plain pixel buffer
 // stands in for the canvas 2d backend that jsdom lacks.
@@ -92,6 +92,100 @@ describe('floodFill', () => {
     floodFill(ctx, 10, 10, -5, 5, '#ff0000')
     floodFill(ctx, 10, 10, 5, 99, '#ff0000')
     expect(puts).toHaveLength(0)
+  })
+})
+
+// A pixel-buffer ctx honoring getImageData/putImageData sub-rects — lets
+// op tests assert exactly which pixels an op touched.
+function bufferCtx(w: number, h: number) {
+  const data = new Uint8ClampedArray(w * h * 4)
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = PAPER[0]
+    data[i + 1] = PAPER[1]
+    data[i + 2] = PAPER[2]
+    data[i + 3] = 255
+  }
+  const ctx = {
+    save: () => {},
+    restore: () => {},
+    setTransform: () => {},
+    clearRect: (x: number, y: number, cw: number, ch: number) => {
+      for (let r = y; r < y + ch; r++)
+        for (let c = x; c < x + cw; c++) {
+          const i = (r * w + c) * 4
+          for (let k = 0; k < 4; k++) data[i + k] = 0
+        }
+    },
+    getImageData: (x = 0, y = 0, sw = w, sh = h) => {
+      const sub = new Uint8ClampedArray(sw * sh * 4)
+      for (let r = 0; r < sh; r++)
+        for (let c = 0; c < sw; c++) {
+          const si = ((y + r) * w + x + c) * 4
+          const di = (r * sw + c) * 4
+          for (let k = 0; k < 4; k++) sub[di + k] = data[si + k]
+        }
+      return { data: sub, width: sw, height: sh } as ImageData
+    },
+    putImageData: (img: ImageData, dx = 0, dy = 0) => {
+      for (let r = 0; r < img.height; r++)
+        for (let c = 0; c < img.width; c++) {
+          const si = (r * img.width + c) * 4
+          const di = ((dy + r) * w + dx + c) * 4
+          for (let k = 0; k < 4; k++) data[di + k] = img.data[si + k]
+        }
+    },
+  } as unknown as CanvasRenderingContext2D
+  const pxAt = (x: number, y: number) => {
+    const i = (y * w + x) * 4
+    return [data[i], data[i + 1], data[i + 2], data[i + 3]]
+  }
+  return { ctx, pxAt }
+}
+
+describe('spread-region ops', () => {
+  const canvas = { width: 40, height: 20 } as HTMLCanvasElement
+  const LEFT = { x: 0, y: 0, w: 20, h: 20 }
+
+  it('a confined fill floods only its half — the fold is a hard edge', () => {
+    const { ctx, pxAt } = bufferCtx(40, 20)
+    applyOp(
+      canvas,
+      ctx,
+      { kind: 'fill', x: 5, y: 10, color: '#ff0000', after: 0, rect: LEFT },
+      1,
+      0,
+      0,
+    )
+    expect(pxAt(5, 10)).toEqual([255, 0, 0, 255])
+    expect(pxAt(19, 10)).toEqual([255, 0, 0, 255])
+    expect(pxAt(20, 10)).toEqual([246, 241, 230, 255])
+    expect(pxAt(35, 10)).toEqual([246, 241, 230, 255])
+  })
+
+  it('an unconfined fill still floods the whole canvas', () => {
+    const { ctx, pxAt } = bufferCtx(40, 20)
+    applyOp(canvas, ctx, { kind: 'fill', x: 5, y: 10, color: '#ff0000', after: 0 }, 1, 0, 0)
+    expect(pxAt(35, 10)).toEqual([255, 0, 0, 255])
+  })
+
+  it('a confined fill does nothing when the seed is outside the rect', () => {
+    const { ctx, pxAt } = bufferCtx(40, 20)
+    applyOp(
+      canvas,
+      ctx,
+      { kind: 'fill', x: 30, y: 10, color: '#ff0000', after: 0, rect: LEFT },
+      1,
+      0,
+      0,
+    )
+    expect(pxAt(5, 10)).toEqual([246, 241, 230, 255])
+  })
+
+  it('a confined clear wipes only inside the rect', () => {
+    const { ctx, pxAt } = bufferCtx(40, 20)
+    applyOp(canvas, ctx, { kind: 'clear', after: 0, rect: LEFT }, 1, 0, 0)
+    expect(pxAt(5, 10)).toEqual([0, 0, 0, 0])
+    expect(pxAt(35, 10)).toEqual([246, 241, 230, 255])
   })
 })
 

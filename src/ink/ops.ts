@@ -14,9 +14,32 @@ export function hexToRgb(hex: string): [number, number, number] {
   return [parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)]
 }
 
+// The device-px rect confining an op's pixels — ops committed while a
+// spread half was focused carry `op.rect` so their effect can't cross the
+// fold. Clipped to the canvas; null when the rect misses it entirely, in
+// which case the op paints nothing.
+function opRegion(
+  canvas: { width: number; height: number },
+  op: { rect?: { x: number; y: number; w: number; h: number } },
+  scale: number,
+  ox: number,
+  oy: number,
+): { x: number; y: number; w: number; h: number } | null {
+  if (!op.rect) return { x: 0, y: 0, w: canvas.width, h: canvas.height }
+  const x0 = Math.max(0, Math.floor(op.rect.x * scale + ox))
+  const y0 = Math.max(0, Math.floor(op.rect.y * scale + oy))
+  const x1 = Math.min(canvas.width, Math.ceil((op.rect.x + op.rect.w) * scale + ox))
+  const y1 = Math.min(canvas.height, Math.ceil((op.rect.y + op.rect.h) * scale + oy))
+  if (x1 <= x0 || y1 <= y0) return null
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+}
+
 // --- flood fill -----------------------------------------------------------
 // Scanline BFS from the seed point. Pixels with alpha < 128 (erased) are
 // treated as paper color so eraser marks don't break the fill region.
+// `rect` (device px) confines the flood to a sub-region — the pixel buffer
+// and all kernel/fallback logic run on that crop, so the fill can't leak
+// past a spread fold.
 export function floodFill(
   ctx: CanvasRenderingContext2D,
   wDev: number,
@@ -27,31 +50,50 @@ export function floodFill(
   tol = 42,
   ink?: InkEngine | null,
   invert = false,
+  rect?: { x: number; y: number; w: number; h: number },
 ) {
   const ix = Math.round(sx)
   const iy = Math.round(sy)
-  if (ix < 0 || iy < 0 || ix >= wDev || iy >= hDev) return
+  let bx = 0
+  let by = 0
+  let bw = wDev
+  let bh = hDev
+  if (rect) {
+    const x0 = Math.max(0, Math.floor(rect.x))
+    const y0 = Math.max(0, Math.floor(rect.y))
+    const x1 = Math.min(wDev, Math.ceil(rect.x + rect.w))
+    const y1 = Math.min(hDev, Math.ceil(rect.y + rect.h))
+    if (x1 <= x0 || y1 <= y0) return
+    bx = x0
+    by = y0
+    bw = x1 - x0
+    bh = y1 - y0
+  }
+  if (ix < bx || iy < by || ix >= bx + bw || iy >= by + bh) return
+  if (typeof ctx.getImageData !== 'function') return // no 2d backend (jsdom)
 
-  const img = ctx.getImageData(0, 0, wDev, hDev)
+  const img = ctx.getImageData(bx, by, bw, bh)
   const d = img.data
   const [pr, pg, pb] = hexToRgb(PAPER)
   const [tr, tg, tb] = hexToRgb(color)
+  const six = ix - bx
+  const siy = iy - by
 
   // Inverse fill: paint everything outside the seed's matching region.
   if (invert && ink?.inverseFill) {
-    if (ink.inverseFill(d, wDev, hDev, ix, iy, tr, tg, tb, tol, pr, pg, pb, 128) > 0)
-      ctx.putImageData(img, 0, 0)
+    if (ink.inverseFill(d, bw, bh, six, siy, tr, tg, tb, tol, pr, pg, pb, 128) > 0)
+      ctx.putImageData(img, bx, by)
     return
   }
   if (invert) return // no kernel — leave the canvas untouched
 
   // WASM/engine kernel when present — the per-pixel loop runs natively.
   if (ink?.floodFill) {
-    const n = ink.floodFill(d, wDev, hDev, ix, iy, tr, tg, tb, tol, pr, pg, pb, 128)
-    if (n > 0) ctx.putImageData(img, 0, 0)
+    const n = ink.floodFill(d, bw, bh, six, siy, tr, tg, tb, tol, pr, pg, pb, 128)
+    if (n > 0) ctx.putImageData(img, bx, by)
     return
   }
-  const si = (iy * wDev + ix) * 4
+  const si = (siy * bw + six) * 4
   const sr = d[si + 3] < 128 ? pr : d[si]
   const sg = d[si + 3] < 128 ? pg : d[si + 1]
   const sb = d[si + 3] < 128 ? pb : d[si + 2]
@@ -67,25 +109,25 @@ export function floodFill(
       ? erasedMatches
       : Math.abs(d[i] - sr) + Math.abs(d[i + 1] - sg) + Math.abs(d[i + 2] - sb) <= tol3
 
-  const visited = new Uint8Array(wDev * hDev)
-  const stack: number[] = [iy * wDev + ix]
+  const visited = new Uint8Array(bw * bh)
+  const stack: number[] = [siy * bw + six]
   // Track the painted bbox so putImageData only writes back what changed.
-  let x0 = wDev
-  let y0 = hDev
+  let x0 = bw
+  let y0 = bh
   let x1 = -1
   let y1 = -1
   while (stack.length) {
     const p = stack.pop()!
     if (visited[p] || !matches(p * 4)) continue
-    const y = (p / wDev) | 0
-    const x = p % wDev
+    const y = (p / bw) | 0
+    const x = p % bw
     // walk left/right along the scanline
     let l = x
     let r = x
     while (l > 0 && !visited[p - (x - l) - 1] && matches((p - (x - l) - 1) * 4)) l--
-    while (r < wDev - 1 && !visited[p + (r - x) + 1] && matches((p + (r - x) + 1) * 4)) r++
+    while (r < bw - 1 && !visited[p + (r - x) + 1] && matches((p + (r - x) + 1) * 4)) r++
     for (let i = l; i <= r; i++) {
-      const idx = y * wDev + i
+      const idx = y * bw + i
       visited[idx] = 1
       const o = idx * 4
       d[o] = tr
@@ -99,21 +141,21 @@ export function floodFill(
     if (y > y1) y1 = y
     // Queue one seed per contiguous matching span on adjacent scanlines.
     for (const ny of [y - 1, y + 1]) {
-      if (ny < 0 || ny >= hDev) continue
+      if (ny < 0 || ny >= bh) continue
       let xs = l
       while (xs <= r) {
-        const idx = ny * wDev + xs
+        const idx = ny * bw + xs
         if (!visited[idx] && matches(idx * 4)) {
           stack.push(idx)
           xs++
-          while (xs <= r && !visited[ny * wDev + xs] && matches((ny * wDev + xs) * 4)) xs++
+          while (xs <= r && !visited[ny * bw + xs] && matches((ny * bw + xs) * 4)) xs++
         } else {
           xs++
         }
       }
     }
   }
-  if (x1 >= 0) ctx.putImageData(img, 0, 0, x0, y0, x1 - x0 + 1, y1 - y0 + 1)
+  if (x1 >= 0) ctx.putImageData(img, bx, by, x0, y0, x1 - x0 + 1, y1 - y0 + 1)
 }
 
 // --- cut ------------------------------------------------------------------
@@ -231,7 +273,9 @@ export function applyOp(
   ink?: InkEngine | null,
 ) {
   switch (op.kind) {
-    case 'fill':
+    case 'fill': {
+      const region = opRegion(canvas, op, scale, ox, oy)
+      if (!region) break
       ctx.save()
       ctx.setTransform(1, 0, 0, 1, 0, 0)
       floodFill(
@@ -244,39 +288,45 @@ export function applyOp(
         42,
         ink,
         op.invert,
+        region,
       )
       ctx.restore()
       break
+    }
     case 'erase': {
       if (!ink?.eraseColor || typeof ctx.getImageData !== 'function') break
-      const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const region = opRegion(canvas, op, scale, ox, oy)
+      if (!region) break
+      const img = ctx.getImageData(region.x, region.y, region.w, region.h)
       if (!img?.data) break
       const n = ink.eraseColor(
         img.data,
-        canvas.width,
-        canvas.height,
-        Math.round(op.x * scale + ox),
-        Math.round(op.y * scale + oy),
+        region.w,
+        region.h,
+        Math.round(op.x * scale + ox) - region.x,
+        Math.round(op.y * scale + oy) - region.y,
         48,
       )
-      if (n > 0) ctx.putImageData(img, 0, 0)
+      if (n > 0) ctx.putImageData(img, region.x, region.y)
       break
     }
     case 'filter': {
       if (!ink || typeof ctx.getImageData !== 'function') break
-      const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const region = opRegion(canvas, op, scale, ox, oy)
+      if (!region) break
+      const img = ctx.getImageData(region.x, region.y, region.w, region.h)
       if (!img?.data) break
       const d = img.data
       if (op.filter === 'blur' && ink.boxBlur) {
-        ink.boxBlur(d, canvas.width, canvas.height, Math.max(1, Math.round(op.amount ?? 4)))
+        ink.boxBlur(d, region.w, region.h, Math.max(1, Math.round(op.amount ?? 4)))
       } else if (op.filter === 'sharpen' && ink.sharpen) {
-        ink.sharpen(d, canvas.width, canvas.height, op.amount ?? 1)
+        ink.sharpen(d, region.w, region.h, op.amount ?? 1)
       } else if (op.filter === 'adjust' && ink.adjust) {
         ink.adjust(d, op.brightness ?? 0, op.contrast ?? 0, op.saturation ?? 0)
       } else {
         break
       }
-      ctx.putImageData(img, 0, 0)
+      ctx.putImageData(img, region.x, region.y)
       break
     }
     case 'cut':
@@ -288,12 +338,15 @@ export function applyOp(
     case 'photo':
       applyPhoto(ctx, op.photo, scale, ox, oy)
       break
-    case 'clear':
+    case 'clear': {
+      const region = opRegion(canvas, op, scale, ox, oy)
+      if (!region) break
       ctx.save()
       ctx.setTransform(1, 0, 0, 1, 0, 0)
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.clearRect(region.x, region.y, region.w, region.h)
       ctx.restore()
       break
+    }
   }
 }
 

@@ -214,6 +214,30 @@ func TestEndTaperHeldBackUntilFlush(t *testing.T) {
 	}
 }
 
+func TestTailPreviewsFlush(t *testing.T) {
+	// tail() must equal what flush() later emits, and leave the stroke open:
+	// a repeat call returns the same preview.
+	s := newStroke("draw", 1, -1)
+	feedPts(s, line(2, 16, 30)...)
+	preview := s.tail()
+	if len(preview) == 0 {
+		t.Fatal("tail preview emitted nothing")
+	}
+	again := s.tail()
+	if len(again) != len(preview) || again[0] != preview[0] {
+		t.Fatal("tail is not repeatable — it mutated the stroke")
+	}
+	real := s.flush()
+	if len(real) != len(preview) {
+		t.Fatalf("tail/flush length mismatch: %v vs %v", len(preview), len(real))
+	}
+	for i := range real {
+		if real[i] != preview[i] {
+			t.Fatalf("tail[%v] = %+v, flush gave %+v", i, preview[i], real[i])
+		}
+	}
+}
+
 func TestTapDrawsDot(t *testing.T) {
 	s := newStroke("draw", 1, -1)
 	b := feedPts(s, Point{50, 50, 0, .5})

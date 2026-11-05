@@ -10,12 +10,13 @@ import type {
   PageOp,
   Pt,
   ShapeKind,
+  SpreadMode,
   Stroke,
   SymmetryMode,
   ToolId,
 } from './types'
 import { i18n } from './i18n'
-import { PAGE_W, PAGE_H, pageSizePreset } from './pageSpace'
+import { PAGE_W, PAGE_H, pageSize, pageSizePreset, spreadRect } from './pageSpace'
 import type { PageSizeId } from './pageSpace'
 import {
   assembleJournals,
@@ -46,6 +47,7 @@ interface StoreState {
   fillMode: 'normal' | 'invert' | 'erase' // fill tool: bucket / inverse / bg-removal
   pageSize: PageSizeId // size preset applied to newly created pages
   symmetry: SymmetryMode // mirror drawn strokes across the page-center axes
+  spreadMode: SpreadMode // canvas focus: whole sheet or just one half
   guide: GuideMode // 'line' straightedge | 'arc' french curve; strokes snap to it
   guideX: number // guide anchor in page units
   guideY: number
@@ -331,6 +333,7 @@ export const store = reactive<StoreState>({
   fillMode: 'normal',
   pageSize: 'spread',
   symmetry: 'none',
+  spreadMode: 'full',
   guide: 'off',
   guideX: PAGE_W / 2,
   guideY: PAGE_H / 2,
@@ -416,22 +419,24 @@ export function saveBrushPreset() {
 }
 
 // --- symmetry & guides ------------------------------------------------------
-// Mirror a page-space point across the page-center axes per store.symmetry.
-export function mirrorX(x: number, w = PAGE_W) {
-  return w - x
+// Mirror a page-space point across the axes through the rect's center — the
+// whole sheet by default, the focused half under a spread focus.
+export function mirrorX(x: number, w = PAGE_W, x0 = 0) {
+  return 2 * x0 + w - x
 }
-export function mirrorY(y: number, h = PAGE_H) {
-  return h - y
+export function mirrorY(y: number, h = PAGE_H, y0 = 0) {
+  return 2 * y0 + h - y
 }
 
 // The extra mirrored point sets for a stroke under the current symmetry mode
-// (the original points are always drawn; these are the copies).
+// (the original points are always drawn; these are the copies). `rect` is the
+// mirror frame — a focused spread half keeps its copies inside itself.
 export function mirroredPtSets(
   pts: Pt[],
-  size: { w: number; h: number } = { w: PAGE_W, h: PAGE_H },
+  rect: { x?: number; y?: number; w: number; h: number } = { w: PAGE_W, h: PAGE_H },
 ): Pt[][] {
-  const mv = (p: Pt): Pt => ({ ...p, x: mirrorX(p.x, size.w) })
-  const mh = (p: Pt): Pt => ({ ...p, y: mirrorY(p.y, size.h) })
+  const mv = (p: Pt): Pt => ({ ...p, x: mirrorX(p.x, rect.w, rect.x ?? 0) })
+  const mh = (p: Pt): Pt => ({ ...p, y: mirrorY(p.y, rect.h, rect.y ?? 0) })
   switch (store.symmetry) {
     case 'v':
       return [pts.map(mv)]
@@ -817,7 +822,14 @@ export function redoStroke(): boolean {
 export function clearPage() {
   const p = currentPage()
   if (!p || !canUndo()) return
-  pushOp({ kind: 'clear', after: p.strokes.length, layerId: '*' })
+  const size = pageSize(p)
+  const r = spreadRect(store.spreadMode, size.w, size.h)
+  pushOp({
+    kind: 'clear',
+    after: p.strokes.length,
+    layerId: '*',
+    rect: r.w !== size.w ? r : undefined,
+  })
 }
 
 // Actions popped by undo, kept for redo (global stack is fine for a single user).
