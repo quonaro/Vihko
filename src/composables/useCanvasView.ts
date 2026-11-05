@@ -893,7 +893,8 @@ export function useCanvasView() {
     lr.ctx.save()
     lr.ctx.setTransform(lr.scale, 0, 0, lr.scale, 0, 0)
     if (stroke.clip?.length) {
-      pathTo(lr.ctx, stroke.clip, lr.scale, 0, 0)
+      // pathTo adds its own scale — the transform already carries it.
+      pathTo(lr.ctx, stroke.clip, 1, 0, 0)
       lr.ctx.clip()
     }
     renderSamples(lr.ctx, stroke.tool, stroke.color, batch, seed, curStrokeSize, stroke)
@@ -926,9 +927,10 @@ export function useCanvasView() {
     rc.save()
     rc.setTransform(scale, 0, 0, scale, 0, 0)
     // A focused-half stroke carries a clip polygon: the eraser's bite stops
-    // at the fold instead of nibbling the hidden half's pixels.
+    // at the fold instead of nibbling the hidden half's pixels. pathTo adds
+    // its own scale — the transform already carries it.
     if (stroke.clip?.length) {
-      pathTo(rc, stroke.clip, scale, 0, 0)
+      pathTo(rc, stroke.clip, 1, 0, 0)
       rc.clip()
     }
     renderSamples(rc, 'eraser', stroke.color, samples, s, size, stroke)

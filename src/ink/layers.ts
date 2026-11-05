@@ -692,7 +692,7 @@ function ensureLayerMask(page: Page, ink: InkEngine, layer: Layer): RasterEntry 
     rc.save()
     rc.setTransform(scale, 0, 0, scale, 0, 0)
     if (stroke.clip?.length) {
-      pathTo(rc, stroke.clip, scale, 0, 0)
+      pathTo(rc, stroke.clip, 1, 0, 0)
       rc.clip()
     }
     renderSamples(rc, stroke.tool, '#fff', memoSamples(ink, stroke), 1, stroke.size ?? 1, stroke)
@@ -836,8 +836,9 @@ function replayStroke(
   if (stroke.alphaLock && stroke.tool !== 'eraser') ctx.globalCompositeOperation = 'source-atop'
   ctx.setTransform(scale, 0, 0, scale, 0, 0)
   // Spread-half clip: brush width stops at the fold, not just its points.
+  // pathTo adds its own scale — the transform already carries it.
   if (stroke.clip?.length) {
-    pathTo(ctx, stroke.clip, scale, 0, 0)
+    pathTo(ctx, stroke.clip, 1, 0, 0)
     ctx.clip()
   }
   renderSamples(

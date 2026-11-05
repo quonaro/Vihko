@@ -406,6 +406,22 @@ describe('CanvasView', () => {
     w.unmount()
   })
 
+  it('records the fold clip on strokes committed in a focused half', async () => {
+    const w = await mountSized(400, 800)
+    store.tool = 'write'
+    tap(w.find('canvas').element, 200, 400)
+    expect(currentPage()!.strokes[0].clip).toBeUndefined() // full spread — no clip
+
+    await w.find('.spread-btn').trigger('click') // left half
+    tap(w.find('canvas').element, 200, 400)
+    const stroke = currentPage()!.strokes[1]
+    expect(stroke.clip).toHaveLength(4)
+    const xs = stroke.clip!.map((p) => p.x)
+    expect(Math.min(...xs)).toBeCloseTo(0, 1)
+    expect(Math.max(...xs)).toBeCloseTo(PAGE_W / 2, 0)
+    w.unmount()
+  })
+
   it('confines committed fills to the focused spread half', async () => {
     const w = await mountSized(400, 800)
     store.tool = 'fill'

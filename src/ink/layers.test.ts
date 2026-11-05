@@ -105,6 +105,49 @@ describe('cutOpForLayer', () => {
     expect(ctx.clearRect).toHaveBeenCalledTimes(1)
   })
 
+  it('clips a focused-half stroke to its recorded polygon in local units', () => {
+    const rasterCtx = stubCtx()
+    const compositeCtx = stubCtx()
+    const createElement = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation(() => stubCanvas(rasterCtx))
+    const layer = stubLayer('L')
+    const clip = [
+      { x: 10, y: 0 },
+      { x: 50, y: 0 },
+      { x: 50, y: 200 },
+      { x: 10, y: 200 },
+    ]
+    const page: Page = {
+      id: 'clip-stroke-page',
+      strokes: [
+        {
+          tool: 'write',
+          color: '#111',
+          pts: [{ x: 20, y: 20, t: 0, p: 0.5 }],
+          layerId: 'L',
+          clip,
+        },
+      ],
+      layers: [layer],
+      createdAt: 0,
+    }
+    const ink = stubInk()
+
+    clearLayerRasterCache(page.id)
+    try {
+      paintLayers(stubCanvas(compositeCtx), compositeCtx, page, ink, 1)
+      expect(rasterCtx.clip).toHaveBeenCalled()
+      // pathTo draws the polygon in layer-local units — the raster
+      // transform already carries the scale, so no double scaling.
+      expect(rasterCtx.moveTo).toHaveBeenCalledWith(10, 0)
+      expect(rasterCtx.lineTo).toHaveBeenCalledWith(50, 0)
+    } finally {
+      clearLayerRasterCache(page.id)
+      createElement.mockRestore()
+    }
+  })
+
   it('reuses layer contents when only the layer transform changes', () => {
     const rasterCtx = {
       setTransform: vi.fn(),
