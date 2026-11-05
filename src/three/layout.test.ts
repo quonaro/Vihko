@@ -37,6 +37,10 @@ import {
   sheetOutline,
   sheetOutline3D,
   packOutline,
+  sheetEdgeY,
+  sheetColumns,
+  sheetGrid,
+  sheetBoxData,
 } from './layout'
 
 describe('tabletop rest heights', () => {
@@ -405,5 +409,93 @@ describe('sheet outline', () => {
     expect(packed[0]).toBe(packed[packed.length - 3])
     const open = packOutline(pts, false)
     expect(open.length).toBe(pts.length * 3)
+  })
+})
+
+describe('rounded sheet grids', () => {
+  const w = PAGE_W / 2
+  const h = PAGE_H / 2
+  const r = SHEET_CORNER_R
+  const cx = w - r
+  const cy = h - r
+
+  it('keeps the edge height on the rounding circle inside the corner zone', () => {
+    expect(sheetEdgeY(0)).toBe(h)
+    expect(sheetEdgeY(cx)).toBe(h)
+    expect(sheetEdgeY(-cx)).toBe(h)
+    expect(sheetEdgeY(w)).toBeCloseTo(cy, 9)
+    expect(sheetEdgeY(-w)).toBeCloseTo(cy, 9)
+    for (let i = 1; i < 8; i++) {
+      const x = cx + (r * i) / 8
+      expect(Math.hypot(x - cx, sheetEdgeY(x) - cy)).toBeCloseTo(r, 9)
+    }
+  })
+
+  it('spends extra columns inside each corner arc the range reaches', () => {
+    // Half-leaf range: corner columns only at the free (right) end.
+    const leaf = sheetColumns(0, w, 8, 8)
+    expect(leaf[0]).toBe(0)
+    expect(leaf[leaf.length - 1]).toBeCloseTo(w)
+    for (let i = 1; i < leaf.length; i++) expect(leaf[i]).toBeGreaterThan(leaf[i - 1])
+    expect(leaf.filter((x) => x > cx).length).toBeGreaterThanOrEqual(8)
+    expect(leaf.filter((x) => x < -cx).length).toBe(0)
+    // Full range: corner columns at both ends.
+    const full = sheetColumns(-w, w, 8, 8)
+    expect(full.filter((x) => x < -cx).length).toBeGreaterThanOrEqual(8)
+    expect(full.filter((x) => x > cx).length).toBeGreaterThanOrEqual(8)
+  })
+
+  it('puts every boundary vertex exactly on the rounded outline', () => {
+    const g = sheetGrid(0, w, 24, 8, 8)
+    const check = (v: number) => {
+      const x = g.positions[v * 3]
+      const y = g.positions[v * 3 + 1]
+      const [sx, sy] = sheetPoint(x, y)
+      expect(sx).toBeCloseTo(x, 6)
+      expect(sy).toBeCloseTo(y, 6)
+    }
+    for (let i = 0; i < g.nx; i++) {
+      check(i * g.ny) // bottom row
+      check(i * g.ny + g.ny - 1) // top row
+    }
+    for (let j = 0; j < g.ny; j++) {
+      check(j) // hinge column
+      check((g.nx - 1) * g.ny + j) // free-edge column
+    }
+  })
+
+  it('maps uv across the range and clips texture height at the corners', () => {
+    const g = sheetGrid(0, w, 24, 8, 8)
+    expect(g.uvs[0]).toBe(0) // u at x = x0
+    expect(g.uvs[(g.nx * g.ny - 1) * 2]).toBe(1) // u at x = x1
+    for (let i = 0; i < g.nx * g.ny; i++) {
+      const y = g.positions[i * 3 + 1]
+      expect(g.uvs[i * 2 + 1]).toBeCloseTo(0.5 + y / PAGE_H, 6)
+      expect(g.uvs[i * 2]).toBeCloseTo((g.positions[i * 3] - 0) / w, 6)
+    }
+  })
+
+  it('builds the box with unit normals and three contiguous material groups', () => {
+    const d = sheetBoxData(24, 8, 2, 0.006)
+    expect(d.groups[0].start).toBe(0)
+    expect(d.groups[1].start).toBe(d.groups[0].count)
+    expect(d.groups[2].start).toBe(d.groups[0].count + d.groups[1].count)
+    expect(d.groups[0].count + d.groups[1].count + d.groups[2].count).toBe(d.indices.length)
+    const nv = d.normals.length / 3
+    expect(d.positions.length).toBe(nv * 3)
+    expect(d.uvs.length).toBe(nv * 2)
+    let rim = 0
+    for (let i = 0; i < nv; i++) {
+      const l = Math.hypot(d.normals[i * 3], d.normals[i * 3 + 1], d.normals[i * 3 + 2])
+      expect(l).toBeCloseTo(1, 6)
+      if (Math.abs(d.normals[i * 3 + 2]) < 1e-9) {
+        // Rim verts face outward in the xy plane and sit on the outline.
+        rim++
+        const [sx, sy] = sheetPoint(d.positions[i * 3], d.positions[i * 3 + 1])
+        expect(sx).toBeCloseTo(d.positions[i * 3], 6)
+        expect(sy).toBeCloseTo(d.positions[i * 3 + 1], 6)
+      }
+    }
+    expect(rim).toBeGreaterThan(0)
   })
 })

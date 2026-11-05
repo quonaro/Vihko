@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
+  baseCanvas,
   paintPage,
   pageCanvas,
+  pageTexWidth,
   repaintInto,
   PAGE_ASPECT,
   PAGE_UNIT,
@@ -157,6 +159,19 @@ describe('pageCanvas', () => {
   })
 })
 
+describe('pageTexWidth', () => {
+  it('follows the gl-quality setting, defaulting to medium', () => {
+    localStorage.setItem('vihko:gl-quality', 'low')
+    expect(pageTexWidth()).toBe(768)
+    localStorage.setItem('vihko:gl-quality', 'high')
+    expect(pageTexWidth()).toBe(2048)
+    localStorage.setItem('vihko:gl-quality', 'ultra')
+    expect(pageTexWidth()).toBe(3072)
+    localStorage.removeItem('vihko:gl-quality')
+    expect(pageTexWidth()).toBe(1024)
+  })
+})
+
 describe('cached content rasters', () => {
   const realGetContext = HTMLCanvasElement.prototype.getContext
 
@@ -186,7 +201,7 @@ describe('cached content rasters', () => {
     return ctx as unknown as CanvasRenderingContext2D
   }
 
-  // One ink.begin() call per repainted stroke — a cheap repaint counter.
+  // One ink.begin() call per uncached stroke — a cheap replay counter.
   const counting = (eng: InkEngine) => {
     let n = 0
     return {
@@ -228,6 +243,27 @@ describe('cached content rasters', () => {
       pageCanvas(p, spy.engine, 300)
       expect(spy.count()).toBe(2) // repaint replays both, but the first stroke's samples are memoized
     } finally {
+      unstubCanvas()
+    }
+  })
+
+  it('evicts the oldest base rasters once the pixel budget overflows', () => {
+    stubCanvas()
+    const createElement = vi.spyOn(document, 'createElement')
+    try {
+      const spy = counting(jsEngine())
+      const mk = (id: string): Page => ({ id, strokes: [line(0, 200)], createdAt: 0 })
+      // 3072-wide rasters are ~6 Mpx each — a dozen of them overflow the
+      // total-pixel budget long before the entry-count cap.
+      const pages = Array.from({ length: 14 }, (_, i) => mk(`evict-${i}`))
+      for (const p of pages) baseCanvas(p, spy.engine, 3072)
+      const after = createElement.mock.calls.length
+      baseCanvas(pages[0], spy.engine, 3072) // evicted LRU -> repaints
+      expect(createElement).toHaveBeenCalledTimes(after + 1)
+      baseCanvas(pages[pages.length - 1], spy.engine, 3072) // MRU survives
+      expect(createElement).toHaveBeenCalledTimes(after + 1)
+    } finally {
+      createElement.mockRestore()
       unstubCanvas()
     }
   })

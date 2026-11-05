@@ -19,8 +19,7 @@ import { i18n } from './i18n'
 import { logger } from './log'
 
 const log = logger('store')
-import { PAGE_W, PAGE_H, pageSize, pageSizePreset, spreadRect } from './pageSpace'
-import type { PageSizeId } from './pageSpace'
+import { PAGE_W, PAGE_H, pageSize, spreadRect } from './pageSpace'
 import {
   assembleJournals,
   loadOrCreateBrowserJournals,
@@ -49,7 +48,6 @@ interface StoreState {
   brushPresets: BrushPreset[]
   shape: ShapeKind
   fillMode: 'normal' | 'invert' | 'erase' // fill tool: bucket / inverse / bg-removal
-  pageSize: PageSizeId // size preset applied to newly created pages
   symmetry: SymmetryMode // mirror drawn strokes across the page-center axes
   spreadMode: SpreadMode // canvas focus: whole sheet or just one half
   guide: GuideMode // 'line' straightedge | 'arc' french curve; strokes snap to it
@@ -353,7 +351,6 @@ export const store = reactive<StoreState>({
   },
   brushPresets: loadPresets(),
   fillMode: 'normal',
-  pageSize: 'spread',
   symmetry: 'none',
   spreadMode: 'full',
   guide: 'off',
@@ -584,7 +581,7 @@ export function addJournal() {
 export function addPage() {
   const j = currentJournal()
   if (!j) return null
-  const p = newPage(pageSizePreset(store.pageSize))
+  const p = newPage()
   j.pages.push(p)
   markJournalDirty(j.id)
   log.debug('page added', { journal: j.id, page: p.id })

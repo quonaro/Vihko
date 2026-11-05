@@ -18,6 +18,9 @@ const {
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  onPointerLeave,
+  brushRing,
+  brushRingDia,
   cycleSymmetry,
   cycleGuide,
   cycleSpread,
@@ -45,8 +48,18 @@ const {
         @pointermove="onPointerMove"
         @pointerup="onPointerUp"
         @pointercancel="onPointerUp"
-        @pointerleave="onPointerUp"
+        @pointerleave="onPointerLeave"
         @contextmenu.prevent
+      />
+      <div
+        v-if="brushRing && brushRingDia > 0"
+        class="brush-ring"
+        :style="{
+          left: `${brushRing.x}px`,
+          top: `${brushRing.y}px`,
+          width: `${brushRingDia}px`,
+          height: `${brushRingDia}px`,
+        }"
       />
     </div>
 
@@ -113,6 +126,28 @@ canvas {
 canvas.from-right { animation: slide-from-right 0.28s ease; }
 canvas.from-left { animation: slide-from-left 0.28s ease; }
 canvas.grab { cursor: grab; }
+.brush-ring {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 1.5px solid #fff;
+  /* Inverts against both the light paper and the dark backdrop. */
+  mix-blend-mode: difference;
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 10;
+}
+.brush-ring::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: 50%;
+  background: #fff;
+}
 .close-btn {
   position: absolute;
   top: 16px;

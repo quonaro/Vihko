@@ -194,6 +194,47 @@ describe('CanvasView', () => {
     w.unmount()
   })
 
+  it('shows a brush-size ring under a hovering mouse on ink tools only', async () => {
+    const w = await mountSized(800, 600)
+    const canvas = w.find('canvas')
+    const move = (x: number, y: number, pointerType = 'mouse') =>
+      canvas.element.dispatchEvent(
+        pev('pointermove', { pointerId: 9, pointerType, clientX: x, clientY: y }),
+      )
+
+    move(100, 120)
+    await w.vm.$nextTick()
+    const ring = w.find('.brush-ring')
+    expect(ring.exists()).toBe(true)
+    // 'write' max footprint is 4.4*(1+0.1) page units at size 1, scaled.
+    const dia = 4.4 * 1.1 * initialScale(800, 600)
+    expect(ring.attributes('style')).toContain(`width: ${dia}px`)
+    expect(ring.attributes('style')).toContain('left: 100px')
+    expect(ring.attributes('style')).toContain('top: 120px')
+    expect(canvas.element.style.cursor).toBe('none')
+
+    // Non-ink tools hide the ring and restore the cursor.
+    store.tool = 'fill'
+    move(150, 150)
+    await w.vm.$nextTick()
+    expect(w.find('.brush-ring').exists()).toBe(false)
+    expect(canvas.element.style.cursor).toBe('default')
+
+    // Leaving the canvas drops the tracked position; a touch move then
+    // shows nothing — fingers have no hover.
+    canvas.element.dispatchEvent(pev('pointerleave', { pointerId: 9, pointerType: 'mouse' }))
+    store.tool = 'write'
+    move(200, 200, 'touch')
+    await w.vm.$nextTick()
+    expect(w.find('.brush-ring').exists()).toBe(false)
+
+    // A later mouse move brings the ring back at the new position.
+    move(220, 220)
+    await w.vm.$nextTick()
+    expect(w.find('.brush-ring').exists()).toBe(true)
+    w.unmount()
+  })
+
   it('two-finger rotation turns the sheet and drawing follows the rotated view', async () => {
     const w = await mountSized(400, 800)
     const canvas = w.find('canvas').element as HTMLCanvasElement

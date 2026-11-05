@@ -3,7 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import JournalView from './JournalView.vue'
 import { i18n } from '../i18n'
 import { closeToJournal, openPage, store } from '../store'
-import { PAGE_SIZE_PRESETS } from '../pageSpace'
+import { PAGE_W, PAGE_H, pageSize } from '../pageSpace'
 import type { Journal } from '../types'
 
 // jsdom has no WebGL, so a fake stands in for JournalScene. It mirrors the
@@ -17,8 +17,7 @@ const mocks = vi.hoisted(() => ({
     held: boolean
     events: {
       onFlipDone?: (dir: 1 | -1) => void
-      onHoverPage?: (id: string | null, anchor?: { x: number; y: number }) => void
-      onSheetAnchors?: (list: { id: string; x: number; y: number }[]) => void
+      onLongPressPage?: (id: string) => void
     }
     flip(dir: 1 | -1): boolean
     finish(): void
@@ -37,8 +36,7 @@ vi.mock('../three/journalScene', () => ({
       _ink: unknown,
       public events: {
         onFlipDone?: (dir: 1 | -1) => void
-        onHoverPage?: (id: string | null, anchor?: { x: number; y: number }) => void
-        onSheetAnchors?: (list: { id: string; x: number; y: number }[]) => void
+        onLongPressPage?: (id: string) => void
       },
     ) {
       mocks.scenes.push(this)
@@ -90,7 +88,6 @@ beforeEach(() => {
   store.journalMode = 'stack'
   store.journalPageIdx = 0
   store.journalOverviewIdx = 0
-  store.pageSize = 'spread'
 })
 
 describe('JournalView', () => {
@@ -101,7 +98,7 @@ describe('JournalView', () => {
     expect(w.find('.book').exists()).toBe(false)
     expect(w.find('.closed-cover').exists()).toBe(false)
     expect(w.find('h1').text()).toBe('Field Notes')
-    expect(w.find('.count').text()).toContain('3')
+    expect(w.find('.count').exists()).toBe(false)
   })
 
   it('switches between stack and overview and advances the page counter', async () => {
@@ -118,44 +115,22 @@ describe('JournalView', () => {
     expect(w.find('.page-number').text()).toBe('1 / 3')
   })
 
-  it('shows the size type of the currently selected page beside its counter', async () => {
-    const portrait = PAGE_SIZE_PRESETS.find((preset) => preset.id === 'portrait')!
-    store.journals[0].pages[1].w = portrait.w
-    store.journals[0].pages[1].h = portrait.h
+  it('shows only the page counter, without a page type', async () => {
     const w = mountJournal()
 
-    expect(w.find('.page-kind').text()).toContain(i18n.global.t('journal.size.spread'))
+    expect(w.find('.page-number').text()).toBe('1 / 3')
+    expect(w.find('.page-kind').exists()).toBe(false)
     await w.find('.flip.next').trigger('click')
     expect(w.find('.page-number').text()).toBe('2 / 3')
-    expect(w.find('.page-kind').text()).toContain(i18n.global.t('journal.size.portrait'))
+    expect(w.find('.page-kind').exists()).toBe(false)
   })
 
-  it('chooses the new page size from a custom modal selector', async () => {
+  it('creates new pages as spreads without a size picker', async () => {
     const w = mountJournal()
-
-    await w.find('.page-size').trigger('click')
-    const options = document.body.querySelectorAll<HTMLButtonElement>('.page-size-option')
-    expect(options).toHaveLength(PAGE_SIZE_PRESETS.length)
-    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull()
-
-    options[2].click()
-    await flushPromises()
-
-    expect(store.pageSize).toBe('square')
-    expect(w.find('.page-size').text()).toContain(i18n.global.t('journal.size.square'))
-    expect(document.body.querySelector('.page-size-option')).toBeNull()
-  })
-
-  it('uses the selected size for the next page', async () => {
-    const w = mountJournal()
-
-    await w.find('.page-size').trigger('click')
-    document.body.querySelectorAll<HTMLButtonElement>('.page-size-option')[1].click()
-    await flushPromises()
+    expect(w.find('.page-size').exists()).toBe(false)
     await w.find('.round').trigger('click')
 
-    const portrait = PAGE_SIZE_PRESETS.find((preset) => preset.id === 'portrait')!
-    expect(store.journals[0].pages.at(-1)).toMatchObject({ w: portrait.w, h: portrait.h })
+    expect(pageSize(store.journals[0].pages.at(-1))).toEqual({ w: PAGE_W, h: PAGE_H })
   })
 
   it('keeps the last page reachable and stops turning at the stack ends', async () => {
@@ -243,7 +218,7 @@ describe('JournalView', () => {
     const w = mountJournal()
     await w.find('footer .round').trigger('click')
     expect(store.journals[0].pages).toHaveLength(4)
-    expect(w.find('.count').text()).toContain('4')
+    expect(w.find('.count').exists()).toBe(false)
   })
 
   it('does not show a download button in the footer', () => {
@@ -253,7 +228,7 @@ describe('JournalView', () => {
 
   // The scene is only constructed for a canvas attached to the document, so
   // these mount into the body to exercise the real busy/onFlipDone wiring.
-  describe('page delete button', () => {
+  describe('page actions', () => {
     const mountAttached = async () => {
       const w = mount(JournalView, {
         attachTo: document.body,
@@ -263,20 +238,32 @@ describe('JournalView', () => {
       return w
     }
 
-    it('is shown on hover when the journal has more than one page', async () => {
+    it('opens the page action sheet after a long press and confirms deletion', async () => {
       const w = await mountAttached()
-      mocks.scenes[0].events.onHoverPage?.('p1', { x: 10, y: 10 })
+      mocks.scenes[0].events.onLongPressPage?.('p2')
       await w.vm.$nextTick()
-      expect(w.find('.del.gl-del').exists()).toBe(true)
+
+      const actionDialog = document.body.querySelector('[role="dialog"]')
+      expect(actionDialog?.getAttribute('aria-label')).toBe('Page actions')
+      expect(document.body.querySelector('.gl-del')).toBeNull()
+
+      document.body.querySelector<HTMLButtonElement>('.page-action')!.click()
+      await w.vm.$nextTick()
+      expect(document.body.textContent).toContain('This page will be permanently deleted.')
+
+      document.body.querySelector<HTMLButtonElement>('.confirm-delete')!.click()
+      await w.vm.$nextTick()
+      expect(store.journals[0].pages.map((page) => page.id)).toEqual(['p1', 'p3'])
+      expect(document.body.querySelector('.confirm-delete')).toBeNull()
       w.unmount()
     })
 
-    it('is hidden when the journal has a single page', async () => {
+    it('does not open page actions when only one page remains', async () => {
       store.journals[0].pages.splice(1)
       const w = await mountAttached()
-      mocks.scenes[0].events.onHoverPage?.('p1', { x: 10, y: 10 })
+      mocks.scenes[0].events.onLongPressPage?.('p1')
       await w.vm.$nextTick()
-      expect(w.find('.del.gl-del').exists()).toBe(false)
+      expect(document.body.querySelector('[aria-label="Page actions"]')).toBeNull()
       w.unmount()
     })
   })

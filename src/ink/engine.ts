@@ -120,6 +120,15 @@ const profile = (tool: string): Profile => {
   }
 }
 
+// The widest diameter a tool can paint at size multiplier 1, in page units:
+// real or speed-simulated pressure widens a stroke to dia*(1+thinning), so
+// the desktop brush cursor ring tracks the painted footprint, not the
+// pressure-0.5 nominal.
+export const toolMaxDia = (tool: string): number => {
+  const p = profile(tool)
+  return p.dia * (1 + p.thinning)
+}
+
 const RATE_OF_PRESSURE_CHANGE = 0.275
 const REAL_PRESSURE_DELTA = 0.04
 const MIN_GAP = 0.25

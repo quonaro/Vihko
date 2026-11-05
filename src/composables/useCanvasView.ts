@@ -20,7 +20,7 @@ import {
   addLayer,
   updateLayer,
 } from '../store'
-import { initInk } from '../ink/engine'
+import { initInk, toolMaxDia } from '../ink/engine'
 import { renderSamples } from '../ink/renderer'
 import {
   adoptLayerRasterTail,
@@ -89,6 +89,8 @@ export function useCanvasView() {
   const ZOOM_MARGIN = 0.5 // zoom-out stops at half-size contain fit
   const view = { s: 1, ox: 0, oy: 0, angle: 0 }
   const zoom = ref(1)
+  // Bumped by syncZoomState so computed sizes that read view.s stay live.
+  const viewRev = ref(0)
   const views = new Map<string, { zoom: number; fx: number; fy: number; angle: number }>() // per-page
   let panStart: { x: number; y: number } | null = null
   const layerPanelOpen = ref(false)
@@ -125,6 +127,27 @@ export function useCanvasView() {
   const brushSize = computed(() => brushOf(store.tool).size)
   const brushProgress = computed(() => Math.min(1, Math.max(0, (brushSize.value - 0.25) / 3.75)))
   const brushMarkWidth = computed(() => `${Math.min(20, 7 + brushSize.value * 3)}px`)
+
+  // Desktop brush cursor: a ring under the pointer sized to the effective
+  // brush diameter, like Photoshop/Krita. Only hover-capable pointers
+  // (mouse/pen) set it — touch has no hover. Position is in CSS px relative
+  // to the canvas element (unrotated screen space, matching the overlay).
+  const brushRing = ref<{ x: number; y: number } | null>(null)
+  const brushRingDia = computed(() => {
+    viewRev.value // view.s is mutated outside reactivity
+    if (!INK_TOOLS.includes(store.tool)) return 0
+    const b = brushOf(store.tool)
+    // Stamped tips scatter dabs beyond the centerline width: the stamp can
+    // grow to (1+0.8*jitter)*d and lands up to scatter*radius off-track.
+    const spread = b.tip && b.tip !== 'round' ? 1 + 0.8 * (b.jitter ?? 0) + (b.scatter ?? 0) : 1
+    return toolMaxDia(store.tool) * b.size * spread * view.s
+  })
+
+  function trackBrushRing(e: PointerEvent, left: number, top: number) {
+    if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
+      brushRing.value = { x: e.clientX - left, y: e.clientY - top }
+    }
+  }
 
   // The view rotation is applied inside the canvas 2D transform, not via CSS
   // rotate on the element: a rotated viewport-sized element gets clipped by
@@ -229,6 +252,7 @@ export function useCanvasView() {
     const r = workRect()
     const cover = coverViewport(w, h, { w: r.w, h: r.h })
     zoom.value = cover.s ? view.s / cover.s : 1
+    viewRev.value++
   }
 
   function saveView() {
@@ -339,15 +363,19 @@ export function useCanvasView() {
     )
   }
 
+  // Ink tools hide the OS cursor — the brush ring overlay replaces it.
+  function syncToolCursor() {
+    const el = canvas.value
+    if (!el) return
+    el.style.cursor =
+      store.tool === 'move' ? 'grab' : INK_TOOLS.includes(store.tool) ? 'none' : 'default'
+  }
+
   function updateCanvasCursor(x: number, y: number) {
     const el = canvas.value
     if (!el) return
-    if (store.tool === 'move') {
-      el.style.cursor = 'grab'
-      return
-    }
     if (store.tool !== 'transform') {
-      el.style.cursor = 'default'
+      syncToolCursor()
       return
     }
     const frame = transformFrame()
@@ -1466,6 +1494,7 @@ export function useCanvasView() {
     const el = canvas.value!
     el.setPointerCapture(e.pointerId)
     const rect = el.getBoundingClientRect()
+    trackBrushRing(e, rect.left, rect.top)
     const { x, y } = toLocalPoint({
       x: e.clientX - rect.left,
       y: e.clientY - rect.top,
@@ -1668,6 +1697,7 @@ export function useCanvasView() {
   function onPointerMove(e: PointerEvent) {
     const rec = pointers.get(e.pointerId)
     const { left, top } = canvas.value!.getBoundingClientRect()
+    trackBrushRing(e, left, top)
     const { x, y } = toLocalPoint({ x: e.clientX - left, y: e.clientY - top })
     if (!rec) {
       if (e.pointerType === 'mouse') updateCanvasCursor(x, y)
@@ -1943,6 +1973,11 @@ export function useCanvasView() {
     reRender()
   }
 
+  function onPointerLeave(e: PointerEvent) {
+    brushRing.value = null
+    onPointerUp(e)
+  }
+
   function onPointerUp(e: PointerEvent) {
     guideDrag = null
     const rec = pointers.get(e.pointerId)
@@ -2196,7 +2231,7 @@ export function useCanvasView() {
   watch(
     () => store.tool,
     () => {
-      if (canvas.value) canvas.value.style.cursor = store.tool === 'move' ? 'grab' : 'default'
+      syncToolCursor()
       reRender()
     },
     { flush: 'sync' },
@@ -2252,6 +2287,9 @@ export function useCanvasView() {
     onPointerDown,
     onPointerMove,
     onPointerUp,
+    onPointerLeave,
+    brushRing,
+    brushRingDia,
     cycleSymmetry,
     cycleGuide,
     cycleSpread,

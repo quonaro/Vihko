@@ -4,8 +4,7 @@ import { store, currentJournal, addPage, deletePage, openPage, closeToShelf } fr
 import { useI18n } from 'vue-i18n'
 import { initInk } from '../ink/engine'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
-import PageSizePicker from '../components/PageSizePicker.vue'
-import { pageSize, PAGE_SIZE_PRESETS } from '../pageSpace'
+import MobileSlider from '../components/MobileSlider.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { logger } from '../log'
 
@@ -16,6 +15,7 @@ import { canTurnStack } from '../three/layout'
 const { t } = useI18n()
 const journal = computed(() => currentJournal())
 const deleteTarget = ref<string | null>(null)
+const pageMenuTarget = ref<string | null>(null)
 const mode = computed({
   get: () => store.journalMode,
   set: (value) => {
@@ -28,28 +28,14 @@ const pageIdx = computed({
     store.journalPageIdx = value
   },
 })
-const currentPageSizeId = computed(() => {
-  const page = journal.value?.pages[pageIdx.value]
-  if (!page) return null
-  const size = pageSize(page)
-  return (
-    PAGE_SIZE_PRESETS.find(
-      (preset) => Math.abs(preset.w - size.w) < 0.01 && Math.abs(preset.h - size.h) < 0.01,
-    )?.id ?? 'custom'
-  )
-})
-const pageSizePickerOpen = ref(false)
 const glCanvas = ref<HTMLCanvasElement>()
 const glOk = ref(false)
 const glFailed = ref(false)
-const glHover = ref<{ id: string; x: number; y: number } | null>(null)
-const glDels = ref<{ id: string; x: number; y: number }[]>([])
-const coarse = typeof matchMedia === 'function' && matchMedia('(hover: none)').matches
 let scene: JournalScene | null = null
 let sceneRequest = 0
 
-function requestDeletePage(id: string, ev: Event) {
-  ev.stopPropagation()
+function requestDeletePage(id: string) {
+  pageMenuTarget.value = null
   deleteTarget.value = id
 }
 
@@ -85,11 +71,8 @@ async function startScene() {
     if (request !== sceneRequest || !canvas.isConnected) return
     scene = new JournalScene(canvas, ink, {
       onPageClick: (id) => openPage(id),
-      onHoverPage: (id, anchor) => {
-        glHover.value = id && anchor ? { id, x: anchor.x, y: anchor.y } : null
-      },
-      onSheetAnchors: (list) => {
-        glDels.value = list
+      onLongPressPage: (id) => {
+        if ((journal.value?.pages.length ?? 0) > 1) pageMenuTarget.value = id
       },
       onFlipDone: (dir) => {
         pageIdx.value = Math.max(0, pageIdx.value + dir)
@@ -117,8 +100,6 @@ function stopScene() {
   scene?.dispose()
   scene = null
   glOk.value = false
-  glHover.value = null
-  glDels.value = []
 }
 
 onMounted(startScene)
@@ -167,43 +148,13 @@ watch(pageIdx, (v) => {
 
     <header>
       <h1>{{ journal.title }}</h1>
-      <p class="count">
-        <svg class="ink" viewBox="0 0 12 14" width="11" height="13"><path d="M6 0.5 C6 0.5 1 6.5 1 9.5 a5 5 0 0 0 10 0 C11 6.5 6 0.5 6 0.5 Z" fill="currentColor"/></svg>
-        {{ t('journal.count', journal.pages.length) }}
-      </p>
     </header>
 
     <div class="stage">
       <canvas ref="glCanvas" class="stage3d" v-show="glOk"></canvas>
       <p v-if="mode === 'stack'" class="page-pos">
         <span class="page-number">{{ pageIdx + 1 }} / {{ journal.pages.length }}</span>
-        <span v-if="currentPageSizeId" class="page-kind">
-          · {{ t(`journal.size.${currentPageSizeId}`) }}
-        </span>
       </p>
-      <button
-        v-if="glOk && glHover && !coarse && journal.pages.length > 1"
-        class="del gl-del"
-        :style="{ left: `${glHover.x}px`, top: `${glHover.y}px` }"
-        :aria-label="t('dlg.deletePageTitle')"
-        :title="t('dlg.deletePageTitle')"
-        @click="requestDeletePage(glHover.id, $event)"
-      >
-        ×
-      </button>
-      <template v-if="glOk && coarse && journal.pages.length > 1">
-        <button
-          v-for="d in glDels"
-          :key="d.id"
-          class="del gl-del"
-          :style="{ left: `${d.x}px`, top: `${d.y}px` }"
-          :aria-label="t('dlg.deletePageTitle')"
-          :title="t('dlg.deletePageTitle')"
-          @click="requestDeletePage(d.id, $event)"
-        >
-          ×
-        </button>
-      </template>
       <EmptyState v-if="glFailed" class="webgl-error" :title="t('journal.webglError')">
         <template #icon>
           <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -231,24 +182,26 @@ watch(pageIdx, (v) => {
     </div>
 
     <footer>
-      <button
-        class="page-size"
-        aria-haspopup="dialog"
-        :aria-expanded="pageSizePickerOpen"
-        :title="t('journal.pageSize')"
-        :aria-label="t('journal.pageSize')"
-        @click="pageSizePickerOpen = true"
-      >
-        {{ t(`journal.size.${store.pageSize}`) }}
-        <svg aria-hidden="true" viewBox="0 0 12 12" width="12" height="12">
-          <path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
       <button class="round" @click="addPage" :title="t('journal.newPage')">
         <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5 L12 19 M5 12 L19 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </footer>
-    <PageSizePicker v-model:open="pageSizePickerOpen" />
+    <MobileSlider
+      :open="pageMenuTarget !== null"
+      :title="t('journal.pageActions')"
+      size="sm"
+      @update:open="pageMenuTarget = null"
+    >
+      <div class="page-actions">
+        <button
+          class="page-action danger"
+          @click="pageMenuTarget && requestDeletePage(pageMenuTarget)"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 6.5h15M9.2 6.5l.5-2h4.6l.5 2M6.5 6.5l.9 13h9.2l.9-13M10 10v6m4-6v6" /></svg>
+          {{ t('shelf.delete') }}
+        </button>
+      </div>
+    </MobileSlider>
     <ConfirmDialog
       :open="deleteTarget !== null"
       :title="t('dlg.deletePageTitle')"
@@ -321,16 +274,6 @@ h1 {
   font-weight: 650;
   letter-spacing: -.035em;
 }
-.count {
-  color: var(--paper-muted);
-  font-size: 12px;
-  margin-top: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-}
-.count .ink { display: inline-block; }
 /* The stage is full-bleed: the canvas runs under the header/footer chrome
    so the journal is never clipped by a footer edge — it reads as the whole
    screen, with buttons floating over it. */
@@ -346,27 +289,31 @@ h1 {
   height: 100%;
   touch-action: none;
 }
-.gl-del {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  opacity: 1;
-  z-index: 20;
-}
-.del {
-  width: 30px;
-  height: 30px;
+.page-actions { display: grid; gap: 8px; }
+.page-action {
   display: flex;
   align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(255, 255, 255, .35);
-  border-radius: 50%;
-  color: #fff;
-  background: #393a36;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, .28);
-  font-size: 17px;
-  line-height: 1;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 16px;
+  border-radius: 12px;
+  background: var(--chrome-control-bg);
+  color: var(--chrome-text);
+  text-align: left;
+  font-size: 14px;
+  font-weight: 600;
 }
-.del:active { transform: translate(-50%, -50%) scale(.94); }
+.page-action svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.page-action.danger { color: #c45c52; }
 .webgl-error {
   position: absolute;
   inset: 50% 24px auto;
@@ -410,9 +357,6 @@ h1 {
   color: var(--paper-muted);
   font-size: 12px;
   z-index: 4;
-}
-.page-kind {
-  opacity: .85;
 }
 footer {
   position: absolute;

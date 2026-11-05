@@ -36,7 +36,7 @@ import {
   mirroredPtSets,
   snapToGuide,
 } from './store'
-import { PAGE_W, PAGE_H } from './pageSpace'
+import { PAGE_W, PAGE_H, pageSize } from './pageSpace'
 import { i18n } from './i18n'
 import { nextTick } from 'vue'
 import type { Journal, Stroke } from './types'
@@ -497,16 +497,9 @@ describe('symmetry and guides', () => {
 })
 
 describe('page sizes', () => {
-  it('new pages get the selected size preset; spread stays implicit', () => {
-    store.pageSize = 'square'
+  it('new pages use the canonical spread dimensions', () => {
     const j = addJournal()
     store.journalId = j.id
-    const p = addPage()!
-    expect(p.w).toBe(p.h)
-    store.pageSize = 'spread'
-    const p2 = addPage()!
-    expect(p2.w).toBeUndefined()
-    expect(p2.h).toBeUndefined()
-    store.pageSize = 'spread'
+    expect(pageSize(addPage())).toEqual({ w: PAGE_W, h: PAGE_H })
   })
 })

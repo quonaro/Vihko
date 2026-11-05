@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import type { InkEngine, Page } from '../types'
 import {
-  PAGE_W,
   PAGE_H,
   PAGE_STEP,
   sheetCameraDistance,
@@ -20,8 +19,9 @@ import {
   leafTurnLift,
   ROW_LEAN,
   rowRestY,
-  sheetPoint,
   sheetOutline3D,
+  sheetGrid,
+  sheetBoxData,
   packOutline,
   leafPointTheta,
   leafOutlineTheta,
@@ -39,7 +39,8 @@ import {
   pinchZoom,
   clampPan,
 } from './gesture'
-import { pageCanvas, repaintInto, SHEET_SHADE } from './pageTexture'
+import { pageCanvas, pageTexWidth, repaintInto, SHEET_SHADE } from './pageTexture'
+import { selectTextureJobs } from './textureQueue'
 import { createPageTurn } from './pageTurn'
 import {
   createRenderer,
@@ -60,24 +61,15 @@ const log = logger('journal3d')
 
 export interface SceneEvents {
   onPageClick?: (id: string) => void
-  // Hovered page + its top-right corner in canvas px (delete-button anchor).
-  onHoverPage?: (id: string | null, anchor: { x: number; y: number } | null) => void
-  // Anchor under each visible sheet in canvas px — touch devices have no
-  // hover, so tappable sheets get a delete button below them instead.
-  onSheetAnchors?: (list: { id: string; x: number; y: number }[]) => void
+  onLongPressPage?: (id: string) => void
   onFlipDone?: (dir: 1 | -1) => void
 }
 
-const TEX_W = 1024
-// Touch delete buttons hang this far under a sheet's projected bottom
-// edge — a px gap, so the 30px button stays clear of the paper at any zoom.
-const DEL_DROP_PX = 40
-
 const damp = (rate: number, dt: number) => 1 - Math.exp(-rate * dt)
 
-type PageMesh = THREE.Mesh<THREE.BoxGeometry, THREE.Material[]>
+type PageMesh = THREE.Mesh<THREE.BufferGeometry, THREE.Material[]>
 type PaperMaterial = THREE.MeshStandardMaterial
-type LeafMesh = THREE.Mesh<THREE.PlaneGeometry, PaperMaterial>
+type LeafMesh = THREE.Mesh<THREE.BufferGeometry, PaperMaterial>
 
 // One leaf = one half-sheet hinged at the centre spine (local x = 0, free
 // edge at local x = HALF_W). Leaf k shows page k-1's right half on its front
@@ -131,6 +123,10 @@ export class JournalScene {
   private stackGroup = new THREE.Group()
   private rowGroup = new THREE.Group()
   private texCache = new Map<string, TexEntry>()
+  // Page texture width, resolved from the quality tier at construction —
+  // each leaf face samples only half of it (leafTexU), so texW/2 is what a
+  // visible half-sheet actually gets.
+  private texW: number
   private sheets: PageEntry[] = [] // overview cards
   private leaves: LeafEntry[] = []
   private edgeMat: PaperMaterial | null = null
@@ -157,7 +153,8 @@ export class JournalScene {
   private hoveredLeaf: LeafEntry | null = null
   private hoveredLeafHit: 'front' | 'back' | null = null
   private hoveredCard: PageEntry | null = null
-  private lastHoverId: string | null = null
+  private hold: { id: number; x: number; y: number; pageId: string } | null = null
+  private holdTimer: ReturnType<typeof setTimeout> | undefined
   private drag: {
     id: number
     x0: number
@@ -217,6 +214,7 @@ export class JournalScene {
       this.readyResolve = res
     })
     this.renderer = createRenderer(canvas, q)
+    this.texW = pageTexWidth(q)
     this.inkMat.color.setHex(SHEET_OUTLINE_COLOR)
     this.inkMat.opacity = SHEET_OUTLINE_OPACITY
     this.inkMat.linewidth = SHEET_OUTLINE_PX
@@ -261,29 +259,35 @@ export class JournalScene {
     this.ro = new ResizeObserver(() => this.resize())
     this.ro.observe(canvas)
     this.resize()
-    log.info('journal scene created', { quality: q })
+    log.info('journal scene created', { quality: q, texW: this.texW })
   }
 
   // --- construction -------------------------------------------------------
 
   // Paper has real thickness: a thin box whose edge catches the light —
-  // the single biggest "actually rendered" cue at this scale. Overview
-  // cards stay flat (fold=false) — the valley belongs to the bound stack.
+  // the single biggest "actually rendered" cue at this scale. The caps and
+  // rim follow the rounded outline exactly — a clamped uniform grid would
+  // chamfer the corners. Material groups: front cap, back cap, rim.
   private pageBox() {
-    const g = new THREE.BoxGeometry(PAGE_W, PAGE_H, 0.006, 64, 32, 1)
-    const pos = g.attributes.position
-    for (let i = 0; i < pos.count; i++) {
-      const [x, y, z] = sheetPoint(pos.getX(i), pos.getY(i), false)
-      pos.setXYZ(i, x, y, z + pos.getZ(i))
-    }
-    g.computeVertexNormals()
+    const d = sheetBoxData(48, 10, 2, 0.006)
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.BufferAttribute(d.positions, 3))
+    g.setAttribute('normal', new THREE.BufferAttribute(d.normals, 3))
+    g.setAttribute('uv', new THREE.BufferAttribute(d.uvs, 2))
+    g.setIndex(d.indices)
+    for (const gr of d.groups) g.addGroup(gr.start, gr.count, gr.materialIndex)
     return g
   }
 
-  // A leaf is a subdivided half-plane, hinge at local x = 0.
+  // A leaf is a subdivided half-sheet, hinge at local x = 0 — extra columns
+  // inside the corner arc keep the silhouette on the outline's circle.
   private leafGeometry() {
-    const g = new THREE.PlaneGeometry(HALF_W, PAGE_H, 32, 16)
-    g.translate(HALF_W / 2, 0, 0)
+    const grid = sheetGrid(0, HALF_W, 28, 8, 8)
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.BufferAttribute(grid.positions, 3))
+    g.setAttribute('uv', new THREE.BufferAttribute(grid.uvs, 2))
+    g.setIndex(grid.indices)
+    g.computeVertexNormals()
     return g
   }
 
@@ -357,19 +361,19 @@ export class JournalScene {
     return this.edgeMat
   }
 
-  // Overview card: textured front (+z face, material index 4), paper back
-  // and edges — the same thin box the stack used to show per page.
+  // Overview card: textured front cap (material index 0), paper back cap
+  // (1) and cut edges on the rim (2) — see pageBox's group layout.
   private makePage(map: THREE.Texture | null) {
     const face = this.pageMaterial(map, THREE.FrontSide)
     const back = this.pageMaterial(null, THREE.FrontSide)
     const e = this.edges()
-    const mesh = new THREE.Mesh(this.pageBox(), [e, e, e, e, face, back])
+    const mesh = new THREE.Mesh(this.pageBox(), [face, back, e])
     mesh.castShadow = true
     mesh.receiveShadow = true
     return mesh as PageMesh
   }
 
-  private makeLeaf(map: THREE.Texture | null, side: THREE.Side, geometry: THREE.PlaneGeometry) {
+  private makeLeaf(map: THREE.Texture | null, side: THREE.Side, geometry: THREE.BufferGeometry) {
     const mesh = new THREE.Mesh(geometry, this.pageMaterial(map, side))
     mesh.castShadow = true
     mesh.receiveShadow = true
@@ -458,10 +462,10 @@ export class JournalScene {
 
   private texFor(page: Page | null, fold?: boolean, edgeShade?: boolean): THREE.Texture | null {
     if (!page) return null
-    const key = page.id + (fold ? 'f' : '') + (edgeShade ? 'e' : '')
+    const key = this.textureKey(page, fold, edgeShade)
     const hit = this.texCache.get(key)
     if (hit) return hit.tex
-    const canvas = pageCanvas(page, this.ink, TEX_W, fold, edgeShade)
+    const canvas = pageCanvas(page, this.ink, this.texW, fold, edgeShade)
     if (!canvas) {
       log.debug('page texture raster unavailable', page.id)
       return null
@@ -471,6 +475,55 @@ export class JournalScene {
     tex.anisotropy = Math.min(16, this.renderer.capabilities.getMaxAnisotropy())
     this.texCache.set(key, { tex, ctx: canvas.getContext('2d')!, page, fold, edgeShade })
     return tex
+  }
+
+  private textureKey(page: Page, fold?: boolean, edgeShade?: boolean) {
+    return page.id + (fold ? 'f' : '') + (edgeShade ? 'e' : '')
+  }
+
+  private scheduleTextureJobs() {
+    const focus =
+      this.mode === 'stack' ? this.stackPos : this.rowTarget + (this.pages.length - 1) / 2
+    const stackJobs: TexJob[] = []
+    const overviewJobs: TexJob[] = []
+    for (const leaf of this.leaves) {
+      const fp = leaf.front.userData.page as Page | null
+      const bp = leaf.back.userData.page as Page | null
+      if (fp)
+        stackJobs.push({ mat: leaf.front.material, page: fp, order: Math.abs(leaf.k - 1 - focus) })
+      if (bp) stackJobs.push({ mat: leaf.back.material, page: bp, order: Math.abs(leaf.k - focus) })
+    }
+    for (const entry of this.sheets) {
+      overviewJobs.push({
+        mat: entry.mesh.material[0] as PaperMaterial,
+        page: entry.page,
+        order: Math.abs(entry.mesh.userData.i - focus),
+        fold: false,
+      })
+    }
+    this.texJobs = selectTextureJobs(this.mode, stackJobs, overviewJobs)
+  }
+
+  private focusTextureReady() {
+    const page =
+      this.mode === 'stack'
+        ? this.pages[this.cur]
+        : this.sheets[
+            Math.max(
+              0,
+              Math.min(
+                this.sheets.length - 1,
+                Math.round(this.rowTarget + (this.sheets.length - 1) / 2),
+              ),
+            )
+          ]?.page
+    if (!page) return this.texJobs.length === 0
+    const key = this.textureKey(
+      page,
+      this.mode === 'stack' ? SHEET_SHADE.fold : false,
+      SHEET_SHADE.edgeShade,
+    )
+    return this.texCache.has(key)
   }
 
   // Photos inside stroke ops may finish loading after the first paint.
@@ -520,6 +573,7 @@ export class JournalScene {
       // Center the row on the sheet the stack was showing.
       this.rowTarget = this.cur - (this.sheets.length - 1) / 2
     }
+    this.scheduleTextureJobs()
   }
 
   setPage(idx: number) {
@@ -527,12 +581,14 @@ export class JournalScene {
     this.turn.reset()
     this.cur = Math.max(0, Math.min(this.pages.length - 1, idx))
     this.stackPos = this.cur
+    this.scheduleTextureJobs()
   }
 
   setOverviewFocus(index: number) {
     const lim = (this.sheets.length - 1) / 2
     this.rowTarget = Math.max(-lim, Math.min(lim, index - lim))
     this.rowPos = this.rowTarget
+    this.scheduleTextureJobs()
     this.pump.wake()
   }
 
@@ -598,26 +654,9 @@ export class JournalScene {
       this.rowGroup.add(mesh)
       return { mesh, outline, id: page.id, page }
     })
-    // Rasterizing N pages up front froze the journal-open animation, so
-    // faces go up as blank paper and the texture queue inks them a slice
-    // per frame, starting from the faces nearest the focus.
-    const focus = this.mode === 'stack' ? this.stackPos : this.rowTarget + (pages.length - 1) / 2
-    const jobs: TexJob[] = []
-    for (const leaf of this.leaves) {
-      const fp = leaf.front.userData.page as Page | null
-      const bp = leaf.back.userData.page as Page | null
-      if (fp) jobs.push({ mat: leaf.front.material, page: fp, order: Math.abs(leaf.k - 1 - focus) })
-      if (bp) jobs.push({ mat: leaf.back.material, page: bp, order: Math.abs(leaf.k - focus) })
-    }
-    for (const e of this.sheets) {
-      jobs.push({
-        mat: e.mesh.material[4] as PaperMaterial,
-        page: e.page,
-        order: Math.abs(e.mesh.userData.i - focus) + 0.5,
-        fold: false,
-      })
-    }
-    this.texJobs = jobs.sort((a, b) => a.order - b.order)
+    // Do not rasterize the hidden representation on open. Its page textures
+    // are queued when the user switches modes.
+    this.scheduleTextureJobs()
     this.hoveredLeaf = this.hoveredCard = null
     const lim = (pages.length - 1) / 2
     this.rowTarget = Math.max(-lim, Math.min(lim, this.rowTarget))
@@ -643,6 +682,7 @@ export class JournalScene {
 
   dispose() {
     log.debug('journal scene disposed')
+    this.cancelHold()
     this.texJobs = []
     this.pump.stop()
     this.ro.disconnect()
@@ -738,6 +778,7 @@ export class JournalScene {
     this.canvas.setPointerCapture(e.pointerId)
     if (this.touches.size === 2) {
       // A second finger converts any one-finger drag into a pinch.
+      this.cancelHold()
       this.cancelDrag()
       const [a, b] = [...this.touches.values()]
       this.pinch = {
@@ -763,10 +804,30 @@ export class JournalScene {
     this.trail = [{ x: e.clientX, t: e.timeStamp }]
     this.vel = 0
     this.clickWasDrag = false
+    const rect = this.canvas.getBoundingClientRect()
+    this.pick(e.clientX - rect.left, e.clientY - rect.top)
+    const pageId = this.mode === 'stack' ? this.hoveredLeafPageId() : (this.hoveredCard?.id ?? null)
+    if (pageId) {
+      this.hold = { id: e.pointerId, x: e.clientX, y: e.clientY, pageId }
+      this.holdTimer = setTimeout(() => {
+        const held = this.hold
+        this.holdTimer = undefined
+        this.hold = null
+        if (!held || this.drag?.moved) return
+        this.clickWasDrag = true
+        this.events.onLongPressPage?.(held.pageId)
+      }, 550)
+    }
   }
 
   private onPointerMove = (e: PointerEvent) => {
     this.pump.wake()
+    if (
+      this.hold?.id === e.pointerId &&
+      Math.hypot(e.clientX - this.hold.x, e.clientY - this.hold.y) > 10
+    ) {
+      this.cancelHold()
+    }
     const touch = this.touches.get(e.pointerId)
     if (touch) {
       touch.x = e.clientX
@@ -864,6 +925,7 @@ export class JournalScene {
 
   private endDrag(e: PointerEvent, flick: boolean) {
     this.pump.wake()
+    this.cancelHold()
     this.touches.delete(e.pointerId)
     if (this.canvas.hasPointerCapture(e.pointerId)) {
       this.canvas.releasePointerCapture(e.pointerId)
@@ -914,6 +976,12 @@ export class JournalScene {
     this.drag = null
     this.trail = []
     this.canvas.style.cursor = ''
+  }
+
+  private cancelHold() {
+    if (this.holdTimer !== undefined) clearTimeout(this.holdTimer)
+    this.holdTimer = undefined
+    this.hold = null
   }
 
   private onPointerLeave = (e: PointerEvent) => {
@@ -1041,9 +1109,9 @@ export class JournalScene {
         if (tex) job.mat.map = tex
       } while (this.texJobs.length && performance.now() - t0 < 8)
     }
-    if (!this.readyDone && this.compiled && !this.texJobs.length) {
+    if (!this.readyDone && this.compiled && this.focusTextureReady()) {
       this.readyDone = true
-      log.debug('scene ready: shaders compiled, textures attached')
+      log.debug('scene ready: shaders compiled, focus texture attached')
       this.readyResolve()
     }
     if (!this.readyDone) moving = true
@@ -1199,68 +1267,6 @@ export class JournalScene {
     if (this.lookPos.distanceToSquared(lt) > 1e-6) moving = true
     this.camera.lookAt(this.lookPos)
 
-    // Emit hover + delete-button anchor.
-    const id = this.mode === 'stack' ? this.hoveredLeafPageId() : (this.hoveredCard?.id ?? null)
-    let anchor: { x: number; y: number } | null = null
-    if (id && this.mode === 'overview' && this.hoveredCard) {
-      const v = new THREE.Vector3(PAGE_W * 0.47, PAGE_H * 0.47, 0)
-      this.hoveredCard.mesh.localToWorld(v)
-      v.project(this.camera)
-      const r = this.canvas.getBoundingClientRect()
-      anchor = { x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height }
-    } else if (id && this.hoveredLeaf) {
-      const p = leafPointTheta(
-        HALF_W,
-        PAGE_H * 0.47,
-        HALF_W,
-        this.hoveredLeaf.theta,
-        this.hoveredLeaf.curl,
-        this.hoveredLeaf.fan,
-        this.hoveredLeaf.sink,
-        this.hoveredLeaf.lift,
-      )
-      const v = new THREE.Vector3(p[0], p[1], p[2]).applyMatrix4(this.hoveredLeaf.front.matrixWorld)
-      v.project(this.camera)
-      const r = this.canvas.getBoundingClientRect()
-      anchor = { x: ((v.x + 1) / 2) * r.width, y: ((1 - v.y) / 2) * r.height }
-    }
-    if (id !== this.lastHoverId || anchor) {
-      this.events.onHoverPage?.(id, anchor)
-      this.lastHoverId = id
-    }
-
-    if (this.events.onSheetAnchors) {
-      const r = this.canvas.getBoundingClientRect()
-      const list: { id: string; x: number; y: number }[] = []
-      if (this.mode === 'overview') {
-        const v = new THREE.Vector3()
-        for (const entry of this.sheets) {
-          v.set(0, -PAGE_H / 2, 0)
-          entry.mesh.localToWorld(v)
-          v.project(this.camera)
-          if (v.z >= 1) continue
-          const x = ((v.x + 1) / 2) * r.width
-          if (x < -40 || x > r.width + 40) continue
-          list.push({ id: entry.id, x, y: ((1 - v.y) / 2) * r.height + DEL_DROP_PX })
-        }
-      } else {
-        // Stack mode: only the open spread is tappable — anchor under it.
-        const entry = this.pages[Math.round(this.stackPos)]
-        if (entry) {
-          const v = new THREE.Vector3(0, -PAGE_H / 2, 0)
-          this.stackGroup.localToWorld(v)
-          v.project(this.camera)
-          if (v.z < 1) {
-            list.push({
-              id: entry.id,
-              x: ((v.x + 1) / 2) * r.width,
-              y: ((1 - v.y) / 2) * r.height + DEL_DROP_PX,
-            })
-          }
-        }
-      }
-      this.events.onSheetAnchors(list)
-    }
     return moving
   }
 }

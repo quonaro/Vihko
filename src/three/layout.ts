@@ -69,6 +69,191 @@ export function sheetPoint(x: number, y: number, fold = true): [number, number, 
   return [x, y, z]
 }
 
+// --- rounded-boundary vertex grids --------------------------------------------
+// A uniform PlaneGeometry/BoxGeometry only touches the rounded boundary where
+// its grid lines happen to land — between those the silhouette is a straight
+// chord, so the corner renders as a diagonal cut while the outline line traces
+// the true arc. These grids clamp each column's height to the rounded edge and
+// spend extra columns inside the corner zones (spaced evenly over the arc's
+// angle), so every boundary vertex sits exactly on the outline.
+
+// Top-edge height of the rounded sheet at x: PAGE_H/2 along the straight
+// span, quarter-circle inside the corner zones.
+export function sheetEdgeY(x: number): number {
+  const h = PAGE_H / 2
+  const r = SHEET_CORNER_R
+  const cx = PAGE_W / 2 - r
+  const dx = Math.min(Math.abs(x), PAGE_W / 2) - cx
+  return dx <= 0 ? h : h - r + Math.sqrt(Math.max(0, r * r - dx * dx))
+}
+
+// Column x positions for a sheet grid over [x0, x1]: `main` uniform spans
+// across the flat part plus `corner` columns per rounded end the range
+// reaches, spread evenly over the arc's angle so the chords stay invisible.
+export function sheetColumns(x0: number, x1: number, main: number, corner: number): number[] {
+  const w = PAGE_W / 2
+  const r = SHEET_CORNER_R
+  const cx = w - r
+  const xs: number[] = [x0, x1]
+  const lo = Math.max(x0, -cx)
+  const hi = Math.min(x1, cx)
+  for (let i = 0; i <= main; i++) xs.push(lo + ((hi - lo) * i) / main)
+  for (let j = 1; j < corner; j++) {
+    const a = (Math.PI / 2) * (j / corner)
+    if (x0 < -cx) xs.push(-cx - r * Math.sin(a))
+    if (x1 > cx) xs.push(cx + r * Math.sin(a))
+  }
+  xs.sort((a, b) => a - b)
+  return xs.filter((x, i) => i === 0 || x - xs[i - 1] > 1e-9)
+}
+
+export interface SheetGrid {
+  positions: Float32Array // xyz, z = 0 — the undeformed rest surface
+  uvs: Float32Array
+  indices: number[] // CCW seen from +z
+  nx: number
+  ny: number
+}
+
+// Vertex grid over [x0, x1] whose top/bottom silhouette follows the rounded
+// edge: `rows`+1 vertex rows per column, u spans [0,1] over the range and v
+// maps sheet y linearly — corner columns just sample less texture height, so
+// the texture's corners are cut with the paper.
+export function sheetGrid(
+  x0: number,
+  x1: number,
+  main: number,
+  corner: number,
+  rows: number,
+): SheetGrid {
+  const xs = sheetColumns(x0, x1, main, corner)
+  const nx = xs.length
+  const ny = rows + 1
+  const positions = new Float32Array(nx * ny * 3)
+  const uvs = new Float32Array(nx * ny * 2)
+  let p = 0
+  let t = 0
+  for (let i = 0; i < nx; i++) {
+    const x = xs[i]
+    const yt = sheetEdgeY(x)
+    for (let j = 0; j < ny; j++) {
+      const y = -yt + (2 * yt * j) / rows
+      positions[p++] = x
+      positions[p++] = y
+      positions[p++] = 0
+      uvs[t++] = (x - x0) / (x1 - x0)
+      uvs[t++] = 0.5 + y / PAGE_H
+    }
+  }
+  const indices: number[] = []
+  for (let i = 0; i < nx - 1; i++) {
+    for (let j = 0; j < rows; j++) {
+      const a = i * ny + j
+      const b = (i + 1) * ny + j
+      indices.push(a, b, b + 1, a, b + 1, a + 1)
+    }
+  }
+  return { positions, uvs, indices, nx, ny }
+}
+
+// Outward rim direction (xy plane) at a boundary point — axis-aligned on the
+// straight edges, radial through the corner arcs.
+export function sheetNormal2D(x: number, y: number): [number, number] {
+  const r = SHEET_CORNER_R
+  const cx = PAGE_W / 2 - r
+  const cy = PAGE_H / 2 - r
+  const dx = Math.abs(x) - cx
+  const dy = Math.abs(y) - cy
+  if (dx > 0 && dy > 0) {
+    const l = Math.hypot(dx, dy) || 1
+    return [(Math.sign(x) * dx) / l, (Math.sign(y) * dy) / l]
+  }
+  return dx > dy ? [Math.sign(x), 0] : [0, Math.sign(y)]
+}
+
+export interface SheetBoxData {
+  positions: Float32Array
+  normals: Float32Array
+  uvs: Float32Array
+  indices: number[]
+  // Contiguous index ranges → material indices: front cap, back cap, rim.
+  groups: { start: number; count: number; materialIndex: number }[]
+}
+
+// Thin box around the full rounded sheet: flat front/back caps plus a rim
+// strip that catches the light along the cut. Replaces the uniform
+// BoxGeometry whose clamped grid chamfered the corners.
+export function sheetBoxData(
+  main: number,
+  corner: number,
+  rows: number,
+  depth: number,
+): SheetBoxData {
+  const w = PAGE_W / 2
+  const zf = depth / 2
+  const cap = sheetGrid(-w, w, main, corner, rows)
+  const nv = cap.nx * cap.ny
+  // Boundary loop, CCW seen from +z: down the left edge, across the bottom,
+  // up the right edge, back across the top — vertex indices into the cap grid.
+  const loop: number[] = []
+  for (let j = cap.ny - 1; j >= 0; j--) loop.push(j)
+  for (let i = 1; i < cap.nx; i++) loop.push(i * cap.ny)
+  for (let j = 1; j < cap.ny; j++) loop.push((cap.nx - 1) * cap.ny + j)
+  for (let i = cap.nx - 2; i >= 1; i--) loop.push(i * cap.ny + cap.ny - 1)
+  const np = loop.length
+  const positions = new Float32Array((nv + np) * 2 * 3)
+  const normals = new Float32Array((nv + np) * 2 * 3)
+  const uvs = new Float32Array((nv + np) * 2 * 2)
+  for (let i = 0; i < nv; i++) {
+    const x = cap.positions[i * 3]
+    const y = cap.positions[i * 3 + 1]
+    positions.set([x, y, zf], i * 3)
+    normals[i * 3 + 2] = 1
+    uvs.set([cap.uvs[i * 2], cap.uvs[i * 2 + 1]], i * 2)
+    const b = nv + i
+    positions.set([x, y, -zf], b * 3)
+    normals[b * 3 + 2] = -1
+    uvs.set([cap.uvs[i * 2], cap.uvs[i * 2 + 1]], b * 2)
+  }
+  for (let k = 0; k < np; k++) {
+    const v = loop[k]
+    const x = cap.positions[v * 3]
+    const y = cap.positions[v * 3 + 1]
+    const [nx, ny] = sheetNormal2D(x, y)
+    for (const [o, z] of [
+      [nv * 2 + k * 2, zf],
+      [nv * 2 + k * 2 + 1, -zf],
+    ] as const) {
+      positions.set([x, y, z], o * 3)
+      normals.set([nx, ny, 0], o * 3)
+      uvs.set([cap.uvs[v * 2], cap.uvs[v * 2 + 1]], o * 2)
+    }
+  }
+  const indices: number[] = [...cap.indices]
+  const backStart = indices.length
+  for (let i = 0; i < cap.indices.length; i += 3) {
+    indices.push(nv + cap.indices[i], nv + cap.indices[i + 2], nv + cap.indices[i + 1])
+  }
+  const rimStart = indices.length
+  const ro = nv * 2
+  for (let k = 0; k < np; k++) {
+    const a = ro + k * 2
+    const b = ro + ((k + 1) % np) * 2
+    indices.push(a, a + 1, b + 1, a, b + 1, b)
+  }
+  return {
+    positions,
+    normals,
+    uvs,
+    indices,
+    groups: [
+      { start: 0, count: backStart, materialIndex: 0 },
+      { start: backStart, count: rimStart - backStart, materialIndex: 1 },
+      { start: rimStart, count: np * 6, materialIndex: 2 },
+    ],
+  }
+}
+
 // --- overview row ------------------------------------------------------------
 // Every sheet stays upright and evenly spaced while `focus` shifts
 // horizontally through the bounded list.

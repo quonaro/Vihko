@@ -2,6 +2,7 @@ import type { InkEngine, Page } from '../types'
 import { paintLayers } from '../ink/layers'
 import { logger } from '../log'
 import { PAGE_ASPECT, PAGE_UNIT, pageSize } from '../pageSpace'
+import { GL_QUALITY_KEY, readQuality, type Quality } from '../quality'
 import { pageRev } from '../store'
 
 const log = logger('pageTex')
@@ -22,6 +23,21 @@ const PAPER_BOT = '#f8f6f0'
 // swap at turn start/end. Additive helper; the boolean params are
 // unchanged for any caller that still wants a distinct variant.
 export const SHEET_SHADE = { fold: true, edgeShade: true } as const
+
+// Texture width per render-quality tier. A leaf face maps only half of
+// the page texture (see leafTexU in layout.ts), so the effective
+// resolution per visible half-sheet is texW/2 — the 1024 default already
+// reads soft at dpr 2+, and stack/overview zooms upscale it further.
+// 'ultra' trades ~24 MB per cached page texture for deep-zoom sharpness.
+const PAGE_TEX_W: Record<Quality, number> = {
+  low: 768,
+  medium: 1024,
+  high: 2048,
+  ultra: 3072,
+}
+export function pageTexWidth(q: Quality = readQuality(GL_QUALITY_KEY, 'medium')): number {
+  return PAGE_TEX_W[q]
+}
 
 // Content pass: strokes + raster ops interleaved by `after`, then the paper
 // gradient underlaid via destination-over (eraser holes show paper, not
@@ -133,13 +149,22 @@ interface BaseEntry {
 // fan edge-shading then cost a drawImage + a few gradients per variant.
 const baseCache = new Map<string, BaseEntry>()
 const BASE_MAX = 40
+// …and a total-pixel budget on top: raster width follows the quality
+// tier, so at 3–6 Mpx per page a pure count cap would let an ultra-tier
+// cache balloon past a gigabyte of canvases.
+const BASE_BUDGET_PX = 60_000_000
 
 const baseKey = (page: Page, width: number) => `${page.id}|${width}`
 
 function evictBases() {
-  while (baseCache.size > BASE_MAX) {
+  let total = 0
+  for (const e of baseCache.values()) total += e.canvas.width * e.canvas.height
+  console.log('evictBases total', total, 'size', baseCache.size)
+  while (baseCache.size > 1 && (baseCache.size > BASE_MAX || total > BASE_BUDGET_PX)) {
     const oldest = baseCache.keys().next().value
     if (oldest === undefined) break
+    const entry = baseCache.get(oldest)!
+    total -= entry.canvas.width * entry.canvas.height
     baseCache.delete(oldest)
     log.debug('base raster evicted', oldest)
   }

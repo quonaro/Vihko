@@ -23,18 +23,6 @@ export function pageSize(page?: { w?: number; h?: number } | null): PageSize {
   }
 }
 
-// Named presets offered when a new page is created (page units; spread = the
-// canonical two-page landscape sheet).
-export const PAGE_SIZE_PRESETS = [
-  { id: 'spread', w: PAGE_W, h: PAGE_H },
-  { id: 'portrait', w: PAGE_W / 2, h: PAGE_H },
-  { id: 'square', w: PAGE_H, h: PAGE_H },
-] as const
-export type PageSizeId = (typeof PAGE_SIZE_PRESETS)[number]['id']
-export function pageSizePreset(id: string): PageSize {
-  return PAGE_SIZE_PRESETS.find((p) => p.id === id) ?? PAGE_SIZE_PRESETS[0]
-}
-
 // The editor's working rect in page units. A landscape sheet under the
 // 'left'/'right' spread focus crops to that half; anything else gets the
 // whole sheet. Strokes keep full page coordinates — the rect only bounds
