@@ -17,7 +17,14 @@ import type {
 import { i18n } from './i18n'
 import { PAGE_W, PAGE_H, pageSizePreset } from './pageSpace'
 import type { PageSizeId } from './pageSpace'
-import { loadOrCreateNativeJournals, saveJournalSnapshot, usesNativeSqlite } from './persistence'
+import {
+  assembleJournals,
+  loadOrCreateNativeJournals,
+  saveJournalEntries,
+  usesNativeSqlite,
+  type JournalIndex,
+  type JournalSaveBatch,
+} from './persistence'
 
 const t = (key: string, named?: Record<string, unknown>) => i18n.global.t(key, named ?? {})
 
@@ -51,6 +58,113 @@ interface StoreState {
 
 const STORAGE_KEY = 'vihko:v1'
 const SPACE_KEY = 'vihko:page-space'
+
+// --- persistence -------------------------------------------------------------
+// Dirty-tracking saves. Storage v2 keeps an index row plus one `journal:<id>`
+// row (meta + page stubs) and one `page:<id>` row per page, so a stroke edit
+// serializes and writes a single page instead of the whole journal tree. This
+// block must initialize before `store`: load() reaches markPageDirty through
+// migrateToPageSpace -> touchPage during module init.
+const dirtyPages = new Set<string>()
+const dirtyJournals = new Set<string>()
+const removedPages = new Set<string>()
+const removedJournals = new Set<string>()
+let orderDirty = false
+let storageV2Ready = false // every live page already has a stored row
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+let persistenceReady = !usesNativeSqlite()
+let saveQueue = Promise.resolve()
+
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(flushSave, 400)
+}
+
+function markPageDirty(id: string) {
+  dirtyPages.add(id)
+  scheduleSave()
+}
+
+function markJournalDirty(id: string) {
+  dirtyJournals.add(id)
+  scheduleSave()
+}
+
+function markOrderDirty() {
+  orderDirty = true
+  scheduleSave()
+}
+
+// A journal row keeps only page stubs; contents live in `page:<id>` rows.
+function journalRow(j: Journal) {
+  return {
+    ...j,
+    pages: j.pages.map((p) => ({ id: p.id, w: p.w, h: p.h, createdAt: p.createdAt })),
+  }
+}
+
+function flushSave() {
+  saveTimer = null
+  if (!persistenceReady) return
+  const rawJournals = store.journals.map((j) => toRaw(j))
+  const byId = new Map(rawJournals.map((j) => [j.id, j]))
+  const batch: JournalSaveBatch = {
+    journals: [],
+    pages: [],
+    deleteJournals: [...removedJournals],
+    deletePages: [...removedPages],
+  }
+  const queued = new Set<string>()
+  const queuePage = (p: Page) => {
+    if (queued.has(p.id)) return
+    queued.add(p.id)
+    batch.pages.push({ id: p.id, json: JSON.stringify(p) })
+  }
+  const queueJournal = (j: Journal) => {
+    batch.journals.push({ id: j.id, json: JSON.stringify(journalRow(j)) })
+    // Page stubs must never point at a missing row: a dirty journal rewrites
+    // all of its page rows together with the meta.
+    for (const p of j.pages) queuePage(p)
+  }
+  if (!storageV2Ready) {
+    // First save after a legacy/seed load: write every row once so the index
+    // never references pages that were never persisted.
+    batch.order = rawJournals.map((j) => j.id)
+    for (const j of rawJournals) queueJournal(j)
+    storageV2Ready = true
+  } else {
+    if (orderDirty) batch.order = rawJournals.map((j) => j.id)
+    for (const id of dirtyJournals) {
+      const j = byId.get(id)
+      if (j) queueJournal(j)
+    }
+    for (const id of dirtyPages) {
+      for (const j of rawJournals) {
+        const p = j.pages.find((x) => x.id === id)
+        if (p) {
+          queuePage(p)
+          break
+        }
+      }
+    }
+  }
+  dirtyPages.clear()
+  dirtyJournals.clear()
+  removedPages.clear()
+  removedJournals.clear()
+  orderDirty = false
+  if (
+    !batch.order &&
+    !batch.journals.length &&
+    !batch.pages.length &&
+    !batch.deleteJournals.length &&
+    !batch.deletePages.length
+  )
+    return
+  saveQueue = saveQueue
+    .then(() => saveJournalEntries(batch))
+    .catch((error: unknown) => console.error('Could not save journals', error))
+}
 const LEGACY_KEYS: [string, string][] = [
   ['paper-port:v1', STORAGE_KEY],
   ['paper-port:page-space', SPACE_KEY],
@@ -109,6 +223,7 @@ export function pageRev(p: Page): number {
 function touchPage(p: Page) {
   const raw = toRaw(p)
   pageRevs.set(raw, pageRev(raw) + 1)
+  markPageDirty(p.id)
 }
 
 function newPage(size?: { w: number; h: number }): Page {
@@ -156,12 +271,12 @@ function load(): Journal[] {
     }
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw) as Journal[]
+      const parsed = JSON.parse(raw) as Journal[] | JournalIndex
       if (Array.isArray(parsed) && parsed.length) {
         if (localStorage.getItem(SPACE_KEY) !== '1' && typeof window !== 'undefined') {
           migrateToPageSpace(parsed, window.innerWidth, window.innerHeight)
           try {
-            // Persist migrated coords + flag together: the debounced watcher
+            // Persist migrated coords + flag together: the debounced save
             // might not flush before a reload, leaving stale data otherwise.
             localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed))
             localStorage.setItem(SPACE_KEY, '1')
@@ -170,6 +285,16 @@ function load(): Journal[] {
           }
         }
         return parsed
+      }
+      // v2 row layout: an index + per-journal/page keys. Missing or broken
+      // rows degrade inside assembleJournals (empty page / skipped journal).
+      if (!Array.isArray(parsed) && (parsed as JournalIndex)?.v === 2) {
+        const journals = assembleJournals(parsed as JournalIndex, (key) => {
+          const v = localStorage.getItem(`${STORAGE_KEY}:${key}`)
+          return v ?? undefined
+        })
+        storageV2Ready = true
+        return journals
       }
     }
   } catch {
@@ -420,6 +545,8 @@ export function addJournal() {
     Math.floor(Math.random() * covers.length),
   )
   store.journals.push(j)
+  markJournalDirty(j.id)
+  markOrderDirty()
   return j
 }
 
@@ -428,6 +555,7 @@ export function addPage() {
   if (!j) return null
   const p = newPage(pageSizePreset(store.pageSize))
   j.pages.push(p)
+  markJournalDirty(j.id)
   return p
 }
 
@@ -435,18 +563,32 @@ export function deletePage(id: string) {
   const j = currentJournal()
   if (!j) return
   const i = j.pages.findIndex((p) => p.id === id)
-  if (i >= 0) j.pages.splice(i, 1)
-  if (!j.pages.length) j.pages.push(newPage())
+  if (i >= 0) {
+    j.pages.splice(i, 1)
+    removedPages.add(id)
+    markJournalDirty(j.id)
+  }
+  if (!j.pages.length) {
+    j.pages.push(newPage())
+    markJournalDirty(j.id)
+  }
 }
 
 export function deleteJournal(id: string) {
   const i = store.journals.findIndex((j) => j.id === id)
-  if (i >= 0) store.journals.splice(i, 1)
+  if (i < 0) return
+  const [j] = store.journals.splice(i, 1)
+  removedJournals.add(id)
+  for (const p of j.pages) removedPages.add(p.id)
+  markOrderDirty()
 }
 
 export function renameJournal(id: string, title: string) {
   const j = store.journals.find((x) => x.id === id)
-  if (j && title.trim()) j.title = title.trim()
+  if (j && title.trim()) {
+    j.title = title.trim()
+    markJournalDirty(id)
+  }
 }
 
 export function setCoverImage(id: string, src: string | null) {
@@ -454,11 +596,14 @@ export function setCoverImage(id: string, src: string | null) {
   if (!j) return
   if (src) j.coverImg = src
   else delete j.coverImg
+  markJournalDirty(id)
 }
 
 export function setCoverTexture(id: string, texture: CoverTexture) {
   const j = store.journals.find((x) => x.id === id)
-  if (j) j.coverTexture = texture
+  if (!j) return
+  j.coverTexture = texture
+  markJournalDirty(id)
 }
 
 export function journalToJson(id: string): string | null {
@@ -480,6 +625,7 @@ export function navPage(dir: 1 | -1): Page | null {
 const MAX_UNDO = 40
 
 export function ensurePageLayers(p: Page): Layer[] {
+  let changed = false
   if (!p.layers?.length) {
     const id = uid()
     p.layers = [
@@ -495,12 +641,26 @@ export function ensurePageLayers(p: Page): Layer[] {
       },
     ]
     p.activeLayerId = id
+    changed = true
   }
   const first = p.layers[0]
-  for (const stroke of p.strokes) stroke.layerId ??= first.id
-  for (const op of p.ops ?? []) op.layerId ??= first.id
-  if (!p.layers.some((layer) => layer.id === p.activeLayerId))
+  for (const stroke of p.strokes) {
+    if (stroke.layerId === undefined) {
+      stroke.layerId = first.id
+      changed = true
+    }
+  }
+  for (const op of p.ops ?? []) {
+    if (op.layerId === undefined) {
+      op.layerId = first.id
+      changed = true
+    }
+  }
+  if (!p.layers.some((layer) => layer.id === p.activeLayerId)) {
     p.activeLayerId = p.layers[p.layers.length - 1].id
+    changed = true
+  }
+  if (changed) markPageDirty(p.id)
   return p.layers
 }
 
@@ -538,7 +698,10 @@ export function addLayer(): Layer | null {
 export function selectLayer(id: string) {
   const p = currentPage()
   if (!p || !ensurePageLayers(p).some((layer) => layer.id === id)) return
-  p.activeLayerId = id
+  if (p.activeLayerId !== id) {
+    p.activeLayerId = id
+    markPageDirty(p.id)
+  }
 }
 
 export function updateLayer(id: string, changes: Partial<Omit<Layer, 'id'>>) {
@@ -660,28 +823,33 @@ export function clearPage() {
 // Actions popped by undo, kept for redo (global stack is fine for a single user).
 export const undone = reactive<Action[]>([])
 
-let saveTimer: ReturnType<typeof setTimeout> | null = null
-let persistenceReady = !usesNativeSqlite()
-let saveQueue = Promise.resolve()
-
 export async function initializeStorePersistence(): Promise<void> {
   if (!usesNativeSqlite()) return
   const journals = await loadOrCreateNativeJournals(store.journals)
   store.journals.splice(0, store.journals.length, ...journals)
   persistenceReady = true
+  storageV2Ready = true // init already seeded/migrated every row
 }
 
+// Structural safety net: array-level mutations not routed through the
+// helpers (the init splice above, tests) still flush the index and journal
+// rows. Content edits reach the save queue via touchPage -> markPageDirty —
+// no deep traversal of the whole corpus on every stroke.
 watch(
-  () => store.journals,
-  () => {
-    if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => {
-      if (!persistenceReady) return
-      const snapshot = JSON.stringify(store.journals)
-      saveQueue = saveQueue
-        .then(() => saveJournalSnapshot(snapshot))
-        .catch((error: unknown) => console.error('Could not save journals', error))
-    }, 400)
+  () => store.journals.map((j) => j.id).join('|'),
+  () => markOrderDirty(),
+)
+watch(
+  () => store.journals.map((j) => `${j.id}:${j.pages.map((p) => p.id).join(',')}`).join('|'),
+  (val, old) => {
+    const before = new Set((old ?? '').split('|'))
+    const liveIds = new Set(val.split('|').map((part) => part.slice(0, part.indexOf(':'))))
+    for (const part of val.split('|'))
+      if (!before.has(part)) dirtyJournals.add(part.slice(0, part.indexOf(':')))
+    for (const part of before) {
+      const id = part.slice(0, part.indexOf(':'))
+      if (!liveIds.has(id)) removedJournals.add(id)
+    }
+    scheduleSave()
   },
-  { deep: true },
 )

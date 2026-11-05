@@ -204,11 +204,17 @@ screens.
   for DOM overlays). Lazy-imported by JournalView/ShelfView — three.js
   ships as a separate chunk; these views require WebGL and display an
   unavailable message rather than switching to a 2D rendering mode.
-- `src/store.ts` — journals/pages/strokes model, undo/redo, and persistence:
-  native Android/iOS use SQLite (with one-time migration from the prior
-  localStorage save; `src/persistence.ts` enables WAL and checkpoints +
-  VACUUMs on open to reclaim space from overwritten journal blobs);
-  browser development continues to use localStorage.
+- `src/store.ts` — journals/pages/strokes model, undo/redo, and persistence.
+  Saves are dirty-tracked (content edits mark the page via `touchPage`,
+  journal meta/structure via `markJournalDirty`/`markOrderDirty`, plus
+  shallow structural watchers as a safety net — no deep traversal) and
+  debounced 400 ms. Storage v2 (`src/persistence.ts`) writes per-row: an
+  index `{v:2, order}` + `journal:<id>` (meta + page stubs) + `page:<id>`
+  rows, so a stroke edit serializes a single page; v1 whole-blob saves are
+  split into rows on load. Native Android/iOS store the rows in SQLite
+  (`app_state` KV table, WAL + checkpoint/VACUUM on open, one-time migration
+  from the prior localStorage save); browser development uses the same row
+  layout under `vihko:v1[:journal:<id>|:page:<id>]` localStorage keys.
 - `src/covers.ts` — generated, local cover-art presets for the cover picker.
 - `src/router.ts` — tiny history-API router: two-way sync between the URL and
   `store.view`/`journalId`/`pageId`/`journalMode` (`/` shelf,

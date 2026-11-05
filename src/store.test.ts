@@ -316,16 +316,40 @@ describe('layers', () => {
 })
 
 describe('persistence', () => {
-  it('saves journals to localStorage (debounced)', async () => {
+  it('saves journals to localStorage as per-row entries (debounced)', async () => {
     vi.useFakeTimers()
     try {
-      addJournal()
-      await nextTick() // let the deep watcher run and arm the 400ms save timer
+      const j = addJournal()
+      await nextTick()
       await vi.advanceTimersByTimeAsync(500)
-      const raw = localStorage.getItem('vihko:v1')
-      expect(raw).toBeTruthy()
-      const saved = JSON.parse(raw!) as Journal[]
-      expect(saved.map((j) => j.id)).toEqual(store.journals.map((j) => j.id))
+      const index = JSON.parse(localStorage.getItem('vihko:v1')!)
+      expect(index).toEqual({ v: 2, order: store.journals.map((x) => x.id) })
+      const meta = JSON.parse(localStorage.getItem(`vihko:v1:journal:${j.id}`)!)
+      expect(meta.id).toBe(j.id)
+      expect(meta.pages).toEqual([{ id: j.pages[0].id, createdAt: j.pages[0].createdAt }])
+      const page = JSON.parse(localStorage.getItem(`vihko:v1:page:${j.pages[0].id}`)!)
+      expect(page.strokes).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('saves only the edited page on a stroke commit', async () => {
+    vi.useFakeTimers()
+    try {
+      await nextTick() // structural watchers from the beforeEach splice fire
+      renameJournal('j1', 'drain') // arm a save that flushes all dirty sets
+      await vi.advanceTimersByTimeAsync(500)
+      const written: string[] = []
+      const orig = localStorage.setItem.bind(localStorage)
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation((k, v) => {
+        written.push(k)
+        orig(k, v)
+      })
+      pushStroke(stroke(1))
+      await vi.advanceTimersByTimeAsync(500)
+      vi.restoreAllMocks()
+      expect(written).toEqual([`vihko:v1:page:${store.pageId}`])
     } finally {
       vi.useRealTimers()
     }
@@ -336,6 +360,25 @@ describe('persistence', () => {
     vi.resetModules()
     const { store: fresh } = await import('./store')
     expect(fresh.journals.map((j) => j.id)).toEqual(['saved'])
+  })
+
+  it('loads journals from v2 row storage', async () => {
+    const j = makeJournal('saved', ['s1', 's2'])
+    j.pages[0].strokes.push(stroke(7))
+    localStorage.setItem('vihko:v1', JSON.stringify({ v: 2, order: ['saved'] }))
+    localStorage.setItem(
+      'vihko:v1:journal:saved',
+      JSON.stringify({
+        ...j,
+        pages: j.pages.map((p) => ({ id: p.id, createdAt: p.createdAt })),
+      }),
+    )
+    for (const p of j.pages) localStorage.setItem(`vihko:v1:page:${p.id}`, JSON.stringify(p))
+    vi.resetModules()
+    const { store: fresh } = await import('./store')
+    expect(fresh.journals.map((x) => x.id)).toEqual(['saved'])
+    expect(fresh.journals[0].pages.map((p) => p.id)).toEqual(['s1', 's2'])
+    expect(fresh.journals[0].pages[0].strokes[0].pts[0].x).toBe(7)
   })
 
   it('reseeds on corrupted or empty storage', async () => {
