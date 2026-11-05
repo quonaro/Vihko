@@ -16,10 +16,23 @@ const line = (x0: number, x1: number): Page['strokes'][number] => ({
 it('dbg eviction', () => {
   const realGetContext = HTMLCanvasElement.prototype.getContext
   HTMLCanvasElement.prototype.getContext = (() => ({
-    fillStyle: '#000', globalAlpha: 1, globalCompositeOperation: 'source-over',
-    save() {}, restore() {}, setTransform() {}, clearRect() {}, drawImage() {},
-    fillRect() {}, beginPath() {}, closePath() {}, rect() {}, clip() {},
-    moveTo() {}, lineTo() {}, arc() {}, fill() {},
+    fillStyle: '#000',
+    globalAlpha: 1,
+    globalCompositeOperation: 'source-over',
+    save() {},
+    restore() {},
+    setTransform() {},
+    clearRect() {},
+    drawImage() {},
+    fillRect() {},
+    beginPath() {},
+    closePath() {},
+    rect() {},
+    clip() {},
+    moveTo() {},
+    lineTo() {},
+    arc() {},
+    fill() {},
     createLinearGradient: () => ({ addColorStop() {} }),
     createRadialGradient: () => ({ addColorStop() {} }),
   })) as unknown as typeof HTMLCanvasElement.prototype.getContext
@@ -27,8 +40,14 @@ it('dbg eviction', () => {
     const eng = jsEngine()
     let n = 0
     const spy: InkEngine = {
-      begin: (tool: string, size?: number, stab?: number) => { n++; return eng.begin(tool, size, stab) },
-      addPoint: eng.addPoint, predict: eng.predict, end: eng.end, tail: eng.tail,
+      begin: (tool: string, size?: number, stab?: number) => {
+        n++
+        return eng.begin(tool, size, stab)
+      },
+      addPoint: eng.addPoint,
+      predict: eng.predict,
+      end: eng.end,
+      tail: eng.tail,
     } as InkEngine
     const mk = (id: string): Page => ({ id, strokes: [line(0, 200)], createdAt: 0 })
     const pages = Array.from({ length: 14 }, (_, i) => mk(`evict-${i}`))
