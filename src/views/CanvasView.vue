@@ -67,11 +67,6 @@ const {
       <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     </button>
 
-    <div class="page-badge" v-if="journal">
-      {{ journal.title }} — {{ pageIndex + 1 }}/{{ journal.pages.length
-      }}{{ store.spreadMode === 'full' ? '' : ` · ${t(`canvas.side.${store.spreadMode}`)}` }}
-    </div>
-
     <div class="top-actions">
       <button class="round-btn" :disabled="!undoOk" @click="undoStroke() && reRender()" :title="t('canvas.undo')">
         <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
@@ -186,13 +181,4 @@ canvas.grab { cursor: grab; }
 }
 .round-btn:disabled { opacity: 0.35; cursor: default; }
 .round-btn.selected { color: #6dbbcf; background: rgba(40, 40, 42, .95); }
-.page-badge {
-  position: absolute;
-  top: 26px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: rgba(60, 55, 45, 0.55);
-  font-size: 13px;
-  pointer-events: none;
-}
 </style>

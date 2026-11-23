@@ -165,13 +165,6 @@ beforeEach(() => {
 })
 
 describe('CanvasView', () => {
-  it('shows the journal title and page index', async () => {
-    const w = await mountCanvas()
-    expect(w.find('.page-badge').text()).toContain('Field Notes')
-    expect(w.find('.page-badge').text()).toContain('1/2')
-    w.unmount()
-  })
-
   it('close button leaves the canvas view', async () => {
     const w = await mountCanvas()
     await w.find('.close-btn').trigger('click')
@@ -364,6 +357,13 @@ describe('CanvasView', () => {
         timeStamp: 32,
       }),
     )
+    const strokes = currentPage()!.strokes
+    expect(strokes).toHaveLength(2)
+    for (const stroke of strokes)
+      for (const pt of stroke.pts) expect(pt.x).toBeLessThanOrEqual(PAGE_W / 2 + 0.01)
+    w.unmount()
+  })
+
   it('hides the centre marker while a stroke is live instead of thickening it', async () => {
     const backend = mockCanvasBackend()
     try {
@@ -404,13 +404,6 @@ describe('CanvasView', () => {
     } finally {
       backend.restore()
     }
-  })
-
-    const strokes = currentPage()!.strokes
-    expect(strokes).toHaveLength(2)
-    for (const stroke of strokes)
-      for (const pt of stroke.pts) expect(pt.x).toBeLessThanOrEqual(PAGE_W / 2 + 0.01)
-    w.unmount()
   })
 
   it('keeps a stroke started outside the focused half from ever painting', async () => {
