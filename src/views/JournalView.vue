@@ -9,6 +9,7 @@ import EmptyState from '../components/EmptyState.vue'
 import PagePreview from '../components/PagePreview.vue'
 import { renderMode } from '../renderMode'
 import { logger } from '../log'
+import { useLongPress } from '../longPress'
 
 const log = logger('journal')
 import type { JournalScene } from '../three/journalScene'
@@ -34,8 +35,20 @@ const glCanvas = ref<HTMLCanvasElement>()
 const glOk = ref(false)
 const glFailed = ref(false)
 const currentPage = computed(() => journal.value?.pages[pageIdx.value] ?? null)
+const lastPage = computed(() => (journal.value?.pages.length ?? 0) <= 1)
+const press = useLongPress(
+  (id) => {
+    pageMenuTarget.value = id
+  },
+  { enabled: () => !lastPage.value },
+)
 let scene: JournalScene | null = null
 let sceneRequest = 0
+
+function openFlatPage(id: string) {
+  if (press.consumeClick()) return
+  openPage(id)
+}
 
 function requestDeletePage(id: string) {
   pageMenuTarget.value = null
@@ -75,7 +88,7 @@ async function startScene() {
     scene = new JournalScene(canvas, ink, {
       onPageClick: (id) => openPage(id),
       onLongPressPage: (id) => {
-        if ((journal.value?.pages.length ?? 0) > 1) pageMenuTarget.value = id
+        if (!lastPage.value) pageMenuTarget.value = id
       },
       onFlipDone: (dir) => {
         pageIdx.value = Math.max(0, pageIdx.value + dir)
@@ -128,6 +141,9 @@ watch(
 watch(pageIdx, (v) => {
   if (scene && !scene.busy) scene.setPage(v)
 })
+watch(lastPage, (v) => {
+  if (v) pageMenuTarget.value = null
+})
 </script>
 
 <template>
@@ -174,41 +190,15 @@ watch(pageIdx, (v) => {
       <template v-else>
         <div v-if="mode === 'stack' && currentPage" class="flat-page-wrap">
           <div class="flat-frame">
-            <button class="flat-page" @click="openPage(currentPage.id)" :aria-label="t('journal.openPage')" :title="t('journal.openPage')">
+            <button class="flat-page" @click="openFlatPage(currentPage.id)" @pointerdown="press.press(currentPage.id, $event)" @pointermove="press.move" @pointerup="press.cancel" @pointercancel="press.cancel" @pointerleave="press.cancel" :aria-label="t('journal.openPage')" :title="t('journal.openPage')">
               <PagePreview :key="currentPage.id" :page="currentPage" :width="1400" />
-            </button>
-            <button
-              v-if="journal.pages.length > 1"
-              class="flat-menu"
-              @click.stop="pageMenuTarget = currentPage.id"
-              :aria-label="t('journal.pageActions')"
-              :title="t('journal.pageActions')"
-            >
-              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                <circle cx="6" cy="12" r="1.6" fill="currentColor" />
-                <circle cx="12" cy="12" r="1.6" fill="currentColor" />
-                <circle cx="18" cy="12" r="1.6" fill="currentColor" />
-              </svg>
             </button>
           </div>
         </div>
         <div v-else-if="mode === 'overview'" class="flat-grid">
           <div v-for="(p, i) in journal.pages" :key="p.id" class="flat-thumb" :class="{ on: i === pageIdx }">
-            <button class="flat-thumb-open" @click="openPage(p.id)" :aria-label="t('journal.openPage')" :title="t('journal.openPage')">
+            <button class="flat-thumb-open" @click="openFlatPage(p.id)" @pointerdown="press.press(p.id, $event)" @pointermove="press.move" @pointerup="press.cancel" @pointercancel="press.cancel" @pointerleave="press.cancel" :aria-label="t('journal.openPage')" :title="t('journal.openPage')">
               <PagePreview :page="p" :width="520" />
-            </button>
-            <button
-              v-if="journal.pages.length > 1"
-              class="flat-menu"
-              @click.stop="pageMenuTarget = p.id"
-              :aria-label="t('journal.pageActions')"
-              :title="t('journal.pageActions')"
-            >
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                <circle cx="6" cy="12" r="1.6" fill="currentColor" />
-                <circle cx="12" cy="12" r="1.6" fill="currentColor" />
-                <circle cx="18" cy="12" r="1.6" fill="currentColor" />
-              </svg>
             </button>
             <span class="flat-thumb-num">{{ i + 1 }}</span>
           </div>
@@ -248,11 +238,12 @@ watch(pageIdx, (v) => {
     >
       <div class="page-actions">
         <button
+          v-if="!lastPage"
           class="page-action danger"
           @click="pageMenuTarget && requestDeletePage(pageMenuTarget)"
         >
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 6.5h15M9.2 6.5l.5-2h4.6l.5 2M6.5 6.5l.9 13h9.2l.9-13M10 10v6m4-6v6" /></svg>
-          {{ t('shelf.delete') }}
+          {{ t('journal.deletePage') }}
         </button>
       </div>
     </MobileSlider>
@@ -343,18 +334,33 @@ h1 {
   height: 100%;
   touch-action: none;
 }
-.stage-flat { padding: 0; }
+/* The flat sheet is centred inside this padded box, so the flip arrows follow
+   the sheet centre instead of the raw stage middle — otherwise asymmetric
+   paddings (room for the header on top, the tray below) leave them floating
+   above the page. */
+.stage-flat {
+  padding: 0;
+  --flat-pad-top: calc(94px + var(--safe-top));
+  --flat-pad-bottom: calc(96px + var(--safe-bottom));
+}
+.stage-flat .flip {
+  top: calc(50% + (var(--flat-pad-top) - var(--flat-pad-bottom)) * 0.5);
+}
 .flat-page-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
   height: 100%;
-  padding: 94px 26px 96px;
+  padding: var(--flat-pad-top) 26px var(--flat-pad-bottom);
 }
 .flat-frame {
   position: relative;
-  width: min(100%, calc((100vh - 196px) * 1.579), 1080px);
+  width: min(
+    100%,
+    calc((100vh - var(--flat-pad-top) - var(--flat-pad-bottom)) * 1.579),
+    1080px
+  );
 }
 .flat-page {
   display: block;
@@ -365,36 +371,25 @@ h1 {
   background: #fffefa;
   box-shadow: 0 24px 60px rgba(32,33,31,.24), 0 4px 10px rgba(32,33,31,.14);
 }
-.flat-menu {
-  position: absolute;
-  top: -12px;
-  right: -8px;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(27,28,25,.78);
-  color: #fff;
-  box-shadow: 0 6px 16px rgba(32,33,31,.24);
-}
 .flat-grid {
   width: 100%;
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  justify-items: center;
   align-content: start;
-  gap: 24px 20px;
-  padding: 108px 26px 100px;
+  gap: 20px 18px;
+  padding: calc(132px + var(--safe-top)) 26px calc(100px + var(--safe-bottom));
 }
 .flat-thumb {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
+  width: 100%;
+  max-width: 132px;
   min-width: 0;
 }
 .flat-thumb-open {
@@ -409,12 +404,6 @@ h1 {
 .flat-thumb.on .flat-thumb-open {
   outline: 2px solid #2a8097;
   outline-offset: 2px;
-}
-.flat-thumb .flat-menu {
-  top: -8px;
-  right: -8px;
-  width: 28px;
-  height: 28px;
 }
 .flat-thumb-num {
   margin-top: 8px;
@@ -540,23 +529,31 @@ footer {
 @media (max-width: 600px) {
   .back { left: 10px; top: calc(10px + var(--safe-top)); min-height: 44px; padding: 0 8px; }
   .icon-btn { width: 44px; height: 44px; }
-  header { padding-top: 54px; }
+  header { padding-top: calc(54px + var(--safe-top)); }
   h1 { font-size: clamp(20px, 6vw, 25px); }
+  /* Keep the mode switch in the top chrome row with the back button — below
+     the title it hovered over the first row of pages and pushed the grid down. */
   .view-modes {
-    left: 50%;
-    top: calc(112px + var(--safe-top));
-    transform: translateX(-50%);
+    left: auto;
+    right: 8px;
+    top: calc(10px + var(--safe-top));
+    transform: none;
+  }
+  .stage-flat {
+    --flat-pad-top: calc(104px + var(--safe-top));
+    --flat-pad-bottom: calc(92px + var(--safe-bottom));
   }
   .flip { width: 48px; height: 48px; }
   .flip.prev { left: 8px; }
   .flip.next { right: 8px; }
-  .flat-page-wrap { padding: 166px 16px 92px; }
+  .flat-page-wrap { padding: var(--flat-pad-top) 16px var(--flat-pad-bottom); }
   .flat-frame { width: 100%; }
   .flat-grid {
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 20px 14px;
-    padding: 166px 16px 92px;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 18px 12px;
+    padding: calc(104px + var(--safe-top)) 16px calc(92px + var(--safe-bottom));
   }
+  .flat-thumb { max-width: 118px; }
   footer {
     gap: 14px;
     padding: 12px 0 max(24px, var(--safe-bottom));

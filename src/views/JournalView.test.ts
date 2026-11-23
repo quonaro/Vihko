@@ -68,6 +68,13 @@ vi.mock('../three/journalScene', () => ({
 
 const mountJournal = () => mount(JournalView, { global: { plugins: [i18n] } })
 
+function pointer(type: string, clientX: number, clientY: number) {
+  const e = new MouseEvent(type, { bubbles: true, cancelable: true })
+  Object.defineProperty(e, 'clientX', { value: clientX })
+  Object.defineProperty(e, 'clientY', { value: clientY })
+  return e
+}
+
 const journal = (): Journal => ({
   id: 'j1',
   title: 'Field Notes',
@@ -267,19 +274,50 @@ describe('JournalView', () => {
       w.unmount()
     })
 
-    it('opens the page action sheet from the flat page menu', async () => {
+    it('opens the page action sheet from a long press on the flat page', async () => {
+      vi.useFakeTimers()
       setRenderMode('2d')
       const w = mount(JournalView, {
         attachTo: document.body,
         global: { plugins: [i18n] },
       })
       await flushPromises()
-      await w.find('.flat-menu').trigger('click')
+      const page = w.find('.flat-page').element
+      page.dispatchEvent(pointer('pointerdown', 10, 10))
+      vi.advanceTimersByTime(560)
       await w.vm.$nextTick()
 
       expect(document.body.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe(
         'Page actions',
       )
+      // The click that follows the hold must not open the editor.
+      page.dispatchEvent(pointer('click', 10, 10))
+      await w.vm.$nextTick()
+      expect(store.view).toBe('journal')
+      vi.useRealTimers()
+      w.unmount()
+    })
+
+    it('opens the page action sheet from a long press on an overview thumb', async () => {
+      vi.useFakeTimers()
+      setRenderMode('2d')
+      const w = mount(JournalView, {
+        attachTo: document.body,
+        global: { plugins: [i18n] },
+      })
+      await flushPromises()
+      await w.findAll('.view-modes .icon-btn')[1].trigger('click')
+      w.findAll('.flat-thumb-open')[1].element.dispatchEvent(pointer('pointerdown', 10, 10))
+      vi.advanceTimersByTime(560)
+      await w.vm.$nextTick()
+
+      expect(document.body.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe(
+        'Page actions',
+      )
+      document.body.querySelector<HTMLButtonElement>('.page-action')!.click()
+      await w.vm.$nextTick()
+      expect(document.body.textContent).toContain('This page will be permanently deleted.')
+      vi.useRealTimers()
       w.unmount()
     })
   })
@@ -303,6 +341,7 @@ describe('JournalView', () => {
       expect(actionDialog?.getAttribute('aria-label')).toBe('Page actions')
       expect(document.body.querySelector('.gl-del')).toBeNull()
 
+      expect(document.body.querySelector('.page-action')?.textContent).toContain('Delete page')
       document.body.querySelector<HTMLButtonElement>('.page-action')!.click()
       await w.vm.$nextTick()
       expect(document.body.textContent).toContain('This page will be permanently deleted.')
@@ -320,6 +359,46 @@ describe('JournalView', () => {
       mocks.scenes[0].events.onLongPressPage?.('p1')
       await w.vm.$nextTick()
       expect(document.body.querySelector('[aria-label="Page actions"]')).toBeNull()
+      w.unmount()
+    })
+
+    it('keeps a single-page journal free of page actions', async () => {
+      vi.useFakeTimers()
+      setRenderMode('2d')
+      store.journals[0].pages.splice(1)
+      const w = await mountAttached()
+
+      w.find('.flat-page').element.dispatchEvent(pointer('pointerdown', 10, 10))
+      vi.advanceTimersByTime(560)
+      await w.vm.$nextTick()
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      expect(document.body.querySelector('.page-action')).toBeNull()
+
+      await w.findAll('.view-modes .icon-btn')[1].trigger('click')
+      w.find('.flat-thumb-open').element.dispatchEvent(pointer('pointerdown', 10, 10))
+      vi.advanceTimersByTime(560)
+      await w.vm.$nextTick()
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      vi.useRealTimers()
+      w.unmount()
+    })
+
+    it('closes the sheet and drops the delete action when the last page goes away', async () => {
+      vi.useFakeTimers()
+      setRenderMode('2d')
+      store.journals[0].pages.splice(1, 1) // two pages left: p1, p3
+      const w = await mountAttached()
+      w.find('.flat-page').element.dispatchEvent(pointer('pointerdown', 10, 10))
+      vi.advanceTimersByTime(560)
+      await w.vm.$nextTick()
+      expect(document.body.querySelector('.page-action')).not.toBeNull()
+
+      store.journals[0].pages.splice(1) // back to a single page
+      await w.vm.$nextTick()
+
+      expect(document.body.querySelector('.page-action')).toBeNull()
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+      vi.useRealTimers()
       w.unmount()
     })
   })

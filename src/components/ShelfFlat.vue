@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { covers } from '../store'
 import { centeredRect, morphTo } from '../anim'
+import { useLongPress } from '../longPress'
 import type { Journal } from '../types'
 
 // Flat shelf used by the 2D graphics mode: a responsive grid of DOM book
@@ -9,46 +10,17 @@ defineProps<{ journals: Journal[] }>()
 const emit = defineEmits<{ open: [id: string]; menu: [id: string] }>()
 
 // Long press mirrors the WebGL shelf (550 ms without travel) and opens the
-// journal menu; the click that follows the release is swallowed.
-const HOLD_MS = 550
-const HOLD_SLOP = 10
-let holdTimer: ReturnType<typeof setTimeout> | undefined
-let hold: { id: string; x: number; y: number } | null = null
-let swallowClick = false
-
-function cancelHold() {
-  if (holdTimer !== undefined) clearTimeout(holdTimer)
-  holdTimer = undefined
-  hold = null
-}
-
-function press(id: string, ev: PointerEvent) {
-  cancelHold()
-  swallowClick = false
-  hold = { id, x: ev.clientX, y: ev.clientY }
-  holdTimer = setTimeout(() => {
-    holdTimer = undefined
-    if (!hold) return
-    swallowClick = true
-    emit('menu', hold.id)
-  }, HOLD_MS)
-}
-
-function move(ev: PointerEvent) {
-  if (!hold) return
-  if (Math.hypot(ev.clientX - hold.x, ev.clientY - hold.y) > HOLD_SLOP) cancelHold()
-}
+// journal menu; the click that follows the release is swallowed. There is no
+// visible menu button in the flat shelf.
+const press = useLongPress((id) => emit('menu', id))
 
 function coverColor(j: Journal) {
   return covers[j.cover % covers.length]
 }
 
 function open(id: string, ev: Event) {
-  cancelHold()
-  if (swallowClick) {
-    swallowClick = false
-    return
-  }
+  press.cancel()
+  if (press.consumeClick()) return
   const target = ev.currentTarget as HTMLElement | null
   const cover = target?.querySelector<HTMLElement>('.book-cover')
   if (!cover) {
@@ -66,11 +38,11 @@ function open(id: string, ev: Event) {
       <button
         class="book-card"
         @click="open(j.id, $event)"
-        @pointerdown="press(j.id, $event)"
-        @pointermove="move"
-        @pointerup="cancelHold"
-        @pointercancel="cancelHold"
-        @pointerleave="cancelHold"
+        @pointerdown="press.press(j.id, $event)"
+        @pointermove="press.move"
+        @pointerup="press.cancel"
+        @pointercancel="press.cancel"
+        @pointerleave="press.cancel"
       >
         <span
           class="book-cover"
@@ -84,18 +56,6 @@ function open(id: string, ev: Event) {
           />
           <span class="book-spine" />
         </span>
-      </button>
-      <button
-        class="book-menu"
-        @click.stop="emit('menu', j.id)"
-        :aria-label="$t('shelf.menu')"
-        :title="$t('shelf.menu')"
-      >
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <circle cx="6" cy="12" r="1.6" fill="currentColor" />
-          <circle cx="12" cy="12" r="1.6" fill="currentColor" />
-          <circle cx="18" cy="12" r="1.6" fill="currentColor" />
-        </svg>
       </button>
       <span class="book-title2d">{{ j.title }}</span>
       <span class="pages-count">{{ $t('journal.count', j.pages.length) }}</span>
@@ -178,25 +138,6 @@ function open(id: string, ev: Event) {
   background-size: 7px 7px;
 }
 .book-cover.has-photo::after { display: none; }
-.book-menu {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(27,28,25,.72);
-  color: #fff;
-  opacity: 1;
-}
-@media (hover: hover) {
-  .book-menu { opacity: 0; transition: opacity .15s ease; }
-  .book2d:hover .book-menu,
-  .book-menu:focus-visible { opacity: 1; }
-}
 .book-title2d {
   margin-top: 10px;
   max-width: 100%;

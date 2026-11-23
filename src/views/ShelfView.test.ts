@@ -64,6 +64,13 @@ vi.mock('../three/shelfScene', () => ({
 
 const mountShelf = () => mount(ShelfView, { global: { plugins: [i18n] } })
 
+function pointer(type: string, clientX: number, clientY: number) {
+  const e = new MouseEvent(type, { bubbles: true, cancelable: true })
+  Object.defineProperty(e, 'clientX', { value: clientX })
+  Object.defineProperty(e, 'clientY', { value: clientY })
+  return e
+}
+
 const journal = (id: string, title: string): Journal => ({
   id,
   title,
@@ -264,13 +271,18 @@ describe('ShelfView', () => {
     w.unmount()
   })
 
-  it('opens the journal menu from a 2D book card', async () => {
+  it('opens the journal menu from a long press on a 2D book card', async () => {
+    vi.useFakeTimers()
     setRenderMode('2d')
     const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
     await flushPromises()
-    await w.find('.book-menu').trigger('click')
+    expect(w.find('.book-menu').exists()).toBe(false)
+    w.find('.book-card').element.dispatchEvent(pointer('pointerdown', 10, 10))
+    vi.advanceTimersByTime(560)
+    await nextTick()
     expect(document.body.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('Alpha')
     expect(document.body.querySelectorAll('.journal-action')).toHaveLength(4)
+    vi.useRealTimers()
     w.unmount()
   })
 
