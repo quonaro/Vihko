@@ -85,7 +85,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', closeOutside))
   position: fixed;
   z-index: 100;
   left: 50%;
-  bottom: calc(var(--tray-height, 60px) + 10px);
+  bottom: calc(var(--tray-height, 60px) + var(--safe-bottom) + 10px);
   transform: translateX(-50%);
   display: grid;
   grid-template-columns: repeat(3, minmax(82px, 1fr));

@@ -117,6 +117,13 @@ screens.
   `Filesystem.downloadFile` also ignores `recursive` on Android — parent
   dirs must be `mkdir`'d first (see `src/update.ts`).
 - The wasm engine ships inside `dist/` → copied into native web assets by sync
+- The window runs edge to edge: `MainActivity` disables decor fitting, makes
+  both bars transparent and forwards insets to CSS as `--safe-area-inset-*`
+  (aliased to `--safe-top`/`--safe-bottom` in `style.css`), while
+  `plugins.SystemBars.insetsHandling` stays `disable` so Capacitor doesn't pad
+  the web view. The canvas hides the status bar (`SystemBars.hide`) for a
+  distraction-free editor; the shelf and journal keep it over their chrome, and
+  `theme.ts` switches icon color with the view (`src/systemTheme.ts`).
 
 ## Layout
 

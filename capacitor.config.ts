@@ -11,6 +11,11 @@ const config: CapacitorConfig = {
     contentInset: 'never',
   },
   plugins: {
+    // Insets reach the web layer through MainActivity, which runs edge to edge
+    // and forwards them as CSS variables; the plugin must not pad the web view.
+    SystemBars: {
+      insetsHandling: 'disable',
+    },
     CapacitorSQLite: {
       // Defaults to true, which makes the plugin build an AndroidKeyStore
       // MasterKey + EncryptedSharedPreferences at load() — that throws on

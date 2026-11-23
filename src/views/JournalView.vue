@@ -225,7 +225,7 @@ watch(pageIdx, (v) => {
 }
 .back {
   position: absolute;
-  top: 20px;
+  top: calc(20px + var(--safe-top));
   left: 26px;
   height: 34px;
   display: flex;
@@ -241,7 +241,7 @@ watch(pageIdx, (v) => {
 }
 .view-modes {
   position: absolute;
-  top: 20px;
+  top: calc(20px + var(--safe-top));
   left: 150px;
   display: flex;
   gap: 4px;
@@ -264,7 +264,7 @@ watch(pageIdx, (v) => {
 header {
   position: relative;
   z-index: 10;
-  padding: 31px 0 4px;
+  padding: calc(31px + var(--safe-top)) 0 4px;
   text-align: center;
   pointer-events: none;
 }
@@ -347,7 +347,7 @@ h1 {
 .flip.next { right: 40px; }
 .page-pos {
   position: absolute;
-  bottom: calc(max(30px, env(safe-area-inset-bottom)) + 64px);
+  bottom: calc(max(30px, var(--safe-bottom)) + 64px);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -368,7 +368,7 @@ footer {
   align-items: center;
   justify-content: center;
   gap: 18px;
-  padding: 20px 0 max(30px, env(safe-area-inset-bottom));
+  padding: 20px 0 max(30px, var(--safe-bottom));
 }
 .page-size {
   display: inline-flex;
@@ -405,13 +405,13 @@ footer {
 }
 .round svg { display: block; }
 @media (max-width: 600px) {
-  .back { left: 10px; top: 10px; min-height: 44px; padding: 0 8px; }
+  .back { left: 10px; top: calc(10px + var(--safe-top)); min-height: 44px; padding: 0 8px; }
   .icon-btn { width: 44px; height: 44px; }
   header { padding-top: 54px; }
   h1 { font-size: clamp(20px, 6vw, 25px); }
   .view-modes {
     left: 50%;
-    top: 112px;
+    top: calc(112px + var(--safe-top));
     transform: translateX(-50%);
   }
   .flip { width: 48px; height: 48px; }
@@ -419,7 +419,7 @@ footer {
   .flip.next { right: 8px; }
   footer {
     gap: 14px;
-    padding: 12px 0 max(24px, env(safe-area-inset-bottom));
+    padding: 12px 0 max(24px, var(--safe-bottom));
   }
 }
 </style>

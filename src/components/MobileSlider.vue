@@ -192,7 +192,7 @@ function cancelDrag() {
   background: var(--chrome-bg);
   color: var(--chrome-text);
   border-radius: 18px 18px 0 0;
-  padding: 14px 20px max(20px, env(safe-area-inset-bottom));
+  padding: 14px 20px max(20px, var(--safe-bottom));
   box-shadow: var(--chrome-shadow);
   transition: transform 0.22s ease;
 }

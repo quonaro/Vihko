@@ -1,48 +1,62 @@
-import {
-  Capacitor,
-  registerPlugin,
-  SystemBars,
-  SystemBarsStyle,
-  SystemBarType,
-} from '@capacitor/core'
+import { Capacitor, SystemBars, SystemBarsStyle, SystemBarType } from '@capacitor/core'
 import { logger } from './log'
 
 const log = logger('theme')
 
 type Theme = 'light' | 'dark'
 
-interface ThemeStatusBarPlugin {
-  setBackgroundColor(options: { color: string }): Promise<void>
+/**
+ * What the app draws behind the status bar. Android lays the web view out edge
+ * to edge, so the bar shows the live content: the theme-based app chrome
+ * (shelf, journal) or the always-dark canvas backdrop.
+ */
+export type BarSurface = 'app' | 'canvas'
+
+const themeStyles = {
+  light: SystemBarsStyle.Light,
+  dark: SystemBarsStyle.Dark,
+} satisfies Record<Theme, SystemBarsStyle>
+
+/** Fallback bar colors — the `theme-color` meta tag for browser chrome. */
+const backgroundColors = {
+  light: '#f8f7f3',
+  dark: '#262628',
+} satisfies Record<Theme, string>
+
+export function systemBarStyle(theme: Theme, surface: BarSurface): SystemBarsStyle {
+  return surface === 'canvas' ? SystemBarsStyle.Dark : themeStyles[theme]
 }
 
-const ThemeStatusBar = registerPlugin<ThemeStatusBarPlugin>('ThemeStatusBar')
-
-const systemBarSettings = {
-  light: {
-    style: SystemBarsStyle.Light,
-    backgroundColor: '#f8f7f3',
-  },
-  dark: {
-    style: SystemBarsStyle.Dark,
-    backgroundColor: '#262628',
-  },
-} satisfies Record<Theme, { style: SystemBarsStyle; backgroundColor: string }>
-
-export function getSystemBarSettings(theme: Theme) {
-  return systemBarSettings[theme]
+export function systemBarBackground(theme: Theme): string {
+  return backgroundColors[theme]
 }
 
-export async function syncSystemBarsTheme(theme: Theme) {
+export async function syncSystemBarsTheme(
+  theme: Theme,
+  surface: BarSurface = 'app',
+): Promise<void> {
   if (!Capacitor.isNativePlatform()) return
-  log.debug('syncing system bars', theme)
+  log.debug('syncing system bars', theme, surface)
 
-  const settings = getSystemBarSettings(theme)
-  await SystemBars.setStyle({
-    style: settings.style,
-    bar: SystemBarType.StatusBar,
-  })
+  // The status bar sits over the current surface, the navigation bar over the
+  // theme-colored chrome (e.g. the tool tray), so they can need different ones.
+  await Promise.all([
+    SystemBars.setStyle({
+      style: systemBarStyle(theme, surface),
+      bar: SystemBarType.StatusBar,
+    }),
+    SystemBars.setStyle({
+      style: themeStyles[theme],
+      bar: SystemBarType.NavigationBar,
+    }),
+  ])
+}
 
-  if (Capacitor.getPlatform() === 'android') {
-    await ThemeStatusBar.setBackgroundColor({ color: settings.backgroundColor })
-  }
+/** Hides or shows the status bar, e.g. a distraction-free canvas. */
+export async function setSystemBarHidden(hidden: boolean): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return
+  log.debug('status bar hidden', hidden)
+
+  const bar = SystemBarType.StatusBar
+  await (hidden ? SystemBars.hide({ bar }) : SystemBars.show({ bar }))
 }

@@ -199,13 +199,15 @@ function onPhotoPicked(e: Event) {
 .tray {
   position: absolute;
   left: 0; right: 0; bottom: 0;
-  height: var(--tray-height, 60px);
+  height: calc(var(--tray-height, 60px) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
   background: linear-gradient(180deg, color-mix(in srgb, var(--chrome-bg) 90%, white 10%), var(--chrome-bg));
   border-top: 1px solid var(--chrome-border);
   display: flex;
   align-items: center;
   gap: 18px;
-  padding: 0 18px;
+  padding-left: 18px;
+  padding-right: 18px;
   z-index: 30;
   animation: tray-up 0.32s cubic-bezier(0.2, 0.85, 0.3, 1) 0.08s backwards;
   overflow-x: auto;

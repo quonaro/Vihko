@@ -112,7 +112,7 @@ const {
 }
 .viewport {
   position: absolute;
-  inset: 0 0 var(--tray-height) 0;
+  inset: 0 0 calc(var(--tray-height) + var(--safe-bottom)) 0;
   overflow: hidden;
 }
 canvas {
@@ -150,7 +150,7 @@ canvas.grab { cursor: grab; }
 }
 .close-btn {
   position: absolute;
-  top: 16px;
+  top: calc(16px + var(--safe-top));
   left: 18px;
   width: 40px;
   height: 40px;
@@ -166,7 +166,7 @@ canvas.grab { cursor: grab; }
 }
 .top-actions {
   position: absolute;
-  top: 16px;
+  top: calc(16px + var(--safe-top));
   right: 18px;
   display: flex;
   gap: 10px;

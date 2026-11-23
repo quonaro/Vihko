@@ -3,8 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const native = vi.hoisted(() => ({
   getPlatform: vi.fn(() => 'android'),
   isNativePlatform: vi.fn(() => true),
-  setBackgroundColor: vi.fn(async () => {}),
   setStyle: vi.fn(async () => {}),
+  hide: vi.fn(async () => {}),
+  show: vi.fn(async () => {}),
 }))
 
 vi.mock('@capacitor/core', () => ({
@@ -12,14 +13,22 @@ vi.mock('@capacitor/core', () => ({
     getPlatform: native.getPlatform,
     isNativePlatform: native.isNativePlatform,
   },
-  registerPlugin: () => ({ setBackgroundColor: native.setBackgroundColor }),
-  SystemBars: { setStyle: native.setStyle },
+  SystemBars: {
+    setStyle: native.setStyle,
+    hide: native.hide,
+    show: native.show,
+  },
   SystemBarsStyle: { Dark: 'DARK', Light: 'LIGHT' },
-  SystemBarType: { StatusBar: 'status' },
+  SystemBarType: { NavigationBar: 'navigation', StatusBar: 'status' },
 }))
 
 import { SystemBarsStyle } from '@capacitor/core'
-import { getSystemBarSettings, syncSystemBarsTheme } from './systemTheme'
+import {
+  setSystemBarHidden,
+  systemBarBackground,
+  systemBarStyle,
+  syncSystemBarsTheme,
+} from './systemTheme'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -28,40 +37,45 @@ beforeEach(() => {
 })
 
 describe('system bar theme settings', () => {
-  it('uses light icons and a dark background in dark theme', () => {
-    expect(getSystemBarSettings('dark')).toEqual({
-      style: SystemBarsStyle.Dark,
-      backgroundColor: '#262628',
-    })
+  it('uses light icons on dark chrome and dark icons on light chrome', () => {
+    expect(systemBarStyle('dark', 'app')).toBe(SystemBarsStyle.Dark)
+    expect(systemBarStyle('light', 'app')).toBe(SystemBarsStyle.Light)
   })
 
-  it('uses dark icons and a light background in light theme', () => {
-    expect(getSystemBarSettings('light')).toEqual({
-      style: SystemBarsStyle.Light,
-      backgroundColor: '#f8f7f3',
-    })
+  it('always keeps light icons over the dark canvas backdrop', () => {
+    expect(systemBarStyle('light', 'canvas')).toBe(SystemBarsStyle.Dark)
+    expect(systemBarStyle('dark', 'canvas')).toBe(SystemBarsStyle.Dark)
   })
 
-  it('updates Android icon style and background when the theme changes', async () => {
+  it('exposes the theme color used by the meta tag', () => {
+    expect(systemBarBackground('light')).toBe('#f8f7f3')
+    expect(systemBarBackground('dark')).toBe('#262628')
+  })
+
+  it('updates icon styles when the theme changes', async () => {
     await syncSystemBarsTheme('dark')
 
     expect(native.setStyle).toHaveBeenCalledWith({
       style: SystemBarsStyle.Dark,
       bar: 'status',
     })
-    expect(native.setBackgroundColor).toHaveBeenCalledWith({ color: '#262628' })
+    expect(native.setStyle).toHaveBeenCalledWith({
+      style: SystemBarsStyle.Dark,
+      bar: 'navigation',
+    })
   })
 
-  it('updates icons without calling the Android background bridge on iOS', async () => {
-    native.getPlatform.mockReturnValue('ios')
-
-    await syncSystemBarsTheme('light')
+  it('keeps the navigation bar on the theme style over the canvas', async () => {
+    await syncSystemBarsTheme('light', 'canvas')
 
     expect(native.setStyle).toHaveBeenCalledWith({
-      style: SystemBarsStyle.Light,
+      style: SystemBarsStyle.Dark,
       bar: 'status',
     })
-    expect(native.setBackgroundColor).not.toHaveBeenCalled()
+    expect(native.setStyle).toHaveBeenCalledWith({
+      style: SystemBarsStyle.Light,
+      bar: 'navigation',
+    })
   })
 
   it('does not touch system bars on web', async () => {
@@ -70,6 +84,21 @@ describe('system bar theme settings', () => {
     await syncSystemBarsTheme('dark')
 
     expect(native.setStyle).not.toHaveBeenCalled()
-    expect(native.setBackgroundColor).not.toHaveBeenCalled()
+  })
+
+  it('hides and shows the status bar', async () => {
+    await setSystemBarHidden(true)
+    expect(native.hide).toHaveBeenCalledWith({ bar: 'status' })
+
+    await setSystemBarHidden(false)
+    expect(native.show).toHaveBeenCalledWith({ bar: 'status' })
+  })
+
+  it('leaves the status bar alone on web', async () => {
+    native.isNativePlatform.mockReturnValue(false)
+
+    await setSystemBarHidden(true)
+
+    expect(native.hide).not.toHaveBeenCalled()
   })
 })

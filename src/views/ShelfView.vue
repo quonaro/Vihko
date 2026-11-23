@@ -450,7 +450,7 @@ function applyCover(src: string | null) {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  padding: 18px 26px 0;
+  padding: calc(18px + var(--safe-top)) 26px 0;
   pointer-events: none;
 }
 .topbar .icon-btn { pointer-events: auto; }
@@ -560,7 +560,7 @@ footer {
   justify-content: center;
   align-items: center;
   gap: 18px;
-  padding: 20px 0 max(30px, env(safe-area-inset-bottom));
+  padding: 20px 0 max(30px, var(--safe-bottom));
 }
 .round {
   width: 32px;
@@ -601,7 +601,7 @@ footer {
   justify-content: center;
   gap: 8px;
   width: 100%;
-  padding: max(9px, env(safe-area-inset-top)) 14px 9px;
+  padding: max(9px, var(--safe-top)) 14px 9px;
   background: rgba(234, 179, 8, .1);
   border-bottom: 1px solid rgba(234, 179, 8, .3);
   backdrop-filter: blur(4px);
@@ -618,8 +618,8 @@ footer {
   .update-banner:hover { background: rgba(234, 179, 8, .18); }
 }
 @media (max-width: 600px) {
-  .topbar { padding: 14px 16px 0; }
+  .topbar { padding: calc(14px + var(--safe-top)) 16px 0; }
   header { padding-top: 18px; }
-  footer { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+  footer { padding-bottom: max(24px, var(--safe-bottom)); }
 }
 </style>

@@ -7,6 +7,10 @@
 
 :root {
   color-scheme: light;
+  /* Android forwards the real insets as inline CSS variables (MainActivity);
+     env() is the browser/iOS fallback. */
+  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
   --paper-text: #20211f;
   --paper-muted: #70716b;
   --paper-hover: rgba(30, 31, 27, 0.07);
