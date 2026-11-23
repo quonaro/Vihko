@@ -364,6 +364,48 @@ describe('CanvasView', () => {
         timeStamp: 32,
       }),
     )
+  it('hides the centre marker while a stroke is live instead of thickening it', async () => {
+    const backend = mockCanvasBackend()
+    try {
+      const w = await mountSized(400, 800)
+      const canvas = w.find('canvas').element as HTMLCanvasElement
+      const ctx = backend.ctxs.get(canvas)!
+      // Record the style at each stroke() so the marker can be told from ink.
+      const styles: string[] = []
+      vi.mocked(ctx.stroke).mockImplementation(() => styles.push(String(ctx.strokeStyle)))
+      const markerStrokes = () =>
+        styles.filter((s) => s === 'rgba(60,60,60,0.28)' || s === 'rgba(60,60,60,0.14)').length
+
+      const drag = (type: string, x: number, t: number) =>
+        canvas.dispatchEvent(
+          pev(type, {
+            pointerId: 1,
+            pointerType: 'mouse',
+            clientX: x,
+            clientY: 400,
+            timeStamp: t,
+            pressure: 0.5,
+          }),
+        )
+
+      drag('pointerdown', 200, 0)
+      // The marker was erased once (`hideSheetMarker`) as the stroke began;
+      // nothing more is stroked while the pointer is down.
+      styles.length = 0
+      drag('pointermove', 210, 8)
+      drag('pointermove', 220, 16)
+      drag('pointermove', 230, 24)
+      expect(markerStrokes()).toBe(0)
+
+      drag('pointerup', 230, 32)
+      // Back once the stroke commits.
+      expect(markerStrokes()).toBeGreaterThan(0)
+      w.unmount()
+    } finally {
+      backend.restore()
+    }
+  })
+
     const strokes = currentPage()!.strokes
     expect(strokes).toHaveLength(2)
     for (const stroke of strokes)

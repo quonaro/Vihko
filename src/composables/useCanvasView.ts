@@ -866,8 +866,10 @@ export function useCanvasView() {
     paintPaper(ctx)
     replayPageInto(el, ctx, dpr * view.s, dpr * view.ox, dpr * view.oy, viewRot())
     ctx.restore()
-    // The clipped repaint wiped any overlay ink inside the rect.
-    drawSheetMarker()
+    // The clipped repaint wiped any overlay ink inside the rect. While a
+    // stroke is live the marker stays hidden (re-stroking it every frame
+    // stacked its alpha and the line visibly thickened).
+    if (!drawing) drawSheetMarker()
     drawTransformControls()
     drawGuide()
   }
@@ -1142,7 +1144,7 @@ export function useCanvasView() {
       replayPageInto(el, ctx, dpr * view.s, dpr * view.ox, dpr * view.oy, viewRot())
     }
     if (clipped) ctx.restore()
-    drawSheetMarker()
+    if (!drawing) drawSheetMarker()
     // A full repaint wipes the in-progress stroke — put it back in one fill.
     if (drawing && liveStroke && curSamples.length) {
       drawSamples(liveStroke, curSamples, seed)
@@ -1178,6 +1180,51 @@ export function useCanvasView() {
     ctx.lineTo(cx, cy + cs)
     ctx.stroke()
     ctx.restore()
+  }
+
+  // Page-space bounds of the marker above, padded by the hairlines' own width.
+  function sheetMarkerBounds() {
+    const r = workRect()
+    const cs = 6
+    const cx = r.x + r.w / 2
+    const cy = r.y + r.h / 2
+    const pad = 1 / view.s
+    let x0 = cx - cs - pad
+    let x1 = cx + cs + pad
+    let y0 = cy - cs - pad
+    let y1 = cy + cs + pad
+    if (pw() > ph()) {
+      x0 = Math.min(x0, pw() / 2 - pad)
+      x1 = Math.max(x1, pw() / 2 + pad)
+      y0 = 0
+      y1 = ph()
+    }
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+  }
+
+  // A live stroke hides the marker instead of redrawing it: the marker rides
+  // on top of the snapshot, so re-stroking it on every pointermove darkened
+  // the parts outside the repainted rect — the divider looked thicker while
+  // drawing. Restoring snapshot pixels over it also covers the eraser preview.
+  function hideSheetMarker() {
+    if (!ctx || !snap) return
+    const r = sheetMarkerBounds()
+    const clipped = clipWork(ctx)
+    ctx.save()
+    setPageTransform(ctx)
+    ctx.drawImage(
+      snap.c,
+      r.x * snapScale,
+      r.y * snapScale,
+      r.w * snapScale,
+      r.h * snapScale,
+      r.x,
+      r.y,
+      r.w,
+      r.h,
+    )
+    ctx.restore()
+    if (clipped) ctx.restore()
   }
 
   // Content changed: force a snapshot rebuild on the next paint.
@@ -1266,6 +1313,7 @@ export function useCanvasView() {
       ...(INK_TOOLS.includes(store.tool) ? brushSnapshot(store.tool) : null),
     }
     drawing = true
+    hideSheetMarker()
     if (rasterLiveTool(liveStroke, layer)) {
       const raster = currentPage() ? layerRasterCanvas(currentPage()!, ink, layer.id) : null
       const rc = raster?.getContext('2d', { willReadFrequently: true })
@@ -1465,7 +1513,6 @@ export function useCanvasView() {
         r.h,
       )
       ctx.restore()
-      drawSheetMarker()
     }
     const tailSamples = ink && drawing && typeof ink.tail === 'function' ? ink.tail(strokeId) : []
     const all = tailSamples.length ? curSamples.concat(tailSamples) : curSamples
