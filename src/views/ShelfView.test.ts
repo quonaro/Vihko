@@ -8,6 +8,7 @@ import { store } from '../store'
 import { setTheme } from '../theme'
 import { update } from '../update'
 import { setGlQuality, setCoverQuality } from '../quality'
+import { RENDER_MODE_KEY, renderMode, setRenderMode } from '../renderMode'
 import { setEnterAnim } from '../enterAnim'
 import type { Journal } from '../types'
 
@@ -75,6 +76,7 @@ beforeEach(() => {
   shelfSceneMock.events = null
   shelfSceneMock.lastEnter = null
   setEnterAnim('dive')
+  setRenderMode('3d')
   store.journals.splice(0, store.journals.length, journal('a', 'Alpha'), journal('b', 'Beta'))
   store.journalId = null
   store.pageId = null
@@ -100,6 +102,8 @@ afterEach(() => {
   setCoverQuality('medium')
   localStorage.removeItem('vihko:gl-quality')
   localStorage.removeItem('vihko:cover-quality')
+  setRenderMode('3d')
+  localStorage.removeItem(RENDER_MODE_KEY)
   document.querySelectorAll('.morph').forEach((el) => {
     el.remove()
   })
@@ -215,14 +219,69 @@ describe('ShelfView', () => {
     expect(localStorage.getItem('vihko:theme')).toBe('dark')
   })
 
+  it('switches and persists the 2D/3D graphics mode from settings', async () => {
+    const w = mountShelf()
+    await w.findAll('.top-actions .icon-btn')[1].trigger('click')
+    document.body.querySelectorAll<HTMLElement>('.set-menu-btn')[1].click()
+    await nextTick()
+    const modeSeg = document.body
+      .querySelectorAll<HTMLElement>('.set-row')[0]
+      .querySelectorAll<HTMLButtonElement>('.seg-btn')
+    expect(modeSeg).toHaveLength(2)
+    expect(modeSeg[0].textContent).toBe('2D')
+    expect(modeSeg[1].textContent).toBe('3D')
+    expect(modeSeg[1].classList.contains('on')).toBe(true)
+
+    modeSeg[0].click()
+    await flushPromises()
+    expect(localStorage.getItem(RENDER_MODE_KEY)).toBe('2d')
+    expect(renderMode.value).toBe('2d')
+    // the live shelf swaps the WebGL stage for the flat book grid
+    expect(w.find('canvas.shelf3d').exists()).toBe(false)
+    expect(w.findAll('.book2d')).toHaveLength(2)
+
+    modeSeg[1].click()
+    await flushPromises()
+    expect(localStorage.getItem(RENDER_MODE_KEY)).toBe('3d')
+    expect(w.find('canvas.shelf3d').exists()).toBe(true)
+  })
+
+  it('renders flat book cards and opens a journal in 2D mode', async () => {
+    vi.useFakeTimers()
+    setRenderMode('2d')
+    const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
+    await flushPromises()
+    expect(w.find('canvas.shelf3d').exists()).toBe(false)
+    expect(w.findAll('.book2d')).toHaveLength(2)
+    expect(w.findAll('.book-cover')).toHaveLength(2)
+    expect(w.find('.book-title2d').text()).toBe('Alpha')
+    expect(w.find('.book2d .pages-count').text()).toContain('1')
+
+    await w.find('.book-card').trigger('click')
+    vi.advanceTimersByTime(150)
+    expect(store.journalId).toBe('a')
+    expect(store.view).toBe('journal')
+    w.unmount()
+  })
+
+  it('opens the journal menu from a 2D book card', async () => {
+    setRenderMode('2d')
+    const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
+    await flushPromises()
+    await w.find('.book-menu').trigger('click')
+    expect(document.body.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe('Alpha')
+    expect(document.body.querySelectorAll('.journal-action')).toHaveLength(4)
+    w.unmount()
+  })
+
   it('switches and persists render and cover quality from settings', async () => {
     const w = mountShelf()
     await w.findAll('.top-actions .icon-btn')[1].trigger('click')
     document.body.querySelectorAll<HTMLElement>('.set-menu-btn')[1].click()
     await nextTick()
     const rows = document.body.querySelectorAll<HTMLElement>('.set-row')
-    const renderSeg = rows[0].querySelectorAll<HTMLButtonElement>('.seg-btn')
-    const coverSeg = rows[1].querySelectorAll<HTMLButtonElement>('.seg-btn')
+    const renderSeg = rows[1].querySelectorAll<HTMLButtonElement>('.seg-btn')
+    const coverSeg = rows[2].querySelectorAll<HTMLButtonElement>('.seg-btn')
     expect(renderSeg).toHaveLength(4)
     expect(coverSeg).toHaveLength(4)
 

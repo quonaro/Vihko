@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import JournalView from './JournalView.vue'
 import { i18n } from '../i18n'
 import { closeToJournal, openPage, store } from '../store'
 import { PAGE_W, PAGE_H, pageSize } from '../pageSpace'
+import { RENDER_MODE_KEY, setRenderMode } from '../renderMode'
 import type { Journal } from '../types'
 
 // jsdom has no WebGL, so a fake stands in for JournalScene. It mirrors the
@@ -81,6 +82,7 @@ const journal = (): Journal => ({
 
 beforeEach(() => {
   mocks.scenes.length = 0
+  setRenderMode('3d')
   store.journals.splice(0, store.journals.length, journal())
   store.journalId = 'j1'
   store.pageId = null
@@ -88,6 +90,11 @@ beforeEach(() => {
   store.journalMode = 'stack'
   store.journalPageIdx = 0
   store.journalOverviewIdx = 0
+})
+
+afterEach(() => {
+  setRenderMode('3d')
+  localStorage.removeItem(RENDER_MODE_KEY)
 })
 
 describe('JournalView', () => {
@@ -228,6 +235,55 @@ describe('JournalView', () => {
 
   // The scene is only constructed for a canvas attached to the document, so
   // these mount into the body to exercise the real busy/onFlipDone wiring.
+  describe('2D mode', () => {
+    it('renders a flat page stack without WebGL and flips pages', async () => {
+      setRenderMode('2d')
+      const w = mountJournal()
+      expect(w.find('canvas.stage3d').exists()).toBe(false)
+      expect(w.find('.flat-frame').exists()).toBe(true)
+      expect(w.findAll('.flat-page .page-preview')).toHaveLength(1)
+      expect(w.find('.page-number').text()).toBe('1 / 3')
+
+      await w.find('.flip.next').trigger('click')
+      expect(w.find('.page-number').text()).toBe('2 / 3')
+      await w.find('.flip.prev').trigger('click')
+      expect(w.find('.page-number').text()).toBe('1 / 3')
+      w.unmount()
+    })
+
+    it('shows a flat overview grid and opens a page for editing', async () => {
+      setRenderMode('2d')
+      const w = mountJournal()
+      await w.findAll('.view-modes .icon-btn')[1].trigger('click')
+
+      expect(w.find('.flat-grid').exists()).toBe(true)
+      expect(w.findAll('.flat-thumb')).toHaveLength(3)
+      expect(w.findAll('.flat-thumb .page-preview')).toHaveLength(3)
+      expect(w.find('.flat-thumb.on').exists()).toBe(true)
+
+      await w.find('.flat-thumb-open').trigger('click')
+      expect(store.view).toBe('canvas')
+      expect(store.pageId).toBe('p1')
+      w.unmount()
+    })
+
+    it('opens the page action sheet from the flat page menu', async () => {
+      setRenderMode('2d')
+      const w = mount(JournalView, {
+        attachTo: document.body,
+        global: { plugins: [i18n] },
+      })
+      await flushPromises()
+      await w.find('.flat-menu').trigger('click')
+      await w.vm.$nextTick()
+
+      expect(document.body.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toBe(
+        'Page actions',
+      )
+      w.unmount()
+    })
+  })
+
   describe('page actions', () => {
     const mountAttached = async () => {
       const w = mount(JournalView, {

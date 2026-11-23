@@ -6,6 +6,8 @@ import { initInk } from '../ink/engine'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import MobileSlider from '../components/MobileSlider.vue'
 import EmptyState from '../components/EmptyState.vue'
+import PagePreview from '../components/PagePreview.vue'
+import { renderMode } from '../renderMode'
 import { logger } from '../log'
 
 const log = logger('journal')
@@ -31,6 +33,7 @@ const pageIdx = computed({
 const glCanvas = ref<HTMLCanvasElement>()
 const glOk = ref(false)
 const glFailed = ref(false)
+const currentPage = computed(() => journal.value?.pages[pageIdx.value] ?? null)
 let scene: JournalScene | null = null
 let sceneRequest = 0
 
@@ -102,8 +105,14 @@ function stopScene() {
   glOk.value = false
 }
 
-onMounted(startScene)
+onMounted(syncScene)
 onBeforeUnmount(stopScene)
+watch(renderMode, syncScene, { flush: 'post' })
+
+function syncScene() {
+  if (renderMode.value === '3d') void startScene()
+  else stopScene()
+}
 
 watch(mode, (m) => {
   scene?.setMode(m)
@@ -150,19 +159,64 @@ watch(pageIdx, (v) => {
       <h1>{{ journal.title }}</h1>
     </header>
 
-    <div class="stage">
-      <canvas ref="glCanvas" class="stage3d" v-show="glOk"></canvas>
+    <div class="stage" :class="{ 'stage-flat': renderMode === '2d' }">
+      <template v-if="renderMode === '3d'">
+        <canvas ref="glCanvas" class="stage3d" v-show="glOk"></canvas>
+        <EmptyState v-if="glFailed" class="webgl-error" :title="t('journal.webglError')">
+          <template #icon>
+            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/>
+              <path d="M12 12 20 7.5M12 12 4 7.5M12 12v9"/>
+            </svg>
+          </template>
+        </EmptyState>
+      </template>
+      <template v-else>
+        <div v-if="mode === 'stack' && currentPage" class="flat-page-wrap">
+          <div class="flat-frame">
+            <button class="flat-page" @click="openPage(currentPage.id)" :aria-label="t('journal.openPage')" :title="t('journal.openPage')">
+              <PagePreview :key="currentPage.id" :page="currentPage" :width="1400" />
+            </button>
+            <button
+              v-if="journal.pages.length > 1"
+              class="flat-menu"
+              @click.stop="pageMenuTarget = currentPage.id"
+              :aria-label="t('journal.pageActions')"
+              :title="t('journal.pageActions')"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <circle cx="6" cy="12" r="1.6" fill="currentColor" />
+                <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+                <circle cx="18" cy="12" r="1.6" fill="currentColor" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div v-else-if="mode === 'overview'" class="flat-grid">
+          <div v-for="(p, i) in journal.pages" :key="p.id" class="flat-thumb" :class="{ on: i === pageIdx }">
+            <button class="flat-thumb-open" @click="openPage(p.id)" :aria-label="t('journal.openPage')" :title="t('journal.openPage')">
+              <PagePreview :page="p" :width="520" />
+            </button>
+            <button
+              v-if="journal.pages.length > 1"
+              class="flat-menu"
+              @click.stop="pageMenuTarget = p.id"
+              :aria-label="t('journal.pageActions')"
+              :title="t('journal.pageActions')"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <circle cx="6" cy="12" r="1.6" fill="currentColor" />
+                <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+                <circle cx="18" cy="12" r="1.6" fill="currentColor" />
+              </svg>
+            </button>
+            <span class="flat-thumb-num">{{ i + 1 }}</span>
+          </div>
+        </div>
+      </template>
       <p v-if="mode === 'stack'" class="page-pos">
         <span class="page-number">{{ pageIdx + 1 }} / {{ journal.pages.length }}</span>
       </p>
-      <EmptyState v-if="glFailed" class="webgl-error" :title="t('journal.webglError')">
-        <template #icon>
-          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/>
-            <path d="M12 12 20 7.5M12 12 4 7.5M12 12v9"/>
-          </svg>
-        </template>
-      </EmptyState>
       <template v-if="mode === 'stack'">
         <button
           class="flip prev"
@@ -288,6 +342,85 @@ h1 {
   width: 100%;
   height: 100%;
   touch-action: none;
+}
+.stage-flat { padding: 0; }
+.flat-page-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 94px 26px 96px;
+}
+.flat-frame {
+  position: relative;
+  width: min(100%, calc((100vh - 196px) * 1.579), 1080px);
+}
+.flat-page {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #fffefa;
+  box-shadow: 0 24px 60px rgba(32,33,31,.24), 0 4px 10px rgba(32,33,31,.14);
+}
+.flat-menu {
+  position: absolute;
+  top: -12px;
+  right: -8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(27,28,25,.78);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(32,33,31,.24);
+}
+.flat-grid {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  align-content: start;
+  gap: 24px 20px;
+  padding: 108px 26px 100px;
+}
+.flat-thumb {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+.flat-thumb-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #fffefa;
+  box-shadow: 0 10px 24px rgba(32,33,31,.18);
+}
+.flat-thumb.on .flat-thumb-open {
+  outline: 2px solid #2a8097;
+  outline-offset: 2px;
+}
+.flat-thumb .flat-menu {
+  top: -8px;
+  right: -8px;
+  width: 28px;
+  height: 28px;
+}
+.flat-thumb-num {
+  margin-top: 8px;
+  color: var(--paper-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .page-actions { display: grid; gap: 8px; }
 .page-action {
@@ -417,6 +550,13 @@ footer {
   .flip { width: 48px; height: 48px; }
   .flip.prev { left: 8px; }
   .flip.next { right: 8px; }
+  .flat-page-wrap { padding: 166px 16px 92px; }
+  .flat-frame { width: 100%; }
+  .flat-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 20px 14px;
+    padding: 166px 16px 92px;
+  }
   footer {
     gap: 14px;
     padding: 12px 0 max(24px, var(--safe-bottom));

@@ -5,6 +5,7 @@ import MobileSlider from './MobileSlider.vue'
 import { setLocale } from '../i18n'
 import { setTheme, theme } from '../theme'
 import { QUALITY_LEVELS, glQuality, coverQuality, setGlQuality, setCoverQuality } from '../quality'
+import { RENDER_MODES, renderMode, setRenderMode } from '../renderMode'
 import { ENTER_ANIMS, enterAnim, setEnterAnim } from '../enterAnim'
 import {
   appVersion,
@@ -149,6 +150,19 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible
     :z-index="70"
     @update:open="section = ''"
   >
+    <div class="set-row">
+      <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 4.5 7.5v9L12 20.5l7.5-4v-9L12 3.5Z"/><path d="M4.5 7.5 12 11.5l7.5-4M12 11.5v9"/></svg>{{ t('shelf.renderMode') }}</span>
+      <div class="seg">
+        <button
+          v-for="m in RENDER_MODES"
+          :key="m"
+          class="seg-btn"
+          :class="{ on: renderMode === m }"
+          :aria-pressed="renderMode === m"
+          @click="setRenderMode(m)"
+        >{{ m === '2d' ? '2D' : '3D' }}</button>
+      </div>
+    </div>
     <div class="set-row set-col">
       <span class="set-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 16.5a8.5 8.5 0 1 1 15 0"/><path d="M12 14l4-5"/><circle cx="12" cy="14" r="1.2" fill="currentColor" stroke="none"/></svg>{{ t('shelf.renderQuality') }}</span>
       <div class="seg">

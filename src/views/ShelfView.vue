@@ -14,11 +14,13 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { update, downloadUpdate } from '../update'
 import { glQuality, coverQuality } from '../quality'
+import { renderMode } from '../renderMode'
 import { morphTo, centeredRect, fullRect, type Rect } from '../anim'
 import JournalMenuDialog from '../components/JournalMenuDialog.vue'
 import CoverTexturePicker from '../components/CoverTexturePicker.vue'
 import CoverPicker from '../components/CoverPicker.vue'
 import SettingsDialog from '../components/SettingsDialog.vue'
+import ShelfFlat from '../components/ShelfFlat.vue'
 import ShelfSearchDialog from '../components/ShelfSearchDialog.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -201,6 +203,8 @@ function openFromScene(id: string) {
   setTimeout(() => openJournal(id), 110)
 }
 
+// --- flat 2D shelf ---------------------------------------------------------
+
 async function startScene() {
   const request = ++sceneRequest
   const canvas = glCanvas.value
@@ -241,16 +245,25 @@ function stopScene() {
   anchors.value = []
 }
 
-onMounted(startScene)
+onMounted(syncScene)
 onBeforeUnmount(stopScene)
+watch(renderMode, syncScene, { flush: 'post' })
 
-watch(journalSig, () => scene?.setJournals(sceneJournals()))
+watch(journalSig, () => {
+  if (renderMode.value === '3d') scene?.setJournals(sceneJournals())
+})
 // Quality toggles can't patch a live scene — the renderer pipeline and the
 // cover texture sizes are fixed at construction — so rebuild it instead.
 watch([glQuality, coverQuality], () => {
+  if (renderMode.value !== '3d') return
   stopScene()
   void startScene()
 })
+
+function syncScene() {
+  if (renderMode.value === '3d') void startScene()
+  else stopScene()
+}
 function openJournalMenu(id: string) {
   menuJournalId.value = id
   menuOn.value = true
@@ -357,29 +370,37 @@ function applyCover(src: string | null) {
     <div
       class="covers"
     >
-      <canvas ref="glCanvas" class="shelf3d" v-show="glOk"></canvas>
-      <span
-        v-for="j in store.journals"
-        :key="j.id"
-        :ref="(el) => setLabelEl(j.id, el)"
-        class="pages-count gl-label"
-        :class="{ delayed: !showGlLabels }"
-      >{{ t('journal.count', j.pages.length) }}</span>
-      <span
-        v-for="j in store.journals"
-        :key="j.id"
-        :ref="(el) => setTitleEl(j.id, el)"
-        class="book-title gl-label"
-        :class="{ delayed: !showGlLabels }"
-      >{{ j.title }}</span>
-      <EmptyState v-if="glFailed" class="webgl-error" :title="t('shelf.webglError')">
-        <template #icon>
-          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/>
-            <path d="M12 12 20 7.5M12 12 4 7.5M12 12v9"/>
-          </svg>
-        </template>
-      </EmptyState>
+      <template v-if="renderMode === '3d'">
+        <canvas ref="glCanvas" class="shelf3d" v-show="glOk"></canvas>
+        <span
+          v-for="j in store.journals"
+          :key="j.id"
+          :ref="(el) => setLabelEl(j.id, el)"
+          class="pages-count gl-label"
+          :class="{ delayed: !showGlLabels }"
+        >{{ t('journal.count', j.pages.length) }}</span>
+        <span
+          v-for="j in store.journals"
+          :key="j.id"
+          :ref="(el) => setTitleEl(j.id, el)"
+          class="book-title gl-label"
+          :class="{ delayed: !showGlLabels }"
+        >{{ j.title }}</span>
+        <EmptyState v-if="glFailed" class="webgl-error" :title="t('shelf.webglError')">
+          <template #icon>
+            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/>
+              <path d="M12 12 20 7.5M12 12 4 7.5M12 12v9"/>
+            </svg>
+          </template>
+        </EmptyState>
+      </template>
+      <ShelfFlat
+        v-else
+        :journals="store.journals"
+        @open="openJournal"
+        @menu="openJournalMenu"
+      />
       <EmptyState
         v-if="!store.journals.length"
         class="shelf-empty"
