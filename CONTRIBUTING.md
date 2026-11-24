@@ -99,16 +99,16 @@ Apply formatting with `pnpm lint:fix` instead of hand-fixing style.
 
 ## Where things live
 
-| Path | Contents |
-| --- | --- |
-| `engine/` | Go→WASM ink engine: stroke model in `ink.go`, pixel kernels (fill, blur, wet mixing) in `px.go`, JS bindings in `main.go` |
-| `src/ink/` | Stroke rendering, layers, raster ops, shapes, RYB colour mixing, the JS engine fallback |
-| `src/three/` | three.js shelf and book spread; pure layout math is separated and unit tested |
-| `src/store.ts`, `src/persistence.ts` | Journals/pages/strokes model, undo/redo, per-row storage (SQLite / IndexedDB) |
-| `src/views/` | Shelf → journal → canvas screens |
-| `src/components/` | Docked panels, dialogs, sliders, colour picker |
-| `src/i18n.ts` | English and Russian messages |
-| `docs/screenshots/` | Screenshots used by the README |
+| Path                                 | Contents                                                                                                                  |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `engine/`                            | Go→WASM ink engine: stroke model in `ink.go`, pixel kernels (fill, blur, wet mixing) in `px.go`, JS bindings in `main.go` |
+| `src/ink/`                           | Stroke rendering, layers, raster ops, shapes, RYB colour mixing, the JS engine fallback                                   |
+| `src/three/`                         | three.js shelf and book spread; pure layout math is separated and unit tested                                             |
+| `src/store.ts`, `src/persistence.ts` | Journals/pages/strokes model, undo/redo, per-row storage (SQLite / IndexedDB)                                             |
+| `src/views/`                         | Shelf → journal → canvas screens                                                                                          |
+| `src/components/`                    | Docked panels, dialogs, sliders, colour picker                                                                            |
+| `src/i18n.ts`                        | English and Russian messages                                                                                              |
+| `docs/screenshots/`                  | Screenshots used by the README                                                                                            |
 
 ## Screenshots
 
