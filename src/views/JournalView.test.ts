@@ -5,6 +5,7 @@ import { i18n } from '../i18n'
 import { closeToJournal, openPage, store } from '../store'
 import { PAGE_W, PAGE_H, pageSize } from '../pageSpace'
 import { RENDER_MODE_KEY, setRenderMode } from '../renderMode'
+import { takeShelfOrigin } from '../shelfOrigin'
 import type { Journal } from '../types'
 
 // jsdom has no WebGL, so a fake stands in for JournalScene. It mirrors the
@@ -39,6 +40,8 @@ vi.mock('../three/journalScene', () => ({
         onFlipDone?: (dir: 1 | -1) => void
         onLongPressPage?: (id: string) => void
       },
+      _quality?: string,
+      _renderer?: unknown,
     ) {
       mocks.scenes.push(this)
     }
@@ -67,6 +70,19 @@ vi.mock('../three/journalScene', () => ({
 }))
 
 const mountJournal = () => mount(JournalView, { global: { plugins: [i18n] } })
+
+// jsdom has no WebGL: hand the view one fake warm surface (a real <canvas>
+// element, since it gets appended into the stage) and skip the idle warmup.
+vi.mock('../three/surface', () => {
+  const surface = {
+    kind: 'journal',
+    quality: 'medium',
+    canvas: document.createElement('canvas'),
+    renderer: {},
+  }
+  return { acquireSurface: async () => surface, releaseSurface: () => {} }
+})
+vi.mock('../three/prewarm', () => ({ scheduleSceneWarmup: () => {} }))
 
 function pointer(type: string, clientX: number, clientY: number) {
   const e = new MouseEvent(type, { bubbles: true, cancelable: true })
@@ -102,12 +118,13 @@ beforeEach(() => {
 afterEach(() => {
   setRenderMode('3d')
   localStorage.removeItem(RENDER_MODE_KEY)
+  takeShelfOrigin()
 })
 
 describe('JournalView', () => {
   it('renders the WebGL stage without any 2D journal renderer', () => {
     const w = mountJournal()
-    expect(w.find('canvas.stage3d').exists()).toBe(true)
+    expect(w.find('.stage3d').exists()).toBe(true)
     expect(w.find('.fan').exists()).toBe(false)
     expect(w.find('.book').exists()).toBe(false)
     expect(w.find('.closed-cover').exists()).toBe(false)
@@ -221,11 +238,12 @@ describe('JournalView', () => {
     expect(w.find('.journal-view').exists()).toBe(false)
   })
 
-  it('back button returns to the shelf', async () => {
+  it('back button returns to the shelf and marks the cover to pull out of', async () => {
     const w = mountJournal()
     await w.find('.back').trigger('click')
     expect(store.view).toBe('shelf')
     expect(store.journalId).toBeNull()
+    expect(takeShelfOrigin()).toBe('j1')
   })
 
   it('＋ button adds a page', async () => {
@@ -246,7 +264,7 @@ describe('JournalView', () => {
     it('renders a flat page stack without WebGL and flips pages', async () => {
       setRenderMode('2d')
       const w = mountJournal()
-      expect(w.find('canvas.stage3d').exists()).toBe(false)
+      expect(w.find('.stage3d').exists()).toBe(false)
       expect(w.find('.flat-frame').exists()).toBe(true)
       expect(w.findAll('.flat-page .page-preview')).toHaveLength(1)
       expect(w.find('.page-number').text()).toBe('1 / 3')

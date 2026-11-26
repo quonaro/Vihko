@@ -159,7 +159,6 @@ const baseKey = (page: Page, width: number) => `${page.id}|${width}`
 function evictBases() {
   let total = 0
   for (const e of baseCache.values()) total += e.canvas.width * e.canvas.height
-  console.log('evictBases total', total, 'size', baseCache.size)
   while (baseCache.size > 1 && (baseCache.size > BASE_MAX || total > BASE_BUDGET_PX)) {
     const oldest = baseCache.keys().next().value
     if (oldest === undefined) break

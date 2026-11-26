@@ -13,9 +13,10 @@ beforeEach(() => {
 })
 
 describe('ToolTray', () => {
-  it('renders the eleven available tools without the color palette', () => {
+  it('renders the twelve available tools without the color palette', () => {
     const w = mountTray()
-    expect(w.findAll('.tool')).toHaveLength(11)
+    expect(w.findAll('.tool')).toHaveLength(12)
+    expect(w.find(`.tool[title="${i18n.global.t('tool.text')}"]`).exists()).toBe(true)
     expect(w.find('.tool[title="Диаграмма"]').exists()).toBe(false)
     expect(w.find(`.tool[title="${i18n.global.t('tool.move')}"]`).exists()).toBe(false)
     expect(w.find(`.action[title="${i18n.global.t('canvas.newPage')}"]`).exists()).toBe(false)

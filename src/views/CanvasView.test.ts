@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import CanvasView from './CanvasView.vue'
 import { i18n } from '../i18n'
 import { store, currentPage, pageLayers, addLayer, updateLayer, pageRev } from '../store'
+import { customFonts, resetFontsForTests } from '../fonts'
 import { PAGE_W, PAGE_H } from '../pageSpace'
 import type { Journal } from '../types'
 
@@ -89,6 +91,21 @@ function pev(type: string, props: Record<string, unknown> = {}) {
     Object.defineProperty(e, k, { value: v, configurable: true })
   }
   return e
+}
+
+// Text tool dialog helpers — it teleports into document.body.
+const textArea = () => document.body.querySelector<HTMLTextAreaElement>('textarea.text-input')
+
+async function typeText(value: string) {
+  const area = textArea()!
+  area.value = value
+  area.dispatchEvent(new Event('input'))
+  await nextTick()
+}
+
+function clickTextButton(selector: string) {
+  const btn = document.body.querySelector<HTMLButtonElement>(selector)!
+  btn.click()
 }
 
 // jsdom has no canvas backend — hand each created canvas a stubbed 2d
@@ -669,6 +686,122 @@ describe('CanvasView', () => {
     expect(pageLayers()).toHaveLength(1)
     expect(store.tool).toBe('shapes')
     w.unmount()
+  })
+
+  describe('text tool', () => {
+    afterEach(() => {
+      // Resolve any dialog a failed assertion left open so the next test starts clean.
+      ;(document.body.querySelector('.text-actions .text-btn') as HTMLButtonElement | null)?.click()
+      resetFontsForTests()
+    })
+
+    it('places a text block at the tap with the dialog style', async () => {
+      const w = await mountSized(800, 600)
+      store.tool = 'text'
+      store.color = '#123456'
+      store.text.size = 90
+      store.text.font = 'serif'
+      store.text.bold = true
+      store.text.align = 'left'
+      const canvas = w.find('canvas').element
+      tap(canvas, 400, 300)
+      await flushPromises()
+      expect(textArea()).not.toBeNull()
+
+      await typeText('Hello world')
+      clickTextButton('.text-actions .text-btn.primary')
+      await flushPromises()
+
+      expect(textArea()).toBeNull()
+      const op = currentPage()!.ops![0]
+      expect(op.kind).toBe('text')
+      if (op.kind !== 'text') throw new Error('expected a text op')
+      expect(op.text.text).toBe('Hello world')
+      expect(Math.abs(op.text.x - PAGE_W / 2)).toBeLessThan(5)
+      expect(Math.abs(op.text.y - PAGE_H / 2)).toBeLessThan(5)
+      expect(op.text.size).toBe(90)
+      expect(op.text.font).toBe('serif')
+      expect(op.text.bold).toBe(true)
+      expect(op.text.color).toBe('#123456')
+      expect(op.text.align).toBe('left')
+      expect(op.text.w).toBeGreaterThan(PAGE_W / 4)
+      expect(op.text.x + op.text.w).toBeLessThanOrEqual(PAGE_W)
+      expect(op.text.h).toBeGreaterThan(0)
+      expect(op.layerId).toBe(pageLayers()[0].id)
+      expect(store.tool).toBe('text') // stays armed for the next block
+      w.unmount()
+    })
+
+    it('cancelling the dialog places nothing', async () => {
+      const w = await mountSized(800, 600)
+      store.tool = 'text'
+      tap(w.find('canvas').element, 400, 300)
+      await flushPromises()
+      await typeText('discard me')
+      clickTextButton('.text-actions .text-btn:not(.primary)')
+      await flushPromises()
+      expect(textArea()).toBeNull()
+      expect(currentPage()!.ops ?? []).toHaveLength(0)
+      w.unmount()
+    })
+
+    it('keeps a focused-half text block inside the fold', async () => {
+      const w = await mountSized(400, 800)
+      await w.find('.spread-btn').trigger('click') // left half
+      store.tool = 'text'
+      store.text.align = 'left'
+      tap(w.find('canvas').element, 200, 400)
+      await flushPromises()
+      await typeText('A note')
+      clickTextButton('.text-actions .text-btn.primary')
+      await flushPromises()
+
+      const op = currentPage()!.ops![0]
+      if (op.kind !== 'text') throw new Error('expected a text op')
+      expect(op.text.x).toBeGreaterThan(0)
+      expect(op.text.x + op.text.w).toBeLessThanOrEqual(PAGE_W / 2 + 0.01)
+      w.unmount()
+    })
+
+    it('imports a font from the dialog and uses it for the next text block', async () => {
+      const w = await mountSized(800, 600)
+      store.tool = 'text'
+      tap(w.find('canvas').element, 400, 300)
+      await flushPromises()
+
+      const input = document.body.querySelector<HTMLInputElement>(
+        '[role="dialog"] input[type="file"]',
+      )!
+      const file = new File([new Uint8Array([0, 1, 2, 3])], 'Sketchy.ttf', {
+        type: 'font/ttf',
+      })
+      Object.defineProperty(input, 'files', { value: [file], configurable: true })
+      input.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      expect(customFonts).toHaveLength(1)
+      expect(customFonts[0].name).toBe('Sketchy')
+      expect(store.text.font).toBe(customFonts[0].id)
+      expect(document.body.textContent).toContain('Sketchy')
+
+      await typeText('Handwritten')
+      clickTextButton('.text-actions .text-btn.primary')
+      await flushPromises()
+      const op = currentPage()!.ops![0]
+      if (op.kind !== 'text') throw new Error('expected a text op')
+      expect(op.text.font).toBe(customFonts[0].id)
+
+      // Removing the font drops it from the library and resets the picker.
+      tap(w.find('canvas').element, 400, 300)
+      await flushPromises()
+      document.body.querySelector<HTMLButtonElement>('.font-remove')!.click()
+      await flushPromises()
+      expect(customFonts).toHaveLength(0)
+      expect(store.text.font).toBe('sans')
+      clickTextButton('.text-actions .text-btn:not(.primary)')
+      await flushPromises()
+      w.unmount()
+    })
   })
 
   it('imports a photo onto a new layer and activates the transform tool', async () => {

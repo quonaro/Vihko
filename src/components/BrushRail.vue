@@ -12,7 +12,7 @@ const brushMarkWidth = computed(() => `${Math.min(20, 7 + brushSize.value * 3)}p
 
 <template>
   <aside
-    v-if="!['fill', 'cut', 'move', 'transform'].includes(store.tool)"
+    v-if="!['fill', 'cut', 'move', 'transform', 'text'].includes(store.tool)"
     class="brush-rail"
     :class="{ expanded: INK_TOOLS.includes(store.tool) }"
   >

@@ -13,6 +13,7 @@ import type {
   SpreadMode,
   Stroke,
   SymmetryMode,
+  TextAlign,
   ToolId,
 } from './types'
 import { i18n } from './i18n'
@@ -57,6 +58,14 @@ interface StoreState {
   guideR: number // arc radius (page units)
   maskEdit: boolean // paint into the active layer's alpha mask
   color: string
+  // Text tool style — persists between placements; each op snapshots it.
+  text: {
+    size: number // font size in page units
+    font: string // built-in font key or an imported font id
+    bold: boolean
+    italic: boolean
+    align: TextAlign
+  }
   trayOpen: boolean
 }
 
@@ -341,6 +350,7 @@ export const store = reactive<StoreState>({
     sketch: { size: 1, opacity: 1, stab: 0.5 },
     outline: { size: 1, opacity: 1, stab: 0.5 },
     write: { size: 1, opacity: 1, stab: 0.5 },
+    text: { size: 1, opacity: 1, stab: -1 },
     color: { size: 1, opacity: 1, stab: 0.5 },
     shapes: { size: 1, opacity: 1, stab: -1 },
     fill: { size: 1, opacity: 1, stab: -1 },
@@ -360,6 +370,13 @@ export const store = reactive<StoreState>({
   guideR: PAGE_W / 4,
   maskEdit: false,
   color: '#22221f',
+  text: {
+    size: Math.round(PAGE_W * 0.045),
+    font: 'sans',
+    bold: false,
+    italic: false,
+    align: 'left',
+  },
   trayOpen: true,
 })
 

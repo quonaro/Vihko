@@ -31,6 +31,10 @@ and install it on any Android 7.0+ device. Debug builds install side by side as
 - Eraser, flood fill (colour-aware, with inverse and "erase colour" modes), filters
   (brightness / contrast / saturation / blur / sharpen), six vector shapes, lasso cut
   and move.
+- Text blocks: tap the page, type in a bottom sheet, and the block is placed as a
+  page-unit op — four built-in fonts, size, bold/italic and left/centre/right
+  alignment, wrapped to the sheet or the focused half. Fonts can be imported from
+  the device (TTF / OTF / WOFF / WOFF2) and stay in the local library offline.
 - Symmetry (vertical / horizontal / both) and drawing guides — a straightedge or a
   french curve that snaps your strokes.
 - Real stylus pressure, coalesced + predicted pointer events for a low-latency line,

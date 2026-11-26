@@ -188,6 +188,22 @@ export function createComposer(
   }
 }
 
+// The IBL texture is baked once per renderer: views keep their surface (and
+// renderer) alive across mounts, so re-running the PMREM convolution on every
+// shelf↔journal switch would throw away the point of keeping it warm.
+const studioEnvs = new WeakMap<THREE.WebGLRenderer, THREE.Texture>()
+
+export function studioEnvironment(renderer: THREE.WebGLRenderer): THREE.Texture {
+  let env = studioEnvs.get(renderer)
+  if (!env) {
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+    pmrem.dispose()
+    studioEnvs.set(renderer, env)
+  }
+  return env
+}
+
 export function addStudioRig(
   renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
@@ -196,10 +212,8 @@ export function addStudioRig(
 ) {
   // Image-based lighting: a small studio rig baked into an env map lifts
   // the matte surfaces evenly — Paper's flat look is mostly ambient.
-  const pmrem = new THREE.PMREMGenerator(renderer)
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
+  scene.environment = studioEnvironment(renderer)
   scene.environmentIntensity = 0.38
-  pmrem.dispose()
 
   // Soft flat rig: strong ambient carries the matte covers while a low
   // key from the back-left draws the long gentle shadow to the lower

@@ -20,6 +20,7 @@ const tools: { id: ToolId }[] = [
   { id: 'sketch' },
   { id: 'outline' },
   { id: 'write' },
+  { id: 'text' },
   { id: 'color' },
   { id: 'shapes' },
   { id: 'fill' },
@@ -126,6 +127,12 @@ function onPhotoPicked(e: Event) {
           <g v-else-if="tool.id === 'write'">
             <rect x="10" y="4" width="4" height="20" rx="2" fill="#a0724a" />
             <path d="M10 24 L14 24 L12 31 Z" fill="#666" />
+          </g>
+          <!-- text block -->
+          <g v-else-if="tool.id === 'text'" fill="none" stroke="#55565c" stroke-width="2.2" stroke-linecap="round">
+            <path d="M5 11V8h14v3" />
+            <path d="M12 8v25" />
+            <path d="M9 33h6" />
           </g>
           <!-- watercolor brush (color) -->
           <g v-else-if="tool.id === 'color'">

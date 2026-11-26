@@ -18,7 +18,7 @@ import {
   pagesOutline,
   boardOutline,
   shelfPose,
-  shelfEntrance,
+  shelfArrivalPose,
   inHitBox,
   viewHalfWidth,
   fillZoom,
@@ -56,23 +56,36 @@ describe('shelfPose', () => {
   })
 })
 
-describe('shelfEntrance', () => {
-  it('starts with a subtle lift and scale, without rotating the book', () => {
-    expect(shelfEntrance(0)).toEqual({ lift: 0.12, scale: 0.985, opacity: 0 })
+describe('shelfArrivalPose', () => {
+  const from = { zoom: 4.6, scroll: 1.9 }
+  const to = { zoom: 1, scroll: 0 }
+
+  it('starts right on the cover and ends on the fitted row', () => {
+    expect(shelfArrivalPose(0, from, to)).toEqual(from)
+    expect(shelfArrivalPose(1, from, to)).toEqual(to)
   })
 
-  it('settles to the exact shelf pose', () => {
-    expect(shelfEntrance(1)).toEqual({ lift: 0, scale: 1, opacity: 1 })
+  it('clamps progress outside the move', () => {
+    expect(shelfArrivalPose(-1, from, to)).toEqual(from)
+    expect(shelfArrivalPose(2, from, to)).toEqual(to)
   })
 
-  it('clamps progress and moves smoothly toward the settled pose', () => {
-    expect(shelfEntrance(-1)).toEqual(shelfEntrance(0))
-    expect(shelfEntrance(2)).toEqual(shelfEntrance(1))
-    const start = shelfEntrance(0.25)
-    const end = shelfEntrance(0.75)
-    expect(end.lift).toBeLessThan(start.lift)
-    expect(end.scale).toBeGreaterThan(start.scale)
-    expect(end.opacity).toBeGreaterThan(start.opacity)
+  it('pulls back monotonically and symmetrically around the midpoint', () => {
+    const half = shelfArrivalPose(0.5, from, to)
+    expect(half.zoom).toBeCloseTo((from.zoom + to.zoom) / 2)
+    expect(half.scroll).toBeCloseTo((from.scroll + to.scroll) / 2)
+    let last = Infinity
+    for (let i = 0; i <= 10; i++) {
+      const zoom = shelfArrivalPose(i / 10, from, to).zoom
+      expect(zoom).toBeLessThan(last)
+      last = zoom
+    }
+  })
+
+  it('runs the same ease as the journal-open dive, only outward', () => {
+    // Ease-in-out blend: a quarter of the way in has moved less than 25%.
+    const quarter = shelfArrivalPose(0.25, from, to)
+    expect(quarter.zoom).toBeGreaterThan(from.zoom + (to.zoom - from.zoom) * 0.25)
   })
 })
 

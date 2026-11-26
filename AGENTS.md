@@ -154,7 +154,8 @@ screens.
   `PageOp {kind:'erase'}` respectively.
 - `src/ink/renderer.ts` — Canvas2D painters per tool (solid/pencil/watercolor/eraser).
 - `src/ink/ops.ts` — raster page ops replayed in stroke order via `after`
-  (flood fill, cutout move, photo collage, clear, filter, erase). Photos
+  (flood fill, cutout move, photo collage, text placement, clear, filter,
+  erase). Photos
   persist via `imageDataURL` — WebP where supported (alpha-capable),
   PNG/JPEG fallback — downscaled ≤2048px. Cover presets and layer
   thumbnails use the same helper.
@@ -174,6 +175,17 @@ screens.
 - `src/ink/path.ts` — Ramer–Douglas–Peucker simplification for cut gestures.
 - `src/ink/shapes.ts` — vector paths for the shape tool (rectangle, ellipse,
   line, arrow, triangle, diamond).
+- `src/ink/text.ts` — page-unit text layout: font stacks, canvas `font`
+  shorthand, greedy word wrap honouring newlines (long words hard-break), and
+  an offscreen measurer. Each text op stores its anchor, wrap width and
+  laid-out height, so replay doesn't depend on the viewport or page size.
+  Font stacks resolve through `src/fonts.ts`.
+- `src/fonts.ts` — imported font library: files (TTF/OTF/WOFF/WOFF2) become
+  `FontFace`s registered at boot, stored as one `app:fonts` KV row of base64
+  dataURLs (SQLite on native, IndexedDB/localStorage in the browser), with
+  `onFontsChanged` invalidating text rasters when a face arrives or is removed.
+  The font picker in `TextDialog.vue` merges these with the built-ins and can
+  import several files at once.
 - `src/ink/mix.ts` — RYB subtractive color mixing, hue rotation, and HSV
   conversion for `src/components/ColorPicker.vue` (SV square + hue strip +
   hex input in a `MobileSlider` dialog, opened via the tray swatch; dropping
@@ -197,18 +209,29 @@ screens.
 - `src/three/` — real 3D (three.js/WebGL) journal + shelf views: `stage.ts`
   (`FramePump` = render-on-demand: the loop only runs while a scene reports
   motion, so an idle view costs nothing; quality tiers pick PCF vs VSM
-  shadows and skip the MSAA+FXAA composer on low-tier GPUs). Textures and
-  geometries are disposed on `setPages`/removal (page textures evicted from
-  `texCache` when their page disappears).
-  holds the shared renderer + lighting rig; `layout.ts` the pure fan/curl
+  shadows and skip the MSAA+FXAA composer on low-tier GPUs; the studio IBL
+  env map is baked once per renderer). `surface.ts` keeps one canvas +
+  `WebGLRenderer` per scene kind alive across view mounts — views append
+  `surface.canvas` into their stage (kept laid out, faded in with opacity so
+  the first frame already has the real viewport) and release it on unmount,
+  so shelf↔journal switches skip the GL context, shader compile and env
+  bake. `warmup.ts` + `prewarm.ts` compile the journal's programs and env
+  map on that warm surface from an idle callback after the shelf settles.
+  Textures and geometries are disposed on `setPages`/removal (page textures
+  evicted from `texCache` when their page disappears). Overview cards are
+  built lazily on the first switch to that mode.
+  `layout.ts` the pure fan/curl
   math and `shelfLayout.ts` the pure shelf math (book poses, pointer tilt,
-  scroll limits — both unit tested); `pageTexture.ts` rasterizes a page
+  scroll limits, camera arrival easing — all unit tested);
+  `pageTexture.ts` rasterizes a page
   (strokes via ink engine + ops) and `coverTexture.ts` a journal cover
   (color/photo, spine, title) into canvas textures;
   `journalScene.ts` is the WebGL spread (raycast picking, animated page
   turn), `shelfScene.ts` the WebGL shelf (books as rounded board+pages sandwiches,
   per-book tilt from pointer position, drag/wheel pan, projected anchors
-  for DOM overlays). Lazy-imported by JournalView/ShelfView — three.js
+  for DOM overlays; it appears by pulling the camera back out of the cover
+  the journal view hands over through `src/shelfOrigin.ts`). Lazy-imported by
+  JournalView/ShelfView — three.js
   ships as a separate chunk; these views require WebGL and display an
   unavailable message rather than switching to a 2D rendering mode.
 - `src/store.ts` — journals/pages/strokes model, undo/redo, and persistence.
@@ -240,8 +263,10 @@ screens.
 ## Tools & gestures (CanvasView)
 
 - Tools: eraser, draw, sketch, outline, write, color (watercolor),
-  shapes (context menu + drag-to-draw), fill (tap-to-fill),
-  cut (loop → lift → drag), move (pan the sheet), transform (drag the active layer).
+  shapes (context menu + drag-to-draw), text (tap → dialog → page-unit text
+  block op with its own font/size/alignment style in `store.text`), fill
+  (tap-to-fill), cut (loop → lift → drag), move (pan the sheet), transform
+  (drag the active layer).
 - Brush size uses a vertical left-rail slider, stored per tool and with each
   stroke. Ink tools also get a stabilizer slider (0..1 streamline override,
   stored as `stroke.stab`). Tapping the active ink tool again opens the brush

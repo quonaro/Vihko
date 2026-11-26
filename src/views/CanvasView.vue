@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import BrushRail from '../components/BrushRail.vue'
 import LayerPanel from '../components/LayerPanel.vue'
 import ToolTray from '../components/ToolTray.vue'
+import TextDialog from '../components/TextDialog.vue'
 import { useCanvasView } from '../composables/useCanvasView'
 
 const { t } = useI18n()
@@ -96,6 +97,8 @@ const {
     <LayerPanel v-model:open="layerPanelOpen" :thumb="layerThumb" />
 
     <ToolTray @photo="importPhoto" />
+
+    <TextDialog />
   </div>
 </template>
 

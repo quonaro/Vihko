@@ -115,6 +115,7 @@ interface TexJob {
 
 export class JournalScene {
   private renderer: THREE.WebGLRenderer
+  private ownsRenderer: boolean
   private stage: HTMLElement | null
   private post: ReturnType<typeof createComposer>
   private scene = new THREE.Scene()
@@ -208,12 +209,16 @@ export class JournalScene {
     private ink: InkEngine,
     private events: SceneEvents,
     q: Quality = detectQuality(),
+    renderer?: THREE.WebGLRenderer,
   ) {
     this.stage = canvas.parentElement
     this.ready = new Promise((res) => {
       this.readyResolve = res
     })
-    this.renderer = createRenderer(canvas, q)
+    // The view may hand in a warm surface (see surface.ts) — its context,
+    // programs and env map outlive the previous mount.
+    this.ownsRenderer = !renderer
+    this.renderer = renderer ?? createRenderer(canvas, q)
     this.texW = pageTexWidth(q)
     this.inkMat.color.setHex(SHEET_OUTLINE_COLOR)
     this.inkMat.opacity = SHEET_OUTLINE_OPACITY
@@ -570,6 +575,8 @@ export class JournalScene {
     this.stackGroup.visible = mode === 'stack'
     this.rowGroup.visible = mode === 'overview'
     if (mode === 'overview') {
+      // Cards are built lazily: this is the first thing that needs them.
+      if (!this.sheets.length && this.pages.length) this.buildSheets()
       // Center the row on the sheet the stack was showing.
       this.rowTarget = this.cur - (this.sheets.length - 1) / 2
     }
@@ -632,7 +639,21 @@ export class JournalScene {
       }
     }
 
-    // (Re)build the overview card row to match the page list.
+    // (Re)build the overview card row to match the page list. Cards are a
+    // full page box + outline each, so a journal opened in stack view builds
+    // them on its first switch to overview instead.
+    this.clearSheets()
+    if (this.mode === 'overview') this.buildSheets()
+    // Do not rasterize the hidden representation on open. Its page textures
+    // are queued when the user switches modes.
+    this.scheduleTextureJobs()
+    this.hoveredLeaf = this.hoveredCard = null
+    const lim = (pages.length - 1) / 2
+    this.rowTarget = Math.max(-lim, Math.min(lim, this.rowTarget))
+    this.rowPos = Math.max(-lim, Math.min(lim, this.rowPos))
+  }
+
+  private clearSheets() {
     for (const p of this.sheets) {
       this.rowGroup.remove(p.mesh)
       p.mesh.traverse((o) => {
@@ -643,7 +664,12 @@ export class JournalScene {
         m.dispose()
       })
     }
-    this.sheets = pages.map((page, i) => {
+    this.sheets = []
+  }
+
+  private buildSheets() {
+    this.clearSheets()
+    this.sheets = this.pages.map((page, i) => {
       const mesh = this.makePage(null)
       const outline = this.makeOutline(sheetOutline3D({}, false))
       mesh.add(outline)
@@ -654,13 +680,6 @@ export class JournalScene {
       this.rowGroup.add(mesh)
       return { mesh, outline, id: page.id, page }
     })
-    // Do not rasterize the hidden representation on open. Its page textures
-    // are queued when the user switches modes.
-    this.scheduleTextureJobs()
-    this.hoveredLeaf = this.hoveredCard = null
-    const lim = (pages.length - 1) / 2
-    this.rowTarget = Math.max(-lim, Math.min(lim, this.rowTarget))
-    this.rowPos = Math.max(-lim, Math.min(lim, this.rowPos))
   }
 
   // A page turn is one leaf rotating across the spine. Leaf max(src,dst):
@@ -712,7 +731,13 @@ export class JournalScene {
     this.foldMat.dispose()
     this.bump?.dispose()
     this.post.dispose()
-    this.renderer.dispose()
+    // A warm surface is owned by the view's surface cache; only leave it in a
+    // state the next scene can start from.
+    if (this.ownsRenderer) this.renderer.dispose()
+    else {
+      this.renderer.setRenderTarget(null)
+      this.renderer.setScissorTest(false)
+    }
   }
 
   start() {

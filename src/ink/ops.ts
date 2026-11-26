@@ -1,5 +1,6 @@
 import { logger } from '../log'
-import type { InkEngine, PageOp, PhotoItem } from '../types'
+import type { InkEngine, PageOp, PhotoItem, TextItem } from '../types'
+import { layoutText, measureFor, textFontSpec } from './text'
 
 const log = logger('ink:ops')
 
@@ -284,6 +285,37 @@ export function applyPhoto(
   ctx.restore()
 }
 
+// --- text -----------------------------------------------------------------
+// Draws a placed text block in page units. The wrap box (`item.w`) and height
+// (`item.h`) were captured at commit time, so the same lines appear in the
+// editor, layer rasters, thumbnails and exports.
+export function applyText(
+  ctx: CanvasRenderingContext2D,
+  item: TextItem,
+  scale: number,
+  ox: number,
+  oy: number,
+) {
+  if (!item.text.trim()) return
+  if (typeof ctx.fillText !== 'function') return
+  ctx.save()
+  ctx.setTransform(scale, 0, 0, scale, ox, oy)
+  ctx.font = textFontSpec(item)
+  ctx.textBaseline = 'top'
+  ctx.textAlign = item.align
+  ctx.fillStyle = item.color
+  const measure =
+    typeof ctx.measureText === 'function'
+      ? (text: string) => ctx.measureText(text).width
+      : measureFor(item)
+  const layout = layoutText(item, measure)
+  layout.lines.forEach((line, i) => {
+    if (line) ctx.fillText(line, item.x, item.y + i * layout.lineHeight)
+  })
+  ctx.restore()
+  log.debug('text drawn', { lines: layout.lines.length, size: item.size })
+}
+
 // --- replay a single non-stroke op onto the canvas -------------------------
 // scale/ox/oy map page units to device px (dev = page * scale + offset).
 export function applyOp(
@@ -361,6 +393,9 @@ export function applyOp(
       break
     case 'photo':
       applyPhoto(ctx, op.photo, scale, ox, oy)
+      break
+    case 'text':
+      applyText(ctx, op.text, scale, ox, oy)
       break
     case 'clear': {
       const region = opRegion(canvas, op, scale, ox, oy)

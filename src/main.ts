@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import { disableBrowserContextMenu } from './contextMenu'
 import { showFatalError } from './fatal'
+import { initFonts } from './fonts'
 import { i18n } from './i18n'
 import { initInk } from './ink/engine'
 import { logger } from './log'
@@ -17,6 +18,8 @@ async function start() {
   try {
     disableBrowserContextMenu()
     await initializeStorePersistence()
+    // Imported fonts must be registered before the first canvas paint.
+    await initFonts()
     initRouter()
     void initInk()
     createApp(App).use(i18n).mount('#app')

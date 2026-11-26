@@ -18,6 +18,7 @@ export type ToolId =
   | 'sketch'
   | 'outline'
   | 'write'
+  | 'text'
   | 'color'
   | 'shapes'
   | 'fill'
@@ -101,6 +102,38 @@ export interface PageRect {
   h: number
 }
 
+// Text tool: a placed text block stored in page units. `x`/`y` is the
+// alignment anchor at the top of the first line; `w` is the wrap width and
+// `h` the laid-out height (both page units), captured at commit time so replay
+// never depends on the current viewport or page size.
+export type TextFont = 'sans' | 'serif' | 'mono' | 'hand'
+export const TEXT_FONTS: TextFont[] = ['sans', 'serif', 'mono', 'hand']
+export type TextAlign = 'left' | 'center' | 'right'
+export const TEXT_ALIGNS: TextAlign[] = ['left', 'center', 'right']
+
+// A font imported from the device, registered at runtime as a CSS FontFace and
+// persisted with the app state (dataURL, so it survives reloads offline).
+export interface CustomFont {
+  id: string // stable id; TextItem.font references it
+  name: string // display label (from the file name)
+  family: string // CSS font-family registered via FontFace
+  src: string // dataURL of the font file
+}
+
+export interface TextItem {
+  text: string
+  x: number
+  y: number
+  w: number
+  h: number
+  size: number // font size in page units
+  color: string
+  font: string // built-in TextFont key or a CustomFont id
+  align: TextAlign
+  bold?: boolean
+  italic?: boolean
+}
+
 // Raster/page ops replayed in order relative to strokes. `after` is the number
 // of strokes already drawn when the op ran, so replay can interleave them.
 // `alphaLock` marks ops committed while the layer's alpha lock was on;
@@ -117,6 +150,11 @@ export type PageOp =
       alphaLock?: boolean
     })
   | ({ kind: 'photo'; photo: PhotoItem; after: number } & {
+      layerId?: string
+      alphaLock?: boolean
+    })
+  // Placed text block (TextItem stores the page-unit anchor and wrap box).
+  | ({ kind: 'text'; text: TextItem; after: number } & {
       layerId?: string
       alphaLock?: boolean
     })

@@ -29,6 +29,9 @@ import { saveFile } from '../saveFile'
 import { enterAnim } from '../enterAnim'
 import type { CoverTexture, Journal } from '../types'
 import type { ShelfAnchor, ShelfJournal, ShelfScene } from '../three/shelfScene'
+import { acquireSurface, releaseSurface, type Surface } from '../three/surface'
+import { scheduleSceneWarmup } from '../three/prewarm'
+import { takeShelfOrigin } from '../shelfOrigin'
 import { logger } from '../log'
 
 const log = logger('shelf')
@@ -67,13 +70,14 @@ function openFromSearch(id: string) {
 
 // --- WebGL shelf -----------------------------------------------------------
 
-const glCanvas = ref<HTMLCanvasElement>()
+const glHost = ref<HTMLDivElement>()
 const glOk = ref(false)
 const glFailed = ref(false)
 const entering = ref(false)
 const showGlLabels = ref(false)
 const anchors = ref<ShelfAnchor[]>([])
 let scene: ShelfScene | null = null
+let surface: Surface | null = null
 let sceneRequest = 0
 let labelTimer: ReturnType<typeof setTimeout> | undefined
 const labelEls = new Map<string, HTMLElement>()
@@ -187,7 +191,7 @@ function openFromScene(id: string) {
   // Flat morph — the chosen 'morph' style and the fallback when the scene
   // can't run the 3D move (book gone or a transition already running).
   const r = scene.screenRect(id)
-  const cr = glCanvas.value?.getBoundingClientRect()
+  const cr = glHost.value?.getBoundingClientRect()
   if (r && cr) {
     // morphTo needs a laid-out element: pin an invisible div over the book.
     const src = coverDiv(j, {
@@ -207,31 +211,47 @@ function openFromScene(id: string) {
 
 async function startScene() {
   const request = ++sceneRequest
-  const canvas = glCanvas.value
-  if (!canvas) return
+  const host = glHost.value
+  if (!host) return
   window.clearTimeout(labelTimer)
   glOk.value = false
   glFailed.value = false
   showGlLabels.value = false
   try {
     // three.js stays out of the main bundle — loaded with the shelf view.
-    const { ShelfScene } = await import('../three/shelfScene')
-    if (request !== sceneRequest || !canvas.isConnected) return
-    scene = new ShelfScene(canvas, {
-      onPick: (id) => openFromScene(id),
-      onLongPress: openJournalMenu,
-      onOverlay: (a) => onOverlay(a),
+    const mod = await import('../three/shelfScene')
+    if (request !== sceneRequest || !host.isConnected) return
+    // Warm surface: the GL context, its shader programs and the studio env
+    // map survive a trip through a journal (see src/three/surface.ts).
+    const warm = await acquireSurface('shelf', glQuality.value)
+    if (request !== sceneRequest || !host.isConnected) return
+    surface = warm
+    host.replaceChildren(warm.canvas)
+    const s = new mod.ShelfScene(
+      warm.canvas,
+      {
+        onPick: (id) => openFromScene(id),
+        onLongPress: openJournalMenu,
+        onOverlay: (a) => onOverlay(a),
+      },
+      warm.quality,
+      warm.renderer,
+    )
+    scene = s
+    s.setJournals(sceneJournals())
+    s.arriveFrom(takeShelfOrigin())
+    s.start()
+    // Reveal on the first rendered frame, not on a possibly empty canvas.
+    void s.ready.then(() => {
+      if (scene === s) glOk.value = true
     })
-    scene.setJournals(sceneJournals())
-    scene.start()
-    glOk.value = true
     labelTimer = window.setTimeout(() => {
       if (request === sceneRequest && scene) showGlLabels.value = true
     }, 500)
   } catch (e) {
     log.warn('shelf scene failed to start, showing the unavailable message', e)
     scene = null
-    if (request === sceneRequest && canvas.isConnected) glFailed.value = true
+    if (request === sceneRequest && host.isConnected) glFailed.value = true
   }
 }
 
@@ -241,11 +261,16 @@ function stopScene() {
   showGlLabels.value = false
   scene?.dispose()
   scene = null
+  if (surface) releaseSurface(surface)
+  surface = null
   glOk.value = false
   anchors.value = []
 }
 
-onMounted(syncScene)
+onMounted(() => {
+  syncScene()
+  scheduleSceneWarmup()
+})
 onBeforeUnmount(stopScene)
 watch(renderMode, syncScene, { flush: 'post' })
 
@@ -371,7 +396,7 @@ function applyCover(src: string | null) {
       class="covers"
     >
       <template v-if="renderMode === '3d'">
-        <canvas ref="glCanvas" class="shelf3d" v-show="glOk"></canvas>
+        <div ref="glHost" class="shelf3d" :class="{ 'gl-hidden': !glOk }"></div>
         <span
           v-for="j in store.journals"
           :key="j.id"
@@ -531,6 +556,13 @@ h1 {
   width: 100%;
   height: 100%;
   touch-action: none;
+  transition: opacity .18s ease;
+}
+/* Laid out while warming up (see JournalView): the renderer needs the real
+   viewport box, or the arrival pull-back starts from a bogus camera fit. */
+.shelf3d.gl-hidden {
+  opacity: 0;
+  pointer-events: none;
 }
 .shelf.is-entering .shelf3d {
   pointer-events: none;

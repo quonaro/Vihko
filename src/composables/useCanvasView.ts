@@ -33,8 +33,11 @@ import {
 import { extractRegion, onImageLoaded, imageFileToPhoto, pathTo } from '../ink/ops'
 import { rdp } from '../ink/path'
 import { shapePoints } from '../ink/shapes'
+import { layoutText, measureFor } from '../ink/text'
+import { onFontsChanged } from '../fonts'
 import { pageSize, coverViewport, spreadRect } from '../pageSpace'
 import { INK_TOOLS } from '../ink/tools'
+import { useTextInput } from './useTextInput'
 import {
   buildTransformFrame,
   cursorForHandle,
@@ -57,6 +60,7 @@ import type {
   ShapeKind,
   Stroke,
   SymmetryMode,
+  TextItem,
 } from '../types'
 import { SPREAD_MODES } from '../types'
 import { logger } from '../log'
@@ -94,6 +98,7 @@ export function useCanvasView() {
   const views = new Map<string, { zoom: number; fx: number; fy: number; angle: number }>() // per-page
   let panStart: { x: number; y: number } | null = null
   const layerPanelOpen = ref(false)
+  const { askText } = useTextInput()
   const selectedLayer = computed(() => activeLayer())
 
   // Layer thumbnails in the panel: dataURLs of each layer's cached raster
@@ -368,7 +373,13 @@ export function useCanvasView() {
     const el = canvas.value
     if (!el) return
     el.style.cursor =
-      store.tool === 'move' ? 'grab' : INK_TOOLS.includes(store.tool) ? 'none' : 'default'
+      store.tool === 'move'
+        ? 'grab'
+        : store.tool === 'text'
+          ? 'text'
+          : INK_TOOLS.includes(store.tool)
+            ? 'none'
+            : 'default'
   }
 
   function updateCanvasCursor(x: number, y: number) {
@@ -1653,6 +1664,12 @@ export function useCanvasView() {
       }
       return
     }
+    // Text: the tap point becomes the block's anchor; the dialog decides the
+    // content and the op is committed on confirm.
+    if (store.tool === 'text') {
+      if (inWork(x, y)) void placeText(x, y)
+      return
+    }
     if (store.tool === 'filter') return // filter only commits ops via its panel
     beginStroke({ x, y, t: e.timeStamp, p: e.pressure || 0.5 })
   }
@@ -2172,6 +2189,55 @@ export function useCanvasView() {
   const undoOk = computed(() => canUndo())
   const redoOk = computed(() => canRedo())
 
+  // --- text tool ------------------------------------------------------------
+  // The tap point is the block's alignment anchor. The wrap box is derived
+  // from the anchor and the working rect (a focused spread half included), so
+  // the block can never spill past the fold or the sheet edge.
+  async function placeText(cssX: number, cssY: number) {
+    const page = currentPage()
+    if (!page) return
+    const px = toPageX(cssX)
+    const py = toPageY(cssY)
+    const value = await askText()
+    const text = value?.replace(/[ \t]+$/gm, '').trim()
+    if (!text) return
+    const style = store.text
+    const rect = workRect()
+    const pad = Math.max(8, Math.round(Math.min(rect.w, rect.h) * 0.02))
+    const x = Math.min(rect.x + rect.w - pad, Math.max(rect.x + pad, px))
+    const y = Math.min(rect.y + rect.h - pad, Math.max(rect.y + pad, py))
+    const avail =
+      style.align === 'left'
+        ? rect.x + rect.w - pad - x
+        : style.align === 'right'
+          ? x - rect.x - pad
+          : 2 * Math.min(x - rect.x - pad, rect.x + rect.w - pad - x)
+    const item: TextItem = {
+      text,
+      x,
+      y,
+      w: Math.max(24, avail),
+      h: 0,
+      size: style.size,
+      color: store.color,
+      font: style.font,
+      align: style.align,
+      bold: style.bold || undefined,
+      italic: style.italic || undefined,
+    }
+    item.h = layoutText(item, measureFor(item)).height
+    const layer = activeLayer()
+    pushOp({
+      kind: 'text',
+      text: item,
+      after: page.strokes.length,
+      layerId: layer?.id,
+      alphaLock: layer?.alphaLock ? true : undefined,
+    })
+    log.debug('text placed', { size: item.size, w: item.w, h: item.h, align: item.align })
+    reRender()
+  }
+
   async function importPhoto(file: File) {
     log.debug('importing photo', { name: file.name, size: file.size })
     const img = await imageFileToPhoto(file)
@@ -2200,6 +2266,7 @@ export function useCanvasView() {
   }
 
   let offImageLoad: (() => void) | undefined
+  let offFontsChanged: (() => void) | undefined
   let sizeObserver: ResizeObserver | undefined
 
   onMounted(async () => {
@@ -2227,6 +2294,15 @@ export function useCanvasView() {
       )
       for (const id of layerIds) clearLayerRasterCache(store.pageId ?? undefined, id)
       refresh()
+    })
+    // A font finishing registration (or being removed) changes how every text
+    // op rasterizes — drop the cached rasters and repaint.
+    offFontsChanged = onFontsChanged(() => {
+      transformBoundsCache = null
+      thumbRev.value++
+      snapDirty = true
+      clearLayerRasterCache()
+      reRender()
     })
   })
 
@@ -2314,6 +2390,7 @@ export function useCanvasView() {
     window.removeEventListener('resize', resize)
     window.removeEventListener('keydown', onKeyDown)
     offImageLoad?.()
+    offFontsChanged?.()
   })
 
   return {

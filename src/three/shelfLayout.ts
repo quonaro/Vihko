@@ -91,19 +91,24 @@ export function shelfPose(i: number, total: number): ShelfPose {
   }
 }
 
-export interface ShelfEntrance {
-  lift: number
-  scale: number
-  opacity: number
+// Camera arrival: the shelf appears out of the cover the user just left and
+// pulls back until the whole row fits. Same ease the journal-open dive ends
+// with, run in reverse — pure so the move is unit-tested.
+export interface ShelfArrivalPose {
+  zoom: number
+  scroll: number
 }
 
-export function shelfEntrance(t: number): ShelfEntrance {
+export function shelfArrivalPose(
+  t: number,
+  from: ShelfArrivalPose,
+  to: ShelfArrivalPose,
+): ShelfArrivalPose {
   const progress = Math.max(0, Math.min(1, t))
-  const eased = 1 - (1 - progress) ** 3
+  const eased = progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2
   return {
-    lift: (1 - eased) * 0.12,
-    scale: 0.985 + 0.015 * eased,
-    opacity: eased,
+    zoom: from.zoom + (to.zoom - from.zoom) * eased,
+    scroll: from.scroll + (to.scroll - from.scroll) * eased,
   }
 }
 

@@ -8,12 +8,16 @@ import MobileSlider from '../components/MobileSlider.vue'
 import EmptyState from '../components/EmptyState.vue'
 import PagePreview from '../components/PagePreview.vue'
 import { renderMode } from '../renderMode'
+import { glQuality } from '../quality'
 import { logger } from '../log'
 import { useLongPress } from '../longPress'
 
 const log = logger('journal')
 import type { JournalScene } from '../three/journalScene'
 import { canTurnStack } from '../three/layout'
+import { acquireSurface, releaseSurface, type Surface } from '../three/surface'
+import { scheduleSceneWarmup } from '../three/prewarm'
+import { rememberShelfOrigin } from '../shelfOrigin'
 
 const { t } = useI18n()
 const journal = computed(() => currentJournal())
@@ -31,7 +35,7 @@ const pageIdx = computed({
     store.journalPageIdx = value
   },
 })
-const glCanvas = ref<HTMLCanvasElement>()
+const glHost = ref<HTMLDivElement>()
 const glOk = ref(false)
 const glFailed = ref(false)
 const currentPage = computed(() => journal.value?.pages[pageIdx.value] ?? null)
@@ -43,11 +47,18 @@ const press = useLongPress(
   { enabled: () => !lastPage.value },
 )
 let scene: JournalScene | null = null
+let surface: Surface | null = null
 let sceneRequest = 0
 
 function openFlatPage(id: string) {
   if (press.consumeClick()) return
   openPage(id)
+}
+
+// The shelf appears out of the cover of the journal we are leaving.
+function backToShelf() {
+  rememberShelfOrigin(journal.value?.id ?? null)
+  closeToShelf()
 }
 
 function requestDeletePage(id: string) {
@@ -76,24 +87,34 @@ function flip(dir: 1 | -1) {
 
 async function startScene() {
   const request = ++sceneRequest
-  const canvas = glCanvas.value
-  if (!canvas) return
+  const host = glHost.value
+  if (!host) return
   glOk.value = false
   glFailed.value = false
   try {
-    const ink = await initInk()
-    // three.js stays out of the main bundle — loaded when a journal opens.
-    const { JournalScene } = await import('../three/journalScene')
-    if (request !== sceneRequest || !canvas.isConnected) return
-    scene = new JournalScene(canvas, ink, {
-      onPageClick: (id) => openPage(id),
-      onLongPressPage: (id) => {
-        if (!lastPage.value) pageMenuTarget.value = id
+    const [ink, mod] = await Promise.all([initInk(), import('../three/journalScene')])
+    if (request !== sceneRequest || !host.isConnected) return
+    // Warm surface: the GL context, its shader programs and the studio env
+    // map survive the previous visit (see src/three/surface.ts).
+    const warm = await acquireSurface('journal', glQuality.value)
+    if (request !== sceneRequest || !host.isConnected) return
+    surface = warm
+    host.replaceChildren(warm.canvas)
+    scene = new mod.JournalScene(
+      warm.canvas,
+      ink,
+      {
+        onPageClick: (id) => openPage(id),
+        onLongPressPage: (id) => {
+          if (!lastPage.value) pageMenuTarget.value = id
+        },
+        onFlipDone: (dir) => {
+          pageIdx.value = Math.max(0, pageIdx.value + dir)
+        },
       },
-      onFlipDone: (dir) => {
-        pageIdx.value = Math.max(0, pageIdx.value + dir)
-      },
-    })
+      warm.quality,
+      warm.renderer,
+    )
     scene.setMode(mode.value)
     scene.setPages(journal.value?.pages ?? [])
     scene.setPage(pageIdx.value)
@@ -107,7 +128,7 @@ async function startScene() {
   } catch (e) {
     log.warn('journal scene failed to start, showing the unavailable message', e)
     scene = null
-    if (request === sceneRequest && canvas.isConnected) glFailed.value = true
+    if (request === sceneRequest && host.isConnected) glFailed.value = true
   }
 }
 
@@ -115,10 +136,15 @@ function stopScene() {
   sceneRequest++
   scene?.dispose()
   scene = null
+  if (surface) releaseSurface(surface)
+  surface = null
   glOk.value = false
 }
 
-onMounted(syncScene)
+onMounted(() => {
+  syncScene()
+  scheduleSceneWarmup()
+})
 onBeforeUnmount(stopScene)
 watch(renderMode, syncScene, { flush: 'post' })
 
@@ -148,7 +174,7 @@ watch(lastPage, (v) => {
 
 <template>
   <div class="journal-view" v-if="journal">
-    <button class="back" @click="closeToShelf">{{ t('journal.back') }}</button>
+    <button class="back" @click="backToShelf">{{ t('journal.back') }}</button>
 
     <nav class="view-modes">
       <button
@@ -177,7 +203,7 @@ watch(lastPage, (v) => {
 
     <div class="stage" :class="{ 'stage-flat': renderMode === '2d' }">
       <template v-if="renderMode === '3d'">
-        <canvas ref="glCanvas" class="stage3d" v-show="glOk"></canvas>
+        <div ref="glHost" class="stage3d" :class="{ 'gl-hidden': !glOk }"></div>
         <EmptyState v-if="glFailed" class="webgl-error" :title="t('journal.webglError')">
           <template #icon>
             <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -333,6 +359,14 @@ h1 {
   width: 100%;
   height: 100%;
   touch-action: none;
+  transition: opacity .18s ease;
+}
+/* Kept laid out while the scene warms up — a display:none stage would give
+   the renderer a 2×2 canvas and the first visible frame a wrong camera fit.
+   The canvas is transparent anyway, so there is nothing to flash. */
+.stage3d.gl-hidden {
+  opacity: 0;
+  pointer-events: none;
 }
 /* The flat sheet is centred inside this padded box, so the flip arrows follow
    the sheet centre instead of the raw stage middle — otherwise asymmetric

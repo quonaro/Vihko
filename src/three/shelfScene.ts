@@ -22,10 +22,11 @@ import {
   pagesOutline,
   boardOutline,
   fillZoom as zoomToFill,
-  shelfEntrance,
+  shelfArrivalPose,
   shelfPose,
   inHitBox,
   scrollLimit,
+  type ShelfArrivalPose,
 } from './shelfLayout'
 import {
   rubberScroll,
@@ -66,8 +67,10 @@ const FOV = 36
 // picked per-viewport in resize() so a fixed number of books fits across.
 const CAM_Y = 4.85
 const CAM_Z = 0.6
-const ENTER_TIME = 0.38
-const ENTER_STAGGER = 0.04
+// Arrival pull-back: how long the camera takes to leave the cover and how
+// tight it starts (1 = the journal-open dive's final framing).
+const ARRIVE_TIME = 0.62
+const ARRIVE_ZOOM = 0.92
 // Journal-open transitions (beginEnter): 'dive' flies the camera into the
 // cover, 'open' lifts the book and hinges the front board over the spine.
 const DIVE_TIME = 0.55
@@ -116,16 +119,16 @@ interface BookEntry {
   order: number
   group: THREE.Group
   hinge: THREE.Group // front board pivots here for the 'open' transition
-  fadeMats: THREE.Material[]
+  mats: THREE.Material[]
   canvas: HTMLCanvasElement | null
   ctx: CanvasRenderingContext2D | null
   tex: THREE.CanvasTexture | null
   input: ShelfJournal
-  enterT: number
 }
 
 export class ShelfScene {
   private renderer: THREE.WebGLRenderer
+  private ownsRenderer: boolean
   private post: ReturnType<typeof createComposer>
   private scene = new THREE.Scene()
   private camera: THREE.PerspectiveCamera
@@ -162,6 +165,9 @@ export class ShelfScene {
   // `drag` so a second finger can turn a scroll into a pinch mid-gesture.
   private zoom = 1
   private panY = 0
+  // Shelf arrival: while set, the pull-back out of a cover drives zoom and
+  // scroll directly (see arriveFrom) and input cancels it.
+  private arrival: { t: number; from: ShelfArrivalPose; to: ShelfArrivalPose } | null = null
   // Open transition toward a book. While set, all input is ignored and the
   // DOM labels are hidden — the eased targets below drive scroll/zoom/panY
   // (and the front-board hinge for 'open') directly each tick.
@@ -188,11 +194,20 @@ export class ShelfScene {
   private localRay = new THREE.Ray()
   private pagesGeo = pagesGeometry()
   private boardGeo = boardGeometry()
+  // Resolved on the first rendered frame — the view keeps the stage blank
+  // instead of flashing an empty canvas while the scene compiles.
+  readonly ready: Promise<void>
+  private readyResolve!: () => void
+  private readyDone = false
   private pump = new FramePump((now) => {
     const dt = Math.min((now - this.last) / 1000, 0.05)
     this.last = now
     const moving = this.tick(dt)
     this.post.render()
+    if (!this.readyDone) {
+      this.readyDone = true
+      this.readyResolve()
+    }
     return moving
   })
   private last = 0
@@ -203,8 +218,15 @@ export class ShelfScene {
     private canvas: HTMLCanvasElement,
     private events: ShelfEvents,
     q: Quality = detectQuality(),
+    renderer?: THREE.WebGLRenderer,
   ) {
-    this.renderer = createRenderer(canvas, q)
+    this.ready = new Promise((res) => {
+      this.readyResolve = res
+    })
+    // A warm surface from surface.ts keeps the GL context, its compiled
+    // programs and the studio env map across shelf↔journal switches.
+    this.ownsRenderer = !renderer
+    this.renderer = renderer ?? createRenderer(canvas, q)
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 50)
     this.camera.position.set(0, CAM_Y, CAM_Z)
     this.camera.lookAt(0, 0, 0)
@@ -298,12 +320,11 @@ export class ShelfScene {
       order: 0,
       group,
       hinge,
-      fadeMats: [paper, board, face],
+      mats: [paper, board, face],
       canvas: cnv,
       ctx,
       tex,
       input: j,
-      enterT: 0,
     }
     return e
   }
@@ -311,7 +332,7 @@ export class ShelfScene {
   private disposeBook(e: BookEntry) {
     this.row.remove(e.group)
     e.tex?.dispose()
-    for (const m of e.fadeMats) m.dispose()
+    for (const m of e.mats) m.dispose()
     if (this.hovered === e) this.hovered = null
   }
 
@@ -339,21 +360,19 @@ export class ShelfScene {
           this.disposeBook(e)
           e = this.makeBook(j, sig)
           created = true
-          // A cover refresh is not a new journal; don't replay the entrance.
-          e.enterT = 1
         }
       } else {
         e = this.makeBook(j, sig)
         created = true
-        e.enterT = -i * ENTER_STAGGER
       }
       e.order = i
       if (created) {
+        // Books appear already settled — the shelf's entrance is the camera
+        // pulling back out of the cover, not a per-book pop-in.
         const pose = shelfPose(i, list.length)
-        const entrance = shelfEntrance(e.enterT)
-        e.group.position.set(pose.x, pose.y + entrance.lift, pose.z)
+        e.group.position.set(pose.x, pose.y, pose.z)
         e.group.rotation.set(pose.rotX, pose.rotY, pose.rotZ)
-        e.group.scale.setScalar(pose.scale * entrance.scale)
+        e.group.scale.setScalar(pose.scale)
       }
       next.push(e)
     })
@@ -367,6 +386,54 @@ export class ShelfScene {
   // axis fits, pushed FILL_BLEED past so the edges bleed off-screen.
   private fillZoom(width = BOOK_W, height = BOOK_H): number {
     return zoomToFill(this.camDist, FOV, this.cw / this.ch, width, height, FILL_BLEED)
+  }
+
+  // Shelf appearance: start right on a cover — the pose the journal-open
+  // dive ends at — and pull back until the row fits in frame. `id` is the
+  // journal the user just left; without one the pull-back starts from the
+  // book nearest the current scroll.
+  arriveFrom(id: string | null) {
+    if (!this.books.length) return
+    const target =
+      (id ? this.books.find((b) => b.id === id) : undefined) ?? this.nearestBook() ?? this.books[0]
+    const pose = shelfPose(target.order, this.books.length)
+    const from = { zoom: this.fillZoom() * ARRIVE_ZOOM, scroll: pose.x }
+    const to = { zoom: 1, scroll: this.clampScroll(0) }
+    this.arrival = { t: 0, from, to }
+    this.zoom = from.zoom
+    this.scroll = from.scroll
+    this.scrollTarget = from.scroll
+    this.panY = 0
+    this.vel = 0
+    this.snapCamera()
+    log.debug('shelf arrival', { id: target.id, zoom: from.zoom })
+    this.pump.wake()
+  }
+
+  private nearestBook(): BookEntry | null {
+    let best: BookEntry | null = null
+    let bestD = Infinity
+    for (const e of this.books) {
+      const d = Math.abs(shelfPose(e.order, this.books.length).x - this.scroll)
+      if (d < bestD) {
+        bestD = d
+        best = e
+      }
+    }
+    return best
+  }
+
+  // Park the camera on its tracked targets immediately — used by resize and
+  // by the arrival, which must not ease in from the previous pose.
+  private snapCamera() {
+    this.camTarget
+      .copy(this.camDir)
+      .multiplyScalar(this.camDist / this.zoom)
+      .addScaledVector(this.camUp, this.panY)
+    this.lookTarget.copy(this.camUp).multiplyScalar(this.panY)
+    this.camera.position.copy(this.camTarget)
+    this.lookPos.copy(this.lookTarget)
+    this.camera.lookAt(this.lookPos)
   }
 
   // Start the journal-open transition: 'dive' dives the camera into the
@@ -459,7 +526,11 @@ export class ShelfScene {
       }
     })
     this.post.dispose()
-    this.renderer.dispose()
+    if (this.ownsRenderer) this.renderer.dispose()
+    else {
+      this.renderer.setRenderTarget(null)
+      this.renderer.setScissorTest(false)
+    }
   }
 
   start() {
@@ -494,6 +565,8 @@ export class ShelfScene {
   private onPointerDown = (e: PointerEvent) => {
     this.pump.wake()
     if (this.enter) return
+    // Touching the shelf takes over from the arrival pull-back.
+    this.arrival = null
     this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
     this.canvas.setPointerCapture(e.pointerId)
     if (this.touches.size === 2) {
@@ -666,6 +739,7 @@ export class ShelfScene {
   private onWheel = (e: WheelEvent) => {
     this.pump.wake()
     if (this.enter) return
+    this.arrival = null
     e.preventDefault()
     this.vel = 0
     const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
@@ -720,12 +794,7 @@ export class ShelfScene {
     this.camDist = halfW / (Math.tan((FOV * Math.PI) / 360) * aspect)
     this.halfW = halfW
     this.updateWorldPerPx()
-    this.camera.position
-      .copy(this.camDir)
-      .multiplyScalar(this.camDist / this.zoom)
-      .addScaledVector(this.camUp, this.panY)
-    this.lookPos.copy(this.camUp).multiplyScalar(this.panY)
-    this.camera.lookAt(this.lookPos)
+    this.snapCamera()
     this.scrollTarget = this.clampScroll(this.scrollTarget)
     this.pump.wake()
   }
@@ -801,23 +870,17 @@ export class ShelfScene {
       }
     }
     for (const e of this.books) {
-      e.enterT = Math.min(1, e.enterT + dt / ENTER_TIME)
-      if (e.enterT < 1) moving = true
       const base = shelfPose(e.order, n)
       let ty = base.y
       const tz = base.z
       const trx = base.rotX
       const try_ = base.rotY
       const trz = base.rotZ
-      let ts = base.scale
+      const ts = base.scale
       if (e === this.hovered) {
         ty += TILT_LIFT
       }
       if (en?.kind === 'open' && e === en.e) ty += openLift
-      // New books fade in and settle subtly; keep their cover orientation fixed.
-      const entrance = shelfEntrance(e.enterT)
-      ty += entrance.lift
-      ts *= entrance.scale
       const g = e.group
       const d =
         Math.abs(base.x - g.position.x) +
@@ -835,22 +898,33 @@ export class ShelfScene {
       g.rotation.y += (try_ - g.rotation.y) * k
       g.rotation.z += (trz - g.rotation.z) * k
       g.scale.setScalar(g.scale.x + (ts - g.scale.x) * k)
-      for (const m of e.fadeMats) {
-        m.opacity = entrance.opacity
-        m.transparent = entrance.opacity < 1
-      }
     }
 
-    if (Math.abs(this.vel) > MOMENTUM_MIN && !this.drag) {
-      moving = true
-      const s = momentumStep(this.scrollTarget, this.vel, this.scrollLim, dt)
-      this.scrollTarget = s.pos
-      this.vel = s.vel
-    } else if (this.drag) {
+    // Arrival: the camera pulls out of the cover while the row settles into
+    // its fitted pose. A pointerdown cancels it (see onPointerDown).
+    if (this.arrival) {
+      const a = this.arrival
+      a.t = Math.min(1, a.t + dt / ARRIVE_TIME)
+      const pose = shelfArrivalPose(a.t, a.from, a.to)
+      this.zoom = pose.zoom
+      this.scroll = pose.scroll
+      this.scrollTarget = pose.scroll
+      this.panY = 0
       this.vel = 0
+      moving = true
+      if (a.t >= 1) this.arrival = null
+    } else {
+      if (Math.abs(this.vel) > MOMENTUM_MIN && !this.drag) {
+        moving = true
+        const s = momentumStep(this.scrollTarget, this.vel, this.scrollLim, dt)
+        this.scrollTarget = s.pos
+        this.vel = s.vel
+      } else if (this.drag) {
+        this.vel = 0
+      }
+      this.scroll += (this.scrollTarget - this.scroll) * damp(9, dt)
+      if (Math.abs(this.scrollTarget - this.scroll) > 1e-4) moving = true
     }
-    this.scroll += (this.scrollTarget - this.scroll) * damp(9, dt)
-    if (Math.abs(this.scrollTarget - this.scroll) > 1e-4) moving = true
     this.row.position.x = -this.scroll
 
     // Camera: pinch zoom dollies along the look axis, vertical pan
@@ -861,7 +935,7 @@ export class ShelfScene {
       .multiplyScalar(this.camDist / this.zoom)
       .addScaledVector(this.camUp, this.panY)
     this.lookTarget.copy(this.camUp).multiplyScalar(this.panY)
-    const ck = damp(this.enter ? 18 : this.pinch ? 16 : 6, dt)
+    const ck = damp(this.enter || this.arrival ? 18 : this.pinch ? 16 : 6, dt)
     const cd =
       Math.abs(this.camTarget.x - this.camera.position.x) +
       Math.abs(this.camTarget.y - this.camera.position.y) +

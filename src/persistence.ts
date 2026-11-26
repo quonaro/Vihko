@@ -405,3 +405,45 @@ export async function saveJournalEntries(batch: JournalSaveBatch): Promise<void>
   const db = await openDatabase()
   await writeBatch(db, batch)
 }
+
+// --- generic app rows --------------------------------------------------------
+// Non-journal state (imported fonts today) shares the same `app_state` KV
+// store/table. Keys are namespaced so they can never collide with the journal
+// index or journal/page rows. Writes propagate errors so callers can tell the
+// user a font could not be stored (quota, locked storage).
+const APP_KEY_PREFIX = 'app:'
+const APP_LOCAL_PREFIX = 'vihko:app:'
+
+export async function readAppRow(key: string): Promise<string | undefined> {
+  const k = APP_KEY_PREFIX + key
+  if (usesNativeSqlite()) {
+    const db = await openDatabase()
+    const result = await db.query('SELECT value FROM app_state WHERE key = ?', [k])
+    return result.values?.[0]?.value
+  }
+  const dbp = browserDatabase()
+  if (dbp) {
+    const value = await idbTx(await dbp, 'readonly', (s) => s.get(k))
+    return value === undefined ? undefined : (value as string)
+  }
+  return localStorage.getItem(APP_LOCAL_PREFIX + key) ?? undefined
+}
+
+export async function writeAppRow(key: string, value: string): Promise<void> {
+  const k = APP_KEY_PREFIX + key
+  if (usesNativeSqlite()) {
+    const db = await openDatabase()
+    await db.run(
+      'INSERT INTO app_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      [k, value],
+      true,
+    )
+    return
+  }
+  const dbp = browserDatabase()
+  if (dbp) {
+    await idbTx(await dbp, 'readwrite', (s) => s.put(value, k))
+    return
+  }
+  localStorage.setItem(APP_LOCAL_PREFIX + key, value)
+}

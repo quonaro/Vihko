@@ -10,6 +10,7 @@ import { update } from '../update'
 import { setGlQuality, setCoverQuality } from '../quality'
 import { RENDER_MODE_KEY, renderMode, setRenderMode } from '../renderMode'
 import { setEnterAnim } from '../enterAnim'
+import { rememberShelfOrigin, takeShelfOrigin } from '../shelfOrigin'
 import type { Journal } from '../types'
 
 const shelfSceneMock = vi.hoisted(() => ({
@@ -18,6 +19,7 @@ const shelfSceneMock = vi.hoisted(() => ({
     onLongPress?: (id: string) => void
   } | null,
   lastEnter: null as { id: string; kind: string; cb: () => void } | null,
+  arrivedFrom: undefined as string | null | undefined,
 }))
 
 // The real shelf needs WebGL; the fake scene emits fixed anchors and exposes
@@ -25,6 +27,7 @@ const shelfSceneMock = vi.hoisted(() => ({
 vi.mock('../three/shelfScene', () => ({
   ShelfScene: class {
     private journals: { id: string }[] = []
+    readonly ready = Promise.resolve()
     constructor(
       _canvas: HTMLCanvasElement,
       private events: {
@@ -32,6 +35,8 @@ vi.mock('../three/shelfScene', () => ({
         onOverlay?: (anchors: unknown[]) => void
         onLongPress?: (id: string) => void
       },
+      _quality?: string,
+      _renderer?: unknown,
     ) {
       shelfSceneMock.events = this.events
     }
@@ -41,6 +46,9 @@ vi.mock('../three/shelfScene', () => ({
     }
     setJournals(list: { id: string }[]) {
       this.journals = list
+    }
+    arriveFrom(id: string | null) {
+      shelfSceneMock.arrivedFrom = id
     }
     start() {
       this.events.onOverlay?.(
@@ -64,6 +72,19 @@ vi.mock('../three/shelfScene', () => ({
 
 const mountShelf = () => mount(ShelfView, { global: { plugins: [i18n] } })
 
+// jsdom has no WebGL: hand the view one fake warm surface (a real <canvas>
+// element, since it gets appended into the stage) and skip the idle warmup.
+vi.mock('../three/surface', () => {
+  const surface = {
+    kind: 'shelf',
+    quality: 'medium',
+    canvas: document.createElement('canvas'),
+    renderer: {},
+  }
+  return { acquireSurface: async () => surface, releaseSurface: () => {} }
+})
+vi.mock('../three/prewarm', () => ({ scheduleSceneWarmup: () => {} }))
+
 function pointer(type: string, clientX: number, clientY: number) {
   const e = new MouseEvent(type, { bubbles: true, cancelable: true })
   Object.defineProperty(e, 'clientX', { value: clientX })
@@ -82,6 +103,7 @@ const journal = (id: string, title: string): Journal => ({
 beforeEach(() => {
   shelfSceneMock.events = null
   shelfSceneMock.lastEnter = null
+  shelfSceneMock.arrivedFrom = undefined
   setEnterAnim('dive')
   setRenderMode('3d')
   store.journals.splice(0, store.journals.length, journal('a', 'Alpha'), journal('b', 'Beta'))
@@ -102,6 +124,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  takeShelfOrigin()
   usePrompt().settle(null)
   setTheme('light')
   localStorage.removeItem('vihko:theme')
@@ -122,7 +145,7 @@ afterEach(() => {
 describe('ShelfView', () => {
   it('renders a WebGL-only shelf without DOM book cards', () => {
     const w = mountShelf()
-    expect(w.find('canvas.shelf3d').exists()).toBe(true)
+    expect(w.find('.shelf3d').exists()).toBe(true)
     expect(w.findAll('.book')).toHaveLength(0)
     expect(w.findAll('.book-inner')).toHaveLength(0)
   })
@@ -244,13 +267,13 @@ describe('ShelfView', () => {
     expect(localStorage.getItem(RENDER_MODE_KEY)).toBe('2d')
     expect(renderMode.value).toBe('2d')
     // the live shelf swaps the WebGL stage for the flat book grid
-    expect(w.find('canvas.shelf3d').exists()).toBe(false)
+    expect(w.find('.shelf3d').exists()).toBe(false)
     expect(w.findAll('.book2d')).toHaveLength(2)
 
     modeSeg[1].click()
     await flushPromises()
     expect(localStorage.getItem(RENDER_MODE_KEY)).toBe('3d')
-    expect(w.find('canvas.shelf3d').exists()).toBe(true)
+    expect(w.find('.shelf3d').exists()).toBe(true)
   })
 
   it('renders flat book cards and opens a journal in 2D mode', async () => {
@@ -258,7 +281,7 @@ describe('ShelfView', () => {
     setRenderMode('2d')
     const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
     await flushPromises()
-    expect(w.find('canvas.shelf3d').exists()).toBe(false)
+    expect(w.find('.shelf3d').exists()).toBe(false)
     expect(w.findAll('.book2d')).toHaveLength(2)
     expect(w.findAll('.book-cover')).toHaveLength(2)
     expect(w.find('.book-title2d').text()).toBe('Alpha')
@@ -318,6 +341,23 @@ describe('ShelfView', () => {
     expect(hits).toHaveLength(2)
     expect(hits[0].textContent).toContain('Alpha')
     expect(hits[1].textContent).toContain('Beta')
+  })
+
+  it('pulls the shelf out of the journal it just left', async () => {
+    rememberShelfOrigin('b')
+    const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
+    await flushPromises()
+    expect(shelfSceneMock.arrivedFrom).toBe('b')
+    // The hint is one-shot: the next mount starts from the row centre.
+    expect(takeShelfOrigin()).toBeNull()
+    w.unmount()
+  })
+
+  it('starts from the row centre on a plain boot', async () => {
+    const w = mount(ShelfView, { global: { plugins: [i18n] }, attachTo: document.body })
+    await flushPromises()
+    expect(shelfSceneMock.arrivedFrom).toBeNull()
+    w.unmount()
   })
 
   it('dives into the tapped journal, then hands off to the journal view', async () => {

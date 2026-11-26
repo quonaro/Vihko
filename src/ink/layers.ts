@@ -4,7 +4,7 @@ import type { InkEngine, Layer, Page, PageOp, Sample, Stroke } from '../types'
 import { PAGE_H, PAGE_W, pageSize } from '../pageSpace'
 
 const log = logger('ink:layers')
-import { applyOp, applyPhoto, hexToRgb, pathTo } from './ops'
+import { applyOp, applyPhoto, applyText, hexToRgb, pathTo } from './ops'
 import { renderSamples } from './renderer'
 
 // Replay a stroke's input points through the ink engine and collect every
@@ -625,7 +625,7 @@ function ensureLayerRaster(
       for (const item of signature.slice(oldSignature!.length)) {
         if (typeof (item as PageOp).kind === 'string') {
           const op = item as PageOp
-          if (op.alphaLock && (op.kind === 'fill' || op.kind === 'photo'))
+          if (op.alphaLock && (op.kind === 'fill' || op.kind === 'photo' || op.kind === 'text'))
             applyAlphaLockedOp(entry.canvas, rc, op, scale, ink)
           else applyOp(entry.canvas, rc, op, scale, 0, 0, ink)
         } else {
@@ -785,20 +785,21 @@ export function layerMaskRasterCanvas(
   return ensureLayerMask(page, ink, layer)?.canvas ?? null
 }
 
-// An op committed under alpha lock can't grow the layer's alpha: photos
-// composite source-atop; fills (which write pixels directly) are masked back
-// to the pre-fill alpha afterwards.
+// An op committed under alpha lock can't grow the layer's alpha: photos and
+// text composite source-atop; fills (which write pixels directly) are masked
+// back to the pre-fill alpha afterwards.
 function applyAlphaLockedOp(
   raster: HTMLCanvasElement,
   ctx: CanvasRenderingContext2D,
-  op: Extract<PageOp, { kind: 'fill' | 'photo' }>,
+  op: Extract<PageOp, { kind: 'fill' | 'photo' | 'text' }>,
   scale: number,
   ink: InkEngine,
 ) {
-  if (op.kind === 'photo') {
+  if (op.kind === 'photo' || op.kind === 'text') {
     ctx.save()
     ctx.globalCompositeOperation = 'source-atop'
-    applyPhoto(ctx, op.photo, scale, 0, 0)
+    if (op.kind === 'photo') applyPhoto(ctx, op.photo, scale, 0, 0)
+    else applyText(ctx, op.text, scale, 0, 0)
     ctx.restore()
     return
   }
@@ -883,7 +884,7 @@ function replayLayer(
   const drainOps = (after: number) => {
     while (opIdx < ops.length && ops[opIdx].after <= after) {
       const op = ops[opIdx]
-      if (op.alphaLock && (op.kind === 'fill' || op.kind === 'photo'))
+      if (op.alphaLock && (op.kind === 'fill' || op.kind === 'photo' || op.kind === 'text'))
         applyAlphaLockedOp(raster, ctx, op, scale, ink)
       else applyOp(raster, ctx, op, scale, 0, 0, ink)
       opIdx++

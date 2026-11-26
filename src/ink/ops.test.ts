@@ -189,6 +189,88 @@ describe('spread-region ops', () => {
   })
 })
 
+describe('text ops', () => {
+  const makeContext = () => {
+    const fillText = vi.fn()
+    const ctx = {
+      save: vi.fn(),
+      restore: vi.fn(),
+      setTransform: vi.fn(),
+      fillText,
+      // Fixed-width metrics: page units, independent of the transform.
+      measureText: (text: string) => ({ width: text.length * 10 }),
+      font: '',
+      textBaseline: '',
+      textAlign: '',
+      fillStyle: '',
+    } as unknown as CanvasRenderingContext2D
+    return { ctx, fillText }
+  }
+  const canvas = { width: 200, height: 200 } as HTMLCanvasElement
+
+  it('paints the wrapped lines at the page-unit anchor and size', () => {
+    const { ctx, fillText } = makeContext()
+    applyOp(
+      canvas,
+      ctx,
+      {
+        kind: 'text',
+        after: 0,
+        text: {
+          text: 'hello world',
+          x: 10,
+          y: 20,
+          w: 60,
+          h: 52,
+          size: 20,
+          color: '#123456',
+          font: 'serif',
+          align: 'left',
+        },
+      },
+      2,
+      5,
+      7,
+    )
+    expect(ctx.setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 5, 7)
+    expect(ctx.font).toContain('20px')
+    expect(ctx.font).toContain('Georgia')
+    expect(ctx.fillStyle).toBe('#123456')
+    expect(fillText.mock.calls.map((c) => c[0])).toEqual(['hello', 'world'])
+    expect(fillText.mock.calls[0][1]).toBe(10)
+    expect(fillText.mock.calls[0][2]).toBe(20)
+    // Second line sits one line height (1.3 * size) below the first.
+    expect(fillText.mock.calls[1][2]).toBeCloseTo(46, 5)
+  })
+
+  it('skips blank text and anchorless backends', () => {
+    const { ctx, fillText } = makeContext()
+    applyOp(
+      canvas,
+      ctx,
+      {
+        kind: 'text',
+        after: 0,
+        text: {
+          text: '   ',
+          x: 0,
+          y: 0,
+          w: 100,
+          h: 0,
+          size: 20,
+          color: '#000',
+          font: 'sans',
+          align: 'left',
+        },
+      },
+      1,
+      0,
+      0,
+    )
+    expect(fillText).not.toHaveBeenCalled()
+  })
+})
+
 describe('applyCut', () => {
   it('clears lifted pixels to transparency so lower layers remain visible', () => {
     const makeContext = () =>
